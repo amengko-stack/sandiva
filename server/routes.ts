@@ -4,10 +4,24 @@ import multer from "multer";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import * as storage from "./storage";
-import { parseWhatsAppChat, generateSummary, buildEmailReport } from "./llm";
+import { parseWhatsAppChat, generateSummary, buildEmailReport, messageSignature } from "./llm";
 
 const upload = multer({ dest: "uploads/", limits: { fileSize: 20 * 1024 * 1024 } });
 fs.mkdirSync("uploads", { recursive: true });
+
+function computeParticipants(messages: { sender: string; content: string }[]) {
+  const map = new Map<string, { messageCount: number; wordCount: number }>();
+  for (const m of messages) {
+    const wc = m.content.split(/\s+/).filter(Boolean).length;
+    if (!map.has(m.sender)) map.set(m.sender, { messageCount: 0, wordCount: 0 });
+    const p = map.get(m.sender)!;
+    p.messageCount++;
+    p.wordCount += wc;
+  }
+  return Array.from(map.entries())
+    .map(([name, s]) => ({ name, ...s }))
+    .sort((a, b) => b.messageCount - a.messageCount);
+}
 
 function seedDemoData() {
   const existingGroups = storage.getGroups();
@@ -223,18 +237,56 @@ export function registerRoutes(httpServer: Server, app: Express) {
         group = existing || storage.createGroup({ name: candidateName });
       }
       const gid = group.id;
+      const today = date || new Date().toISOString().split("T")[0];
+
+      // Incremental: if we have a previous session for this group, find the last
+      // analyzed message in this new export and only process what's after it.
+      // Same file uploaded twice -> zero new messages, no LLM call.
+      const prevSession = storage.getLatestUploadSession(gid) as any;
+      const prevSig = prevSession?.last_signature || null;
+      let newMessages = parsed.messages;
+      if (prevSig) {
+        const idx = parsed.messages.findIndex(m => messageSignature(m) === prevSig);
+        if (idx >= 0) newMessages = parsed.messages.slice(idx + 1);
+      }
+      const lastSignature =
+        parsed.messages.length > 0
+          ? messageSignature(parsed.messages[parsed.messages.length - 1])
+          : prevSig;
+
+      // Recompute participant stats based on ONLY the new messages so the dashboard
+      // engagement reflects this run, not the entire historical file.
+      const newParticipants = computeParticipants(newMessages);
 
       const session = storage.createUploadSession({
         groupId: gid, filename: req.file.originalname,
         uploadedAt: new Date().toISOString(),
-        date: date || new Date().toISOString().split("T")[0],
-        messageCount: parsed.messages.length, status: "processing", rawContent: null,
+        date: today,
+        messageCount: newMessages.length,
+        status: "processing",
+        rawContent: null,
+        lastSignature,
       });
 
-      generateSummary(parsed, group.name).then(result => {
+      if (newMessages.length === 0) {
+        // Nothing new to summarize — finish the session without burning LLM tokens.
+        storage.updateUploadSession(session.id, { status: "done" });
+        return res.json({
+          session,
+          group,
+          detectedGroupName: parsed.detectedGroupName,
+          messageCount: 0,
+          totalMessages: parsed.messages.length,
+          participants: [],
+          note: "No new messages since your last upload for this group.",
+        });
+      }
+
+      const chatForLlm = { ...parsed, messages: newMessages, participants: newParticipants };
+
+      generateSummary(chatForLlm, group.name).then(result => {
         storage.createSummary({
-          sessionId: session.id, groupId: gid,
-          date: date || new Date().toISOString().split("T")[0],
+          sessionId: session.id, groupId: gid, date: today,
           overview: result.overview,
           keyTopics: JSON.stringify(result.keyTopics),
           actionItems: JSON.stringify(result.actionItems),
@@ -242,9 +294,8 @@ export function registerRoutes(httpServer: Server, app: Express) {
           importantMentions: JSON.stringify(result.importantMentions),
           sentiment: result.sentiment, createdAt: new Date().toISOString(),
         });
-        storage.upsertParticipants(parsed.participants.map(p => ({
-          sessionId: session.id, groupId: gid,
-          date: date || new Date().toISOString().split("T")[0],
+        storage.upsertParticipants(newParticipants.map(p => ({
+          sessionId: session.id, groupId: gid, date: today,
           name: p.name, messageCount: p.messageCount, wordCount: p.wordCount, actionItemsOwned: 0,
         })));
         storage.updateUploadSession(session.id, { status: "done" });
@@ -254,8 +305,9 @@ export function registerRoutes(httpServer: Server, app: Express) {
         session,
         group,
         detectedGroupName: parsed.detectedGroupName,
-        messageCount: parsed.messages.length,
-        participants: parsed.participants,
+        messageCount: newMessages.length,
+        totalMessages: parsed.messages.length,
+        participants: newParticipants,
       });
     } catch (err) {
       console.error(err);

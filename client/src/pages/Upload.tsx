@@ -31,7 +31,15 @@ export default function Upload() {
     },
     onSuccess: (data) => {
       const groupNote = data.group?.name ? ` → ${data.group.name}` : "";
-      toast({ title: "Upload successful", description: `${data.messageCount} messages${groupNote}. AI analysis in progress…` });
+      let description: string;
+      if (data.messageCount === 0) {
+        description = data.note || `No new messages${groupNote}. Nothing to analyze.`;
+      } else if (data.totalMessages && data.totalMessages > data.messageCount) {
+        description = `${data.messageCount} new of ${data.totalMessages} total${groupNote}. AI analysis in progress…`;
+      } else {
+        description = `${data.messageCount} messages${groupNote}. AI analysis in progress…`;
+      }
+      toast({ title: "Upload successful", description });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
       queryClient.invalidateQueries({ queryKey: ["/api/groups"] });
       setSelectedFile(null);

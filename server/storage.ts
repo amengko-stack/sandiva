@@ -31,7 +31,8 @@ export async function initDb() {
       date TEXT NOT NULL,
       message_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'processing',
-      raw_content TEXT
+      raw_content TEXT,
+      last_signature TEXT
     );
     CREATE TABLE IF NOT EXISTS summaries (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +73,10 @@ export async function initDb() {
       last_sent TEXT
     );
   `);
+  // Migration for databases created before incremental uploads existed — adds the
+  // last_signature column if it's missing. ALTER TABLE ADD COLUMN throws if the
+  // column already exists, so swallow that case.
+  try { db.run("ALTER TABLE upload_sessions ADD COLUMN last_signature TEXT"); } catch {}
   saveDb();
 }
 
@@ -147,14 +152,20 @@ export function getUploadSession(id: number) {
   return query("SELECT * FROM upload_sessions WHERE id = ?", [id])[0] || null;
 }
 export function createUploadSession(data: any) {
-  run("INSERT INTO upload_sessions (group_id, filename, uploaded_at, date, message_count, status, raw_content) VALUES (?,?,?,?,?,?,?)", [
-    data.groupId, data.filename, data.uploadedAt, data.date, data.messageCount, data.status, data.rawContent || null
+  run("INSERT INTO upload_sessions (group_id, filename, uploaded_at, date, message_count, status, raw_content, last_signature) VALUES (?,?,?,?,?,?,?,?)", [
+    data.groupId, data.filename, data.uploadedAt, data.date, data.messageCount, data.status, data.rawContent || null, data.lastSignature || null
   ]);
   const id = lastInsertId();
   const row = getUploadSession(id);
   if (row) return row;
   const rows = query("SELECT * FROM upload_sessions WHERE group_id = ? ORDER BY id DESC LIMIT 1", [data.groupId]);
   return rows[0] || { id, ...data };
+}
+
+// Returns the most recent upload session for a group (any status), used to find
+// the signature we left off at on the previous incremental run.
+export function getLatestUploadSession(groupId: number) {
+  return query("SELECT * FROM upload_sessions WHERE group_id = ? ORDER BY id DESC LIMIT 1", [groupId])[0] || null;
 }
 export function updateUploadSession(id: number, data: any) {
   const map: any = { status: data.status, message_count: data.messageCount };

@@ -14,6 +14,14 @@ export interface ChatMessage {
   content: string;
 }
 
+// Stable identity for a single message — used to detect "where we left off" on
+// incremental re-uploads of the same chat. WhatsApp exports include the full
+// history every time, so we sign the last analyzed message and look for it in
+// the next upload to skip everything up to and including it.
+export function messageSignature(m: ChatMessage): string {
+  return `${m.timestamp}|${m.sender}|${m.content.slice(0, 80)}`;
+}
+
 export interface ParsedChat {
   messages: ChatMessage[];
   participants: { name: string; messageCount: number; wordCount: number }[];
