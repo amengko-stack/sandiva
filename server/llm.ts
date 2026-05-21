@@ -32,19 +32,37 @@ export interface SummaryResult {
 
 // Parse WhatsApp exported chat (.txt format)
 export function parseWhatsAppChat(content: string): ParsedChat {
-  const lines = content.split("\n");
+  // Strip BOM, left-to-right marks (U+200E) and other zero-width chars that iOS exports
+  // sprinkle through the file. Replace narrow no-break space (U+202F, used before AM/PM
+  // on iOS) with a regular space. Without this cleanup the line-start regex misses every line.
+  const cleaned = content
+    .replace(/﻿/g, "")
+    .replace(/[‎‏​‌‍]/g, "")
+    .replace(/ | /g, " ");
+
+  const lines = cleaned.split(/\r?\n/);
   const messages: ChatMessage[] = [];
-  
-  // WhatsApp formats: "[DD/MM/YYYY, HH:MM:SS] Sender: message"
-  // or "DD/MM/YYYY, HH:MM - Sender: message"
+
+  // Supports many WhatsApp export variants:
+  //   [DD/MM/YY, HH:MM:SS] Sender: message       (iOS, with brackets)
+  //   [DD/MM/YY, HH.MM.SS] Sender: message       (iOS, ID/EU locale uses "." in time)
+  //   DD/MM/YY, HH:MM - Sender: message          (Android)
+  //   DD.MM.YY HH:MM - Sender: message           (some EU locales)
+  //   M/D/YY, H:MM PM - Sender: message          (US 12-hour)
+  // Date separator: / . or -
+  // Time separator: : or .
+  // Sender ends at the FIRST colon that's followed by a space (so names containing ":" still work for the common case).
+  const DATE = String.raw`\d{1,2}[\/.\-]\d{1,2}[\/.\-]\d{2,4}`;
+  const TIME = String.raw`\d{1,2}[:.]\d{2}(?:[:.]\d{2})?(?:\s?[AP]M)?`;
   const patterns = [
-    /^\[(\d{1,2}\/\d{1,2}\/\d{2,4}),\s*(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)\]\s*([^:]+):\s*(.+)/i,
-    /^(\d{1,2}\/\d{1,2}\/\d{2,4}),\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?)\s*-\s*([^:]+):\s*(.+)/i,
-    /^(\d{1,2}\/\d{1,2}\/\d{4})\s+(\d{1,2}:\d{2})\s*-\s*([^:]+):\s*(.+)/i,
+    // [date, time] sender: msg
+    new RegExp(String.raw`^\[\s*(${DATE})[,\s]+(${TIME})\s*\]\s*([^:]+?):\s+([\s\S]*)$`, "i"),
+    // date, time - sender: msg   (also handles "date time - ...")
+    new RegExp(String.raw`^(${DATE})[,\s]+(${TIME})\s*[-–]\s*([^:]+?):\s+([\s\S]*)$`, "i"),
   ];
 
   let currentMsg: ChatMessage | null = null;
-  
+
   for (const line of lines) {
     let matched = false;
     for (const pattern of patterns) {
@@ -65,6 +83,28 @@ export function parseWhatsAppChat(content: string): ParsedChat {
     }
   }
   if (currentMsg) messages.push(currentMsg);
+
+  // Drop WhatsApp system notices that aren't real conversation (encryption notice,
+  // "X added you", "X created this group", "<Media omitted>", etc.). These look like
+  // regular messages but pollute participant counts and waste LLM tokens.
+  const systemPatterns = [
+    /end-to-end encrypted/i,
+    /created this group/i,
+    /added you/i,
+    /^you were added/i,
+    /^messages? and calls? are/i,
+    /<media omitted>/i,
+    /this message was deleted/i,
+    /changed the (group )?(subject|description|icon)/i,
+    /changed this group's icon/i,
+    /joined using this group's invite link/i,
+    /security code (with|changed)/i,
+  ];
+  const filtered = messages.filter(
+    m => !systemPatterns.some(p => p.test(m.content)) && m.content.length > 0
+  );
+  messages.length = 0;
+  messages.push(...filtered);
 
   // Count participants
   const participantMap = new Map<string, { messageCount: number; wordCount: number }>();
@@ -154,7 +194,7 @@ Focus on business/legal relevance. Extract action items with clear owners when n
   } catch (err) {
     console.error("LLM error:", err);
     return {
-      overview: "Could not generate summary. Check your OpenAI API key.",
+      overview: "Could not generate summary. Check your ANTHROPIC_API_KEY environment variable.",
       keyTopics: [],
       actionItems: [],
       decisions: [],
