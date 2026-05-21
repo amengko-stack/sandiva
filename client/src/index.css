@@ -1,0 +1,170 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* WhatsApp-inspired: deep emerald on warm neutral */
+    --background: 150 10% 97%;
+    --foreground: 160 20% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 160 20% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 160 20% 10%;
+
+    --primary: 163 98% 22%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 150 8% 92%;
+    --secondary-foreground: 163 20% 25%;
+
+    --muted: 150 6% 90%;
+    --muted-foreground: 150 5% 48%;
+
+    --accent: 150 8% 92%;
+    --accent-foreground: 163 20% 25%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 8% 85%;
+    --input: 150 8% 85%;
+    --ring: 163 98% 22%;
+
+    --radius: 0.5rem;
+
+    --sidebar-bg: 163 35% 13%;
+    --sidebar-text: 150 15% 92%;
+    --sidebar-muted: 163 20% 55%;
+    --sidebar-accent: 163 45% 22%;
+    --sidebar-border: 163 25% 20%;
+  }
+
+  .dark {
+    --background: 160 12% 8%;
+    --foreground: 150 8% 88%;
+
+    --card: 160 12% 11%;
+    --card-foreground: 150 8% 88%;
+
+    --popover: 160 12% 11%;
+    --popover-foreground: 150 8% 88%;
+
+    --primary: 163 45% 52%;
+    --primary-foreground: 163 60% 6%;
+
+    --secondary: 160 10% 18%;
+    --secondary-foreground: 150 8% 88%;
+
+    --muted: 160 10% 18%;
+    --muted-foreground: 150 6% 52%;
+
+    --accent: 160 10% 18%;
+    --accent-foreground: 150 8% 88%;
+
+    --destructive: 0 62% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 160 10% 20%;
+    --input: 160 10% 20%;
+    --ring: 163 45% 52%;
+
+    --sidebar-bg: 163 20% 7%;
+    --sidebar-text: 150 12% 88%;
+    --sidebar-muted: 163 12% 48%;
+    --sidebar-accent: 163 20% 14%;
+    --sidebar-border: 163 15% 14%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Dashboard layout */
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 1fr;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  background: hsl(var(--sidebar-bg));
+  color: hsl(var(--sidebar-text));
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid hsl(var(--sidebar-border));
+}
+
+/* Main content */
+.main-content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: hsl(var(--background));
+}
+
+/* Tabular numbers for data */
+.tabular { font-variant-numeric: tabular-nums lining-nums; }
+
+/* Sentiment badges */
+.sentiment-positive { @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300; }
+.sentiment-neutral { @apply bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300; }
+.sentiment-negative { @apply bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300; }
+
+/* Priority colors */
+.priority-high { @apply bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300; }
+.priority-medium { @apply bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300; }
+.priority-low { @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300; }
+
+/* Trend indicators */
+.trend-up { @apply text-green-600 dark:text-green-400; }
+.trend-down { @apply text-red-500 dark:text-red-400; }
+.trend-flat { @apply text-gray-500 dark:text-gray-400; }
+
+/* Scroll area */
+.scroll-area {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Card content-visibility for performance */
+.card-grid > * {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 280px;
+}
+
+/* Sticky table header */
+thead { position: sticky; top: 0; z-index: 1; }
+
+/* Skeleton animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, hsl(var(--muted)) 25%, hsl(var(--accent)) 50%, hsl(var(--muted)) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
