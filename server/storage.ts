@@ -129,6 +129,12 @@ export function updateGroup(id: number, data: Partial<{ name: string; descriptio
   return getGroup(id);
 }
 export function deleteGroup(id: number) {
+  // Cascade — remove everything that references this group, otherwise orphan rows
+  // pollute the dashboard and aggregate queries.
+  run("DELETE FROM participants WHERE group_id = ?", [id]);
+  run("DELETE FROM summaries WHERE group_id = ?", [id]);
+  run("DELETE FROM upload_sessions WHERE group_id = ?", [id]);
+  run("DELETE FROM topic_trends WHERE group_id = ?", [id]);
   run("DELETE FROM groups WHERE id = ?", [id]);
 }
 
@@ -161,8 +167,10 @@ export function updateUploadSession(id: number, data: any) {
 
 // --- Summaries ---
 export function getSummaries(groupId?: number, limit = 50) {
-  if (groupId) return query("SELECT * FROM summaries WHERE group_id = ? ORDER BY date DESC LIMIT ?", [groupId, limit]);
-  return query("SELECT * FROM summaries ORDER BY date DESC LIMIT ?", [limit]);
+  // Tie-break by id DESC so the most recently inserted summary for the same date wins.
+  // Without this, demo seed rows and a same-day user upload were ordered nondeterministically.
+  if (groupId) return query("SELECT * FROM summaries WHERE group_id = ? ORDER BY date DESC, id DESC LIMIT ?", [groupId, limit]);
+  return query("SELECT * FROM summaries ORDER BY date DESC, id DESC LIMIT ?", [limit]);
 }
 export function getSummaryBySession(sessionId: number) {
   return query("SELECT * FROM summaries WHERE session_id = ?", [sessionId])[0] || null;

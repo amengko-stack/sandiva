@@ -137,7 +137,16 @@ function seedDemoData() {
 }
 
 export function registerRoutes(httpServer: Server, app: Express) {
-  seedDemoData();
+  // Demo data is no longer auto-seeded — uploads should create real groups.
+  // To re-seed for testing, call seedDemoData() manually.
+
+  // Wipe ALL data (groups, sessions, summaries, participants, trends).
+  // Useful for clearing the original demo seed in one click from the UI.
+  app.post("/api/admin/wipe-all", (_req, res) => {
+    const groups = storage.getGroups() as any[];
+    for (const g of groups) storage.deleteGroup(g.id);
+    res.json({ ok: true, deleted: groups.length });
+  });
 
   // Groups
   app.get("/api/groups", (req, res) => res.json(storage.getGroups()));
@@ -189,15 +198,34 @@ export function registerRoutes(httpServer: Server, app: Express) {
   app.post("/api/upload", upload.single("file"), async (req, res) => {
     try {
       const { groupId, date } = req.body;
-      if (!req.file || !groupId) return res.status(400).json({ error: "Missing file or groupId" });
-      const group = storage.getGroup(parseInt(groupId));
-      if (!group) return res.status(404).json({ error: "Group not found" });
+      if (!req.file) return res.status(400).json({ error: "Missing file" });
 
       const content = fs.readFileSync(req.file.path, "utf-8");
       const parsed = parseWhatsAppChat(content);
 
+      // Resolve target group. Priority:
+      //   1) explicit groupId from the form
+      //   2) detected group name from the WhatsApp file — reuse existing group with that
+      //      name, or create a new one
+      //   3) fall back to the filename so the upload never fails
+      let group: any = null;
+      if (groupId) {
+        group = storage.getGroup(parseInt(groupId));
+        if (!group) return res.status(404).json({ error: "Group not found" });
+      } else {
+        const candidateName =
+          parsed.detectedGroupName ||
+          req.file.originalname.replace(/\.txt$/i, "").replace(/^_chat\s*/i, "").trim() ||
+          "Untitled chat";
+        const existing = (storage.getGroups() as any[]).find(
+          g => g.name.toLowerCase() === candidateName.toLowerCase()
+        );
+        group = existing || storage.createGroup({ name: candidateName });
+      }
+      const gid = group.id;
+
       const session = storage.createUploadSession({
-        groupId: parseInt(groupId), filename: req.file.originalname,
+        groupId: gid, filename: req.file.originalname,
         uploadedAt: new Date().toISOString(),
         date: date || new Date().toISOString().split("T")[0],
         messageCount: parsed.messages.length, status: "processing", rawContent: null,
@@ -205,7 +233,7 @@ export function registerRoutes(httpServer: Server, app: Express) {
 
       generateSummary(parsed, group.name).then(result => {
         storage.createSummary({
-          sessionId: session.id, groupId: parseInt(groupId),
+          sessionId: session.id, groupId: gid,
           date: date || new Date().toISOString().split("T")[0],
           overview: result.overview,
           keyTopics: JSON.stringify(result.keyTopics),
@@ -215,14 +243,20 @@ export function registerRoutes(httpServer: Server, app: Express) {
           sentiment: result.sentiment, createdAt: new Date().toISOString(),
         });
         storage.upsertParticipants(parsed.participants.map(p => ({
-          sessionId: session.id, groupId: parseInt(groupId),
+          sessionId: session.id, groupId: gid,
           date: date || new Date().toISOString().split("T")[0],
           name: p.name, messageCount: p.messageCount, wordCount: p.wordCount, actionItemsOwned: 0,
         })));
         storage.updateUploadSession(session.id, { status: "done" });
       }).catch(() => storage.updateUploadSession(session.id, { status: "error" }));
 
-      res.json({ session, messageCount: parsed.messages.length, participants: parsed.participants });
+      res.json({
+        session,
+        group,
+        detectedGroupName: parsed.detectedGroupName,
+        messageCount: parsed.messages.length,
+        participants: parsed.participants,
+      });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: "Failed to process file" });

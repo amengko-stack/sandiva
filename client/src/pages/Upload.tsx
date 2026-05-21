@@ -20,23 +20,41 @@ export default function Upload() {
 
   const uploadMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedFile || !selectedGroup) throw new Error("Select a group and file");
+      if (!selectedFile) throw new Error("Pick a file first");
       const fd = new FormData();
       fd.append("file", selectedFile);
-      fd.append("groupId", selectedGroup);
+      if (selectedGroup) fd.append("groupId", selectedGroup);
       fd.append("date", new Date().toISOString().split("T")[0]);
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       if (!r.ok) throw new Error((await r.json()).error || "Upload failed");
       return r.json();
     },
     onSuccess: (data) => {
-      toast({ title: "Upload successful", description: `${data.messageCount} messages detected. LLM analysis in progress…` });
+      const groupNote = data.group?.name ? ` → ${data.group.name}` : "";
+      toast({ title: "Upload successful", description: `${data.messageCount} messages${groupNote}. AI analysis in progress…` });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/groups"] });
       setSelectedFile(null);
       setSelectedGroup("");
     },
     onError: (e: any) => {
       toast({ title: "Upload failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const wipeMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/admin/wipe-all", { method: "POST" });
+      if (!r.ok) throw new Error((await r.json()).error || "Wipe failed");
+      return r.json();
+    },
+    onSuccess: (data) => {
+      toast({ title: "All data cleared", description: `${data.deleted} group(s) and their data removed.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/groups"] });
+    },
+    onError: (e: any) => {
+      toast({ title: "Wipe failed", description: e.message, variant: "destructive" });
     },
   });
 
@@ -77,10 +95,10 @@ export default function Upload() {
             <CardContent className="pt-5 space-y-4">
               {/* Group Selector */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Target Group</label>
+                <label className="text-sm font-medium">Target Group <span className="text-muted-foreground font-normal">(optional — leave empty to auto-detect from the chat file)</span></label>
                 <Select value={selectedGroup} onValueChange={setSelectedGroup}>
                   <SelectTrigger data-testid="select-group">
-                    <SelectValue placeholder="Select a group…" />
+                    <SelectValue placeholder="Auto-detect from file" />
                   </SelectTrigger>
                   <SelectContent>
                     {groups.map(g => (
@@ -125,7 +143,7 @@ export default function Upload() {
               <Button
                 data-testid="button-submit-upload"
                 onClick={() => uploadMutation.mutate()}
-                disabled={!selectedFile || !selectedGroup || uploadMutation.isPending}
+                disabled={!selectedFile || uploadMutation.isPending}
                 className="w-full"
               >
                 {uploadMutation.isPending ? "Processing…" : "Upload & Analyze"}
@@ -138,6 +156,30 @@ export default function Upload() {
             <CardContent className="pt-4">
               <div className="text-sm text-amber-800 dark:text-amber-200">
                 <strong>Anthropic API Key Required:</strong> Set the <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded text-xs">ANTHROPIC_API_KEY</code> environment variable on the server for AI analysis to work. Without it, uploads will still be stored but summaries won't be generated.
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Danger zone — clear demo / all data */}
+          <Card className="border-destructive/30">
+            <CardContent className="pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm">
+                  <div className="font-medium">Clear all data</div>
+                  <div className="text-muted-foreground text-xs">Removes every group, upload, and summary — use this to wipe the demo data.</div>
+                </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={wipeMutation.isPending}
+                  onClick={() => {
+                    if (confirm("This will permanently delete ALL groups and uploads. Continue?")) {
+                      wipeMutation.mutate();
+                    }
+                  }}
+                >
+                  {wipeMutation.isPending ? "Wiping…" : "Wipe All Data"}
+                </Button>
               </div>
             </CardContent>
           </Card>

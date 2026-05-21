@@ -18,6 +18,7 @@ export interface ParsedChat {
   messages: ChatMessage[];
   participants: { name: string; messageCount: number; wordCount: number }[];
   dateRange: { start: string; end: string };
+  detectedGroupName: string | null;
 }
 
 export interface SummaryResult {
@@ -84,6 +85,17 @@ export function parseWhatsAppChat(content: string): ParsedChat {
   }
   if (currentMsg) messages.push(currentMsg);
 
+  // Detect the WhatsApp group/chat name from the encryption-notice line. WhatsApp emits
+  // "Messages and calls are end-to-end encrypted..." as the very first message, and the
+  // "sender" of that line is the group name (or contact name for 1-on-1 chats).
+  let detectedGroupName: string | null = null;
+  for (const m of messages.slice(0, 5)) {
+    if (/end-to-end encrypted/i.test(m.content)) {
+      detectedGroupName = m.sender.replace(/^~\s*/, "").trim() || null;
+      break;
+    }
+  }
+
   // Drop WhatsApp system notices that aren't real conversation (encryption notice,
   // "X added you", "X created this group", "<Media omitted>", etc.). These look like
   // regular messages but pollute participant counts and waste LLM tokens.
@@ -129,6 +141,7 @@ export function parseWhatsAppChat(content: string): ParsedChat {
       start: timestamps[0] || "",
       end: timestamps[timestamps.length - 1] || "",
     },
+    detectedGroupName,
   };
 }
 
