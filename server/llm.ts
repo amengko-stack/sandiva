@@ -187,14 +187,15 @@ Focus on business/legal relevance. Extract action items with clear owners when n
   try {
     const response = await getClient().messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 1500,
+      max_tokens: 4000,
       messages: [{ role: "user", content: prompt }],
     });
 
     const raw = response.content[0].type === "text" ? response.content[0].text : "{}";
     // Extract JSON from response (Claude may wrap it in markdown)
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    const result = JSON.parse(jsonMatch ? jsonMatch[0] : "{}");
+    if (!jsonMatch) throw new Error("Model did not return JSON. Raw output: " + raw.slice(0, 200));
+    const result = JSON.parse(jsonMatch[0]);
     return {
       overview: result.overview || "Summary unavailable.",
       keyTopics: result.keyTopics || [],
@@ -204,10 +205,20 @@ Focus on business/legal relevance. Extract action items with clear owners when n
       sentiment: result.sentiment || "neutral",
       topicsForTrend: result.topicsForTrend || result.keyTopics || [],
     };
-  } catch (err) {
+  } catch (err: any) {
     console.error("LLM error:", err);
+    // Surface the real cause instead of the misleading "check your API key" — most
+    // failures are token-limit truncation, JSON parse errors, or rate limits, not auth.
+    const reason =
+      err?.status === 401 || err?.status === 403
+        ? "API key invalid or missing. Set ANTHROPIC_API_KEY and restart."
+        : err?.status === 429
+        ? "Anthropic rate limit hit. Wait a moment and re-upload."
+        : err?.message?.includes("max_tokens") || err?.message?.includes("did not return JSON")
+        ? "Response was truncated or malformed. The chat may be too long — try a shorter date range."
+        : err?.message || "Unknown error";
     return {
-      overview: "Could not generate summary. Check your ANTHROPIC_API_KEY environment variable.",
+      overview: "Could not generate summary: " + reason,
       keyTopics: [],
       actionItems: [],
       decisions: [],
