@@ -1,14 +1,20 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { ClientSecretCredential } from "@azure/identity";
 import type { FileEntry } from "@/types";
-
-const MCP_SERVER = {
-  type: "url" as const,
-  url: "https://microsoft365.mcp.claude.com/mcp",
-  name: "microsoft365",
-};
 
 function getClient(): Anthropic {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+}
+
+async function getM365Token(): Promise<string> {
+  const credential = new ClientSecretCredential(
+    process.env.AZURE_TENANT_ID!,
+    process.env.AZURE_CLIENT_ID!,
+    process.env.AZURE_CLIENT_SECRET!
+  );
+  const token = await credential.getToken("https://graph.microsoft.com/.default");
+  if (!token) throw new Error("Failed to acquire Microsoft Graph token");
+  return token.token;
 }
 
 async function mcpQuery(
@@ -16,13 +22,21 @@ async function mcpQuery(
   systemPrompt?: string
 ): Promise<string> {
   const client = getClient();
+  const authToken = await getM365Token();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const params: any = {
     model: "claude-sonnet-4-6",
     max_tokens: 4000,
     messages: [{ role: "user", content: instruction }],
-    mcp_servers: [MCP_SERVER],
+    mcp_servers: [
+      {
+        type: "url",
+        name: "microsoft365",
+        url: "https://microsoft365.mcp.claude.com/mcp",
+        authorization_token: authToken,
+      },
+    ],
     betas: ["mcp-client-2025-04-04"],
   };
 
