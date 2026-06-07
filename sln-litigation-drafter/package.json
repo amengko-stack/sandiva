@@ -22,6 +22,9 @@
     "react-dom": "^18",
     "tailwind-merge": "^3.6.0"
   },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
