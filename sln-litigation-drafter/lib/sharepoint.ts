@@ -19,18 +19,18 @@ async function mcpQuery(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const params: any = {
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6",
     max_tokens: 4000,
     messages: [{ role: "user", content: instruction }],
     mcp_servers: [MCP_SERVER],
+    betas: ["mcp-client-2025-04-04"],
   };
 
   if (systemPrompt) {
     params.system = systemPrompt;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const response = await (client.messages.create as any)(params);
+  const response = await client.beta.messages.create(params);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const textBlocks = (response.content as any[]).filter((b: any) => b.type === "text");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
