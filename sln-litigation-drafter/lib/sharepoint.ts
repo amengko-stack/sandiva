@@ -203,15 +203,86 @@ async function extractText(bytes: Buffer, ext: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// Drive-based recursive listing (used for sharing link folders)
+// ---------------------------------------------------------------------------
+async function listChildrenByDriveItem(driveId: string, itemId: string): Promise<GraphItem[]> {
+  const res = await graphFetch(
+    `/drives/${driveId}/items/${itemId}/children?$select=id,name,size,file,folder`
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Graph list error ${res.status} [driveItem ${itemId}]: ${text}`);
+  }
+  const data = await res.json();
+  return data.value ?? [];
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> {
   const parsed = await parseInput(folderPath);
-  const siteId = parsed.siteAddr!;
   const results: FileEntry[] = [];
   let index = 0;
 
-  async function recurse(path: string) {
+  if (parsed.kind === "sharing-link") {
+    // Resolve the shared item — it may be a file or a folder
+    const metaRes = await graphFetch(
+      `/shares/${parsed.shareId}/driveItem?$select=id,name,size,file,folder,parentReference`
+    );
+    if (!metaRes.ok) {
+      const text = await metaRes.text();
+      throw new Error(`Share resolve error ${metaRes.status}: ${text}`);
+    }
+    const root: GraphItem & { parentReference?: { driveId?: string } } = await metaRes.json();
+    const driveId: string = root.parentReference?.driveId ?? "";
+
+    if (!root.folder) {
+      // It's a single file — return it directly if extension is allowed
+      if (root.file && ALLOWED_EXTENSIONS.has(fileExt(root.name))) {
+        results.push({
+          id: `file-${index++}`,
+          name: root.name,
+          path: folderPath, // keep original sharing link as path for readFileContent
+          size: root.size ? `${Math.round(root.size / 1024)} KB` : "",
+          type: fileExt(root.name),
+          selected: true,
+        });
+      }
+      return results;
+    }
+
+    if (!driveId) {
+      throw new Error("Tidak dapat menentukan driveId dari sharing link ini.");
+    }
+
+    // Recursive listing via drive items
+    const recurseByDrive = async (itemId: string): Promise<void> => {
+      const items = await listChildrenByDriveItem(driveId, itemId);
+      for (const item of items) {
+        if (item.folder) {
+          await recurseByDrive(item.id);
+        } else if (item.file && ALLOWED_EXTENSIONS.has(fileExt(item.name))) {
+          results.push({
+            id: `file-${index++}`,
+            name: item.name,
+            path: `drive:${driveId}:${item.id}`,
+            size: item.size ? `${Math.round(item.size / 1024)} KB` : "",
+            type: fileExt(item.name),
+            selected: true,
+          });
+        }
+      }
+    };
+
+    await recurseByDrive(root.id);
+    return results;
+  }
+
+  // Site-based listing (full URL or plain path)
+  const siteId = parsed.siteAddr!;
+
+  const recurse = async (path: string): Promise<void> => {
     const items = await listChildren(siteId, path);
     for (const item of items) {
       if (item.folder) {
@@ -235,9 +306,34 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
 }
 
 export async function readFileContent(filePath: string): Promise<string> {
-  const parsed = await parseInput(filePath);
   let ext: string;
   let ab: ArrayBuffer;
+
+  // Resolved drive item path produced by listMatterFiles for folder sharing links
+  if (filePath.startsWith("drive:")) {
+    const parts = filePath.split(":");
+    // format: drive:{driveId}:{itemId}
+    const driveId = parts[1];
+    const itemId = parts[2];
+    ext = fileExt(itemId.includes(".") ? itemId : ""); // itemId has no ext; handled below
+    // Fetch name first to get extension
+    const metaRes = await graphFetch(`/drives/${driveId}/items/${itemId}?$select=name`);
+    if (!metaRes.ok) {
+      const text = await metaRes.text();
+      throw new Error(`Drive item metadata error ${metaRes.status}: ${text}`);
+    }
+    const meta = await metaRes.json();
+    ext = fileExt(meta.name ?? "");
+    const contentRes = await graphFetch(`/drives/${driveId}/items/${itemId}/content`);
+    if (!contentRes.ok) {
+      const text = await contentRes.text();
+      throw new Error(`Drive item download error ${contentRes.status}: ${text}`);
+    }
+    ab = await contentRes.arrayBuffer();
+    return extractText(Buffer.from(ab), ext);
+  }
+
+  const parsed = await parseInput(filePath);
 
   if (parsed.kind === "sharing-link") {
     // Resolve filename from metadata to detect extension
