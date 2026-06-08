@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
 import { TokenCredentialAuthenticationProvider } from "@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials/index.js";
 import { ClientSecretCredential } from "@azure/identity";
+import mammoth from "mammoth";
 import type { FileEntry } from "@/types";
 
 let _graphClient: Client | null = null;
@@ -105,18 +106,19 @@ export async function readFileContent(filePath: string): Promise<string> {
     .get();
   const bytes = Buffer.from(arrayBuffer);
 
-  // For plain text files return directly
+  // Plain text — return directly
   if (fileExt === "txt") {
     return bytes.toString("utf-8");
   }
 
-  // For DOCX/PDF/DOC, send to Claude as a base64 document for extraction
-  const anthropic = getAnthropicClient();
-  const mediaType =
-    fileExt === "pdf"
-      ? "application/pdf"
-      : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  // DOCX / DOC — extract text with mammoth (no API call needed)
+  if (fileExt === "docx" || fileExt === "doc") {
+    const result = await mammoth.extractRawText({ buffer: bytes });
+    return result.value.trim();
+  }
 
+  // PDF — send to Claude as a base64 document block
+  const anthropic = getAnthropicClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await (anthropic.messages.create as any)({
     model: "claude-sonnet-4-6",
@@ -129,7 +131,7 @@ export async function readFileContent(filePath: string): Promise<string> {
             type: "document",
             source: {
               type: "base64",
-              media_type: mediaType,
+              media_type: "application/pdf",
               data: bytes.toString("base64"),
             },
           },
