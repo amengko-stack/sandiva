@@ -8,12 +8,13 @@ import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType } from "@/typ
 
 type Substep = "2A" | "2B" | "2C" | "2D";
 
-const CATEGORY_META: Record<DocCategory, { label: string; color: string; bg: string; defaultSelected: boolean }> = {
-  KRITIS:        { label: "KRITIS",         color: "#e74c3c", bg: "rgba(231,76,60,0.08)",  defaultSelected: true  },
-  PENDUKUNG:     { label: "PENDUKUNG",      color: "#e67e22", bg: "rgba(230,126,34,0.08)", defaultSelected: true  },
-  REFERENSI:     { label: "REFERENSI",      color: "#8aa3bc", bg: "rgba(138,163,188,0.08)",defaultSelected: true  },
-  TIDAK_RELEVAN: { label: "TIDAK RELEVAN",  color: "#555",    bg: "transparent",           defaultSelected: false },
+const CATEGORY_META: Record<DocCategory, { label: string; color: string; bg: string }> = {
+  KRITIS:    { label: "KRITIS",    color: "#e74c3c", bg: "rgba(231,76,60,0.08)"   },
+  PENDUKUNG: { label: "PENDUKUNG", color: "#e67e22", bg: "rgba(230,126,34,0.08)"  },
+  REFERENSI: { label: "REFERENSI", color: "#8aa3bc", bg: "rgba(138,163,188,0.08)" },
 };
+
+const CATEGORY_CYCLE: DocCategory[] = ["KRITIS", "PENDUKUNG", "REFERENSI"];
 
 const DOC_TYPE_LABELS: Record<DocDocumentType, string> = {
   perjanjian_kontrak: "Perjanjian/Kontrak",
@@ -24,18 +25,25 @@ const DOC_TYPE_LABELS: Record<DocDocumentType, string> = {
   tidak_dikenali:     "Tidak Dikenali",
 };
 
-const CATEGORY_ORDER: DocCategory[] = ["KRITIS", "PENDUKUNG", "REFERENSI", "TIDAK_RELEVAN"];
-
 const FILE_ICON: Record<string, string> = { docx: "📄", doc: "📄", pdf: "📋", txt: "📝" };
+
+interface ExtractLogEntry {
+  name: string;
+  category: DocCategory;
+  status: "memproses" | "selesai" | "gagal";
+  charCount?: number;
+  reason?: string;
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Stage2Files() {
   const { state, dispatch, goToStage } = useWorkflow();
 
-  // Restore substep from state: if docMap exists → 2C, if allFiles → 2A with files shown
-  const initialSubstep: Substep =
-    state.docMap.length > 0 ? "2C" : "2A";
+  const initialSubstep: Substep = (() => {
+    if (state.selectedFiles.length > 0 && state.docMap.length > 0) return "2B";
+    return "2A";
+  })();
 
   const [substep, setSubstep] = useState<Substep>(initialSubstep);
   const [folderLink, setFolderLink] = useState(state.folderPath || "");
@@ -43,12 +51,24 @@ export default function Stage2Files() {
   const [mapping, setMapping] = useState(false);
   const [error, setError] = useState("");
 
-  // Local copy of docMap so the drafter can edit categories without dispatching every keystroke
-  const [localMap, setLocalMap] = useState<DocMapEntry[]>(state.docMap);
+  // 2A: local checked state (mirrors allFiles.selected)
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(
+    () => new Set(state.allFiles.filter((f) => f.selected).map((f) => f.id))
+  );
 
-  // 2D progress
-  const [extractPhase, setExtractPhase] = useState<"idle" | "extracting" | "done">("idle");
-  const [extractProgress, setExtractProgress] = useState({ current: 0, total: 0, name: "", skipped: [] as { name: string; reason: string }[] });
+  // 2B: local docMap with category edits
+  const [localMap, setLocalMap] = useState<DocMapEntry[]>(state.docMap);
+  // Which files are checked in 2B (all on by default)
+  const [b2CheckedIds, setB2CheckedIds] = useState<Set<string>>(
+    () => new Set(state.docMap.map((e) => e.fileId))
+  );
+
+  // 2C: live extraction log
+  const [extractLog, setExtractLog] = useState<ExtractLogEntry[]>([]);
+  const [extractDone, setExtractDone] = useState(false);
+  const [totalChars, setTotalChars] = useState(0);
+  const [processedCount, setProcessedCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
 
   // ── 2A: Load filenames only ─────────────────────────────────────────────────
   async function discoverFiles() {
@@ -67,7 +87,7 @@ export default function Stage2Files() {
       if (!result.files?.length) throw new Error("Tidak ada dokumen (docx/pdf/doc/txt) ditemukan di folder ini.");
       dispatch({ type: "SET_FOLDER", folderPath: link });
       dispatch({ type: "SET_ALL_FILES", files: result.files });
-      setLocalMap([]);
+      setCheckedIds(new Set((result.files as FileEntry[]).map((f) => f.id)));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan");
     } finally {
@@ -75,8 +95,30 @@ export default function Stage2Files() {
     }
   }
 
-  // ── 2B: AI document map ──────────────────────────────────────────────────────
-  async function buildDocMap() {
+  function toggleCheck2A(id: string) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll2A() {
+    setCheckedIds(new Set(state.allFiles.map((f) => f.id)));
+  }
+
+  function clearAll2A() {
+    setCheckedIds(new Set());
+  }
+
+  // Confirm selection → immediately trigger AI mapping
+  async function confirmSelection() {
+    const selected = state.allFiles.filter((f) => checkedIds.has(f.id));
+    if (selected.length === 0) {
+      setError("Pilih minimal satu dokumen untuk dilanjutkan.");
+      return;
+    }
+    dispatch({ type: "SET_SELECTED_FILES", files: selected });
     setMapping(true);
     setError("");
     setSubstep("2B");
@@ -85,7 +127,7 @@ export default function Stage2Files() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          files: state.allFiles,
+          files: selected,
           docTypeId: state.docTypeId,
           claimType: state.claimType,
         }),
@@ -94,14 +136,7 @@ export default function Stage2Files() {
       if (!res.ok) throw new Error(result.error ?? "Gagal membuat peta dokumen");
       dispatch({ type: "SET_DOC_MAP", map: result.map });
       setLocalMap(result.map);
-      // Apply default selection based on category
-      const updatedFiles = state.allFiles.map((f) => {
-        const entry = (result.map as DocMapEntry[]).find((e) => e.fileId === f.id);
-        const cat = entry?.category ?? "PENDUKUNG";
-        return { ...f, selected: CATEGORY_META[cat as DocCategory].defaultSelected };
-      });
-      dispatch({ type: "SET_ALL_FILES", files: updatedFiles });
-      setSubstep("2C");
+      setB2CheckedIds(new Set((result.map as DocMapEntry[]).map((e) => e.fileId)));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan");
       setSubstep("2A");
@@ -110,52 +145,62 @@ export default function Stage2Files() {
     }
   }
 
-  // ── 2C: Drafter edits selection ──────────────────────────────────────────────
-  function toggleFile(id: string) {
-    dispatch({ type: "TOGGLE_FILE", id });
+  // ── 2B: Drafter adjusts categories ──────────────────────────────────────────
+  function cycleCategory(fileId: string) {
+    setLocalMap((m) =>
+      m.map((e) => {
+        if (e.fileId !== fileId) return e;
+        const idx = CATEGORY_CYCLE.indexOf(e.category);
+        const next = CATEGORY_CYCLE[(idx + 1) % CATEGORY_CYCLE.length];
+        return { ...e, category: next };
+      })
+    );
   }
 
-  function updateCategory(fileId: string, category: DocCategory) {
-    const patch = { category };
-    setLocalMap((m) => m.map((e) => e.fileId === fileId ? { ...e, ...patch } : e));
-    dispatch({ type: "UPDATE_DOC_MAP_ENTRY", fileId, patch });
-    // Auto-update selection when category changes
-    const defaultSel = CATEGORY_META[category].defaultSelected;
-    dispatch({
-      type: "SET_ALL_FILES",
-      files: state.allFiles.map((f) => f.id === fileId ? { ...f, selected: defaultSel } : f),
+  function toggleCheck2B(fileId: string) {
+    setB2CheckedIds((prev) => {
+      const next = new Set(prev);
+      next.has(fileId) ? next.delete(fileId) : next.add(fileId);
+      return next;
     });
   }
 
-  function confirmSelection() {
-    const selected = state.allFiles.filter((f) => f.selected);
-    if (selected.length === 0) {
-      setError("Pilih minimal satu dokumen untuk dilanjutkan.");
+  // Confirm 2B → start extraction
+  async function startExtraction() {
+    const checkedEntries = localMap.filter((e) => b2CheckedIds.has(e.fileId));
+    if (checkedEntries.length === 0) {
+      setError("Pilih minimal satu dokumen untuk diekstrak.");
       return;
     }
-    // Sort selected: KRITIS first, then PENDUKUNG, then rest
-    const catOrder = (id: string) => {
-      const entry = localMap.find((e) => e.fileId === id);
-      return CATEGORY_ORDER.indexOf(entry?.category ?? "REFERENSI");
-    };
-    const sorted = [...selected].sort((a, b) => catOrder(a.id) - catOrder(b.id));
-    dispatch({ type: "SET_SELECTED_FILES", files: sorted });
-    setSubstep("2D");
-  }
 
-  // ── 2D: Targeted extraction ───────────────────────────────────────────────────
-  async function runExtraction() {
-    const selected = state.selectedFiles;
-    if (!selected.length) return;
-    setExtractPhase("extracting");
-    setExtractProgress({ current: 0, total: selected.length, name: "", skipped: [] });
+    // Build files list sorted KRITIS → PENDUKUNG → REFERENSI
+    const filesById = new Map(state.selectedFiles.map((f) => [f.id, f]));
+    const sorted = [...checkedEntries]
+      .sort((a, b) => CATEGORY_CYCLE.indexOf(a.category) - CATEGORY_CYCLE.indexOf(b.category))
+      .map((e) => filesById.get(e.fileId))
+      .filter((f): f is FileEntry => !!f);
+
+    dispatch({ type: "SET_DOC_MAP", map: localMap });
+
+    // Initialize log
+    setExtractLog(
+      sorted.map((f) => {
+        const entry = localMap.find((e) => e.fileId === f.id);
+        return { name: f.name, category: entry?.category ?? "REFERENSI", status: "memproses" };
+      })
+    );
+    setExtractDone(false);
+    setTotalChars(0);
+    setProcessedCount(0);
+    setSkippedCount(0);
     setError("");
+    setSubstep("2C");
 
     try {
       const res = await fetch("/api/sharepoint/read-files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files: selected, sessionId: state.sessionId }),
+        body: JSON.stringify({ files: sorted, docMap: localMap, sessionId: state.sessionId }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -166,7 +211,7 @@ export default function Stage2Files() {
       const decoder = new TextDecoder();
       let buffer = "";
 
-      outer: while (true) {
+      while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -178,34 +223,46 @@ export default function Stage2Files() {
           if (!jsonStr) continue;
           try {
             const ev = JSON.parse(jsonStr) as Record<string, unknown>;
-            if (typeof ev.progress === "number") {
-              setExtractProgress((p) => ({ ...p, current: ev.progress as number, total: ev.total as number, name: (ev.name as string) ?? "" }));
-            } else if (ev.skipped) {
-              setExtractProgress((p) => ({ ...p, skipped: [...p.skipped, { name: ev.skipped as string, reason: (ev.reason as string) ?? "" }] }));
+            if (ev.type === "done") {
+              const idx = ev.index as number;
+              setExtractLog((log) =>
+                log.map((entry, i) =>
+                  i === idx
+                    ? { ...entry, status: "selesai", charCount: ev.charCount as number }
+                    : entry
+                )
+              );
+              setTotalChars((t) => t + (ev.charCount as number));
+              setProcessedCount((c) => c + 1);
+            } else if (ev.type === "error") {
+              const idx = ev.index as number;
+              setExtractLog((log) =>
+                log.map((entry, i) =>
+                  i === idx
+                    ? { ...entry, status: "gagal", reason: ev.reason as string }
+                    : entry
+                )
+              );
+              setSkippedCount((c) => c + 1);
+            } else if (ev.type === "complete") {
+              setExtractDone(true);
+              setSubstep("2D");
             } else if (ev.error) {
               throw new Error(ev.error as string);
-            } else if (ev.done) {
-              break outer;
             }
           } catch (inner) {
             if (inner instanceof Error && inner.message !== "Unexpected token") throw inner;
           }
         }
       }
-
-      setExtractPhase("done");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan saat ekstraksi");
-      setExtractPhase("idle");
     }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
-  const fileById = (id: string) => state.allFiles.find((f) => f.id === id);
-  const mapById  = (id: string) => localMap.find((e) => e.fileId === id);
-
-  const selectedCount = state.allFiles.filter((f) => f.selected).length;
-  const pct = extractProgress.total > 0 ? Math.round((extractProgress.current / extractProgress.total) * 100) : 0;
+  const b2SelectedCount = b2CheckedIds.size;
+  const fileById = (id: string) => state.selectedFiles.find((f) => f.id === id) ?? state.allFiles.find((f) => f.id === id);
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -223,8 +280,8 @@ export default function Stage2Files() {
         </div>
       )}
 
-      {/* ── 2A: File Discovery ─────────────────────────────────────────────── */}
-      {(substep === "2A" || substep === "2B") && (
+      {/* ── 2A: File Discovery + Selection ────────────────────────────────────── */}
+      {substep === "2A" && (
         <div>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 20 }}>
             Masukkan sharing link folder SharePoint yang berisi dokumen perkara.
@@ -237,11 +294,11 @@ export default function Stage2Files() {
               onKeyDown={(e) => e.key === "Enter" && discoverFiles()}
               placeholder="https://sandiva.sharepoint.com/:f:/s/SiteName/AbCdEfGhIj..."
               style={{ flex: 1, fontFamily: "monospace", fontSize: 12 }}
-              disabled={discovering || mapping}
+              disabled={discovering}
             />
             <button
               onClick={discoverFiles}
-              disabled={discovering || mapping || !folderLink.trim()}
+              disabled={discovering || !folderLink.trim()}
               style={{ padding: "8px 20px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap", opacity: discovering || !folderLink.trim() ? 0.6 : 1 }}
             >
               {discovering ? "Memuat..." : "Muat Daftar"}
@@ -251,14 +308,25 @@ export default function Stage2Files() {
             Buka folder di SharePoint → klik <strong>Bagikan</strong> → salin link → tempel di sini.
           </p>
 
-          {state.allFiles.length > 0 && !mapping && (
+          {state.allFiles.length > 0 && (
             <>
-              <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 10 }}>
-                {state.allFiles.length} file ditemukan
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                  {state.allFiles.length} file ditemukan — {checkedIds.size} dipilih
+                </span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={selectAll2A} style={{ fontSize: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer" }}>Pilih Semua</button>
+                  <button onClick={clearAll2A} style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>Hapus Pilihan</button>
+                </div>
               </div>
-              <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 240, overflowY: "auto", marginBottom: 20 }}>
+              <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 280, overflowY: "auto", marginBottom: 20 }}>
                 {state.allFiles.map((f, i) => (
-                  <div key={f.id} style={{ display: "flex", gap: 10, padding: "8px 12px", borderBottom: i < state.allFiles.length - 1 ? "1px solid var(--border-color)" : "none", alignItems: "center" }}>
+                  <div
+                    key={f.id}
+                    style={{ display: "flex", gap: 10, padding: "8px 12px", borderBottom: i < state.allFiles.length - 1 ? "1px solid var(--border-color)" : "none", alignItems: "center", cursor: "pointer", background: checkedIds.has(f.id) ? "rgba(91,155,213,0.04)" : "transparent" }}
+                    onClick={() => toggleCheck2A(f.id)}
+                  >
+                    <input type="checkbox" checked={checkedIds.has(f.id)} onChange={() => toggleCheck2A(f.id)} onClick={(e) => e.stopPropagation()} />
                     <span style={{ fontSize: 14 }}>{FILE_ICON[f.type] || "📎"}</span>
                     <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
                     <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.size}</span>
@@ -267,195 +335,192 @@ export default function Stage2Files() {
                 ))}
               </div>
               <button
-                onClick={buildDocMap}
-                disabled={mapping}
-                style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: mapping ? "wait" : "pointer" }}
+                onClick={confirmSelection}
+                disabled={checkedIds.size === 0}
+                style={{ padding: "10px 24px", background: checkedIds.size > 0 ? "var(--accent-blue)" : "var(--border-color)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: checkedIds.size > 0 ? "pointer" : "not-allowed" }}
               >
-                {mapping ? "AI sedang menganalisis..." : `Analisis dengan AI →`}
+                Konfirmasi Pilihan ({checkedIds.size} file) →
               </button>
             </>
           )}
 
-          {mapping && (
-            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 4, marginTop: 16 }}>
+          <div style={{ marginTop: 24 }}>
+            <button
+              onClick={() => goToStage(1)}
+              style={{ padding: "10px 20px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 14, cursor: "pointer" }}
+            >
+              ← Kembali ke Pilihan Dokumen
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── 2B: AI Document Map ───────────────────────────────────────────────── */}
+      {substep === "2B" && (
+        <div>
+          {mapping ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 20, background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 4 }}>
               <Spinner />
               <span style={{ fontSize: 14, color: "var(--text-muted)" }}>
-                AI sedang mengategorikan {state.allFiles.length} file...
+                AI sedang mengategorikan {state.selectedFiles.length} file...
               </span>
+            </div>
+          ) : (
+            <>
+              <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 6 }}>
+                AI telah mengkategorikan {state.selectedFiles.length} file. Tinjau, ubah kategori atau centang jika diperlukan, lalu konfirmasi.
+              </p>
+              <div style={{ display: "flex", gap: 16, marginBottom: 20, fontSize: 12, flexWrap: "wrap" }}>
+                {CATEGORY_CYCLE.map((cat) => {
+                  const count = localMap.filter((e) => e.category === cat).length;
+                  return (
+                    <span key={cat} style={{ color: CATEGORY_META[cat].color, fontWeight: 600 }}>
+                      {CATEGORY_META[cat].label} {count}
+                    </span>
+                  );
+                })}
+                <span style={{ color: "var(--text-muted)", marginLeft: "auto" }}>{b2SelectedCount} akan diekstrak</span>
+              </div>
+
+              {CATEGORY_CYCLE.map((cat) => {
+                const entries = localMap.filter((e) => e.category === cat);
+                if (entries.length === 0) return null;
+                const meta = CATEGORY_META[cat];
+                return (
+                  <div key={cat} style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, letterSpacing: "0.1em", fontWeight: 700, color: meta.color, marginBottom: 8 }}>
+                      {meta.label} — {entries.length} file
+                    </div>
+                    <div style={{ border: `1px solid ${meta.color}33`, borderRadius: 4, overflow: "hidden" }}>
+                      {entries.map((entry, i) => {
+                        const file = fileById(entry.fileId);
+                        if (!file) return null;
+                        return (
+                          <MapRow
+                            key={entry.fileId}
+                            file={file}
+                            entry={entry}
+                            isLast={i === entries.length - 1}
+                            checked={b2CheckedIds.has(entry.fileId)}
+                            onToggle={() => toggleCheck2B(entry.fileId)}
+                            onCycleCategory={() => cycleCategory(entry.fileId)}
+                            meta={meta}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  onClick={() => setSubstep("2A")}
+                  style={{ padding: "10px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: "pointer" }}
+                >
+                  ← Ubah Pilihan File
+                </button>
+                <button
+                  onClick={startExtraction}
+                  disabled={b2SelectedCount === 0}
+                  style={{ padding: "10px 24px", background: b2SelectedCount > 0 ? "var(--accent-blue)" : "var(--border-color)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: b2SelectedCount > 0 ? "pointer" : "not-allowed" }}
+                >
+                  Konfirmasi &amp; Ekstrak ({b2SelectedCount} file) →
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── 2C: Extraction Progress ───────────────────────────────────────────── */}
+      {substep === "2C" && (
+        <div>
+          <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 16 }}>
+            Mengekstrak konten dokumen. File KRITIS diproses terlebih dahulu.
+          </p>
+          <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
+            {extractLog.map((entry, i) => {
+              const meta = CATEGORY_META[entry.category];
+              return (
+                <div
+                  key={i}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.04)" : "transparent" }}
+                >
+                  <span style={{ fontSize: 13, width: 20, textAlign: "center", flexShrink: 0 }}>
+                    {entry.status === "selesai" ? "✓" : entry.status === "gagal" ? "✗" : <SpinnerInline />}
+                  </span>
+                  <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
+                  {entry.status === "selesai" && entry.charCount !== undefined && (
+                    <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{(entry.charCount / 1000).toFixed(1)}k chars</span>
+                  )}
+                  {entry.status === "gagal" && entry.reason && (
+                    <span style={{ fontSize: 11, color: "var(--error)", flexShrink: 0 }} title={entry.reason}>gagal</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {error && (
+            <div style={{ fontSize: 13, color: "var(--error)", marginBottom: 16 }}>
+              {error}
             </div>
           )}
         </div>
       )}
 
-      {/* ── 2C: Review map ─────────────────────────────────────────────────── */}
-      {substep === "2C" && (
+      {/* ── 2D: Completion Summary ────────────────────────────────────────────── */}
+      {substep === "2D" && (
         <div>
-          <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 6 }}>
-            AI telah mengkategorikan {state.allFiles.length} file. Tinjau, ubah kategori jika diperlukan, lalu konfirmasi.
-          </p>
-          <div style={{ display: "flex", gap: 16, marginBottom: 20, fontSize: 12, color: "var(--text-muted)" }}>
-            {CATEGORY_ORDER.map((cat) => {
-              const count = localMap.filter((e) => e.category === cat).length;
+          <div style={{ padding: "14px 18px", background: "rgba(39,174,96,0.08)", border: "1px solid var(--success)", borderRadius: 4, fontSize: 14, color: "var(--success)", marginBottom: 20, fontWeight: 500 }}>
+            ✓ Ekstraksi selesai
+          </div>
+
+          <div style={{ display: "flex", gap: 24, marginBottom: 20, flexWrap: "wrap" }}>
+            <Stat label="File diproses" value={processedCount} />
+            <Stat label="File gagal" value={skippedCount} />
+            <Stat label="Total karakter" value={`${(totalChars / 1000).toFixed(1)}k`} />
+          </div>
+
+          {/* Category summary */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+            {CATEGORY_CYCLE.map((cat) => {
+              const count = extractLog.filter((e) => e.category === cat && e.status === "selesai").length;
+              if (count === 0) return null;
               const meta = CATEGORY_META[cat];
               return (
-                <span key={cat} style={{ color: meta.color, fontWeight: 600 }}>
+                <span key={cat} style={{ fontSize: 12, padding: "4px 10px", background: meta.bg, color: meta.color, borderRadius: 3, fontWeight: 600, border: `1px solid ${meta.color}33` }}>
                   {meta.label} {count}
                 </span>
               );
             })}
-            <span style={{ marginLeft: "auto" }}>{selectedCount} dipilih</span>
           </div>
 
-          {CATEGORY_ORDER.map((cat) => {
-            const entries = localMap.filter((e) => e.category === cat);
-            if (entries.length === 0) return null;
-            const meta = CATEGORY_META[cat];
-            return (
-              <div key={cat} style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, letterSpacing: "0.1em", fontWeight: 700, color: meta.color, marginBottom: 8 }}>
-                  {meta.label} — {entries.length} file
-                </div>
-                <div style={{ border: `1px solid ${meta.color}33`, borderRadius: 4, overflow: "hidden" }}>
-                  {entries.map((entry, i) => {
-                    const file = fileById(entry.fileId);
-                    if (!file) return null;
-                    return (
-                      <MapRow
-                        key={entry.fileId}
-                        file={file}
-                        entry={entry}
-                        isLast={i === entries.length - 1}
-                        onToggle={() => toggleFile(file.id)}
-                        onCategoryChange={(c) => updateCategory(file.id, c)}
-                        meta={meta}
-                      />
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-
-          <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
-            <button
-              onClick={() => setSubstep("2A")}
-              style={{ padding: "10px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: "pointer" }}
-            >
-              ← Ganti Folder
-            </button>
-            <button
-              onClick={confirmSelection}
-              disabled={selectedCount === 0}
-              style={{ padding: "10px 24px", background: selectedCount > 0 ? "var(--accent-blue)" : "var(--border-color)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: selectedCount > 0 ? "pointer" : "not-allowed" }}
-            >
-              Konfirmasi &amp; Ekstrak ({selectedCount} file) →
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── 2D: Targeted extraction ─────────────────────────────────────────── */}
-      {substep === "2D" && (
-        <div>
-          <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 20 }}>
-            Mengekstrak konten dari {state.selectedFiles.length} file yang dipilih. File KRITIS diproses terlebih dahulu.
-          </p>
-
-          {/* Selected file list with extraction priority order */}
-          <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 220, overflowY: "auto", marginBottom: 20 }}>
-            {state.selectedFiles.map((f, i) => {
-              const entry = mapById(f.id);
-              const cat = entry?.category ?? "PENDUKUNG";
-              const meta = CATEGORY_META[cat];
-              const isDone = i < extractProgress.current;
-              return (
-                <div key={f.id} style={{ display: "flex", gap: 10, padding: "8px 12px", borderBottom: i < state.selectedFiles.length - 1 ? "1px solid var(--border-color)" : "none", alignItems: "center", opacity: isDone ? 0.5 : 1 }}>
-                  <span style={{ fontSize: 13 }}>{isDone ? "✓" : FILE_ICON[f.type] || "📎"}</span>
-                  <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em" }}>{meta.label}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {extractPhase === "idle" && (
-            <button
-              onClick={runExtraction}
-              style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: "pointer", marginBottom: 16 }}
-            >
-              Mulai Ekstraksi
-            </button>
-          )}
-
-          {extractPhase === "extracting" && (
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>
-                <span>
-                  Memproses file {extractProgress.current} dari {extractProgress.total}
-                  {extractProgress.name ? ` — ${extractProgress.name}` : ""}
-                </span>
-                <span>{pct}%</span>
-              </div>
-              <div style={{ height: 6, background: "var(--border-color)", borderRadius: 3, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${pct}%`, background: "var(--accent-blue)", borderRadius: 3, transition: "width 0.3s ease" }} />
-              </div>
-              {extractProgress.skipped.map((s, i) => (
-                <div key={i} style={{ fontSize: 12, color: "#e67e22", marginTop: 6 }}>⚠ {s.name} — {s.reason}</div>
+          {/* Failed files */}
+          {skippedCount > 0 && (
+            <div style={{ padding: "10px 14px", background: "rgba(192,57,43,0.06)", border: "1px solid rgba(192,57,43,0.2)", borderRadius: 4, fontSize: 12, marginBottom: 20 }}>
+              <strong style={{ color: "var(--error)" }}>{skippedCount} file gagal diekstrak:</strong>
+              {extractLog.filter((e) => e.status === "gagal").map((e, i) => (
+                <div key={i} style={{ color: "var(--text-muted)", marginTop: 4 }}>• {e.name}{e.reason ? ` — ${e.reason}` : ""}</div>
               ))}
-            </div>
-          )}
-
-          {extractPhase === "done" && (
-            <>
-              {extractProgress.skipped.length > 0 && (
-                <div style={{ padding: "10px 14px", background: "rgba(230,126,34,0.08)", border: "1px solid rgba(230,126,34,0.3)", borderRadius: 4, fontSize: 12, marginBottom: 16 }}>
-                  <strong style={{ color: "#e67e22" }}>{extractProgress.skipped.length} file dilewati:</strong>
-                  {extractProgress.skipped.map((s, i) => (
-                    <div key={i} style={{ color: "var(--text-muted)", marginTop: 2 }}>• {s.name} — {s.reason}</div>
-                  ))}
-                </div>
-              )}
-              <div style={{ padding: "10px 14px", background: "rgba(39,174,96,0.08)", border: "1px solid var(--success)", borderRadius: 4, fontSize: 13, color: "var(--success)", marginBottom: 20 }}>
-                ✓ Ekstraksi selesai — {extractProgress.current - extractProgress.skipped.length} file berhasil diproses
-              </div>
-            </>
-          )}
-
-          {error && (
-            <div style={{ fontSize: 13, color: "var(--error)", marginBottom: 16 }}>
-              {error}
-              <button onClick={runExtraction} style={{ marginLeft: 10, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>Coba lagi</button>
             </div>
           )}
 
           <div style={{ display: "flex", gap: 12 }}>
             <button
-              onClick={() => setSubstep("2C")}
-              disabled={extractPhase === "extracting"}
+              onClick={() => setSubstep("2B")}
               style={{ padding: "10px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: "pointer" }}
             >
-              ← Ubah Pilihan
+              ← Ulang Pilihan
             </button>
             <button
               onClick={() => goToStage(3)}
-              disabled={extractPhase !== "done"}
-              style={{ padding: "10px 24px", background: extractPhase === "done" ? "var(--accent-blue)" : "var(--border-color)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: extractPhase === "done" ? "pointer" : "not-allowed" }}
+              style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: "pointer" }}
             >
               Lanjut ke Analisis →
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Back to Stage 1 — only visible in 2A */}
-      {substep === "2A" && (
-        <div style={{ marginTop: 24 }}>
-          <button
-            onClick={() => goToStage(1)}
-            style={{ padding: "10px 20px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 14, cursor: "pointer" }}
-          >
-            ← Kembali ke Pilihan Dokumen
-          </button>
         </div>
       )}
     </div>
@@ -466,10 +531,10 @@ export default function Stage2Files() {
 
 function SubstepBadge({ current }: { current: Substep }) {
   const steps: { id: Substep; label: string }[] = [
-    { id: "2A", label: "Temukan" },
-    { id: "2B", label: "AI Map" },
-    { id: "2C", label: "Tinjau" },
-    { id: "2D", label: "Ekstrak" },
+    { id: "2A", label: "Pilih" },
+    { id: "2B", label: "Kategorikan" },
+    { id: "2C", label: "Ekstrak" },
+    { id: "2D", label: "Selesai" },
   ];
   const order = ["2A", "2B", "2C", "2D"];
   const currentIdx = order.indexOf(current);
@@ -503,31 +568,25 @@ function MapRow({
   file,
   entry,
   isLast,
+  checked,
   onToggle,
-  onCategoryChange,
+  onCycleCategory,
   meta,
 }: {
   file: FileEntry;
   entry: DocMapEntry;
   isLast: boolean;
+  checked: boolean;
   onToggle: () => void;
-  onCategoryChange: (c: DocCategory) => void;
+  onCycleCategory: () => void;
   meta: { color: string; bg: string };
 }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div style={{ borderBottom: isLast ? "none" : "1px solid var(--border-color)", background: file.selected ? meta.bg : "transparent" }}>
-      <div
-        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", cursor: "pointer" }}
-        onClick={onToggle}
-      >
-        <input
-          type="checkbox"
-          checked={file.selected}
-          onChange={onToggle}
-          onClick={(e) => e.stopPropagation()}
-        />
+    <div style={{ borderBottom: isLast ? "none" : "1px solid var(--border-color)", background: checked ? meta.bg : "transparent" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", cursor: "pointer" }} onClick={onToggle}>
+        <input type="checkbox" checked={checked} onChange={onToggle} onClick={(e) => e.stopPropagation()} />
         <span style={{ fontSize: 14 }}>{FILE_ICON[file.type] || "📎"}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -537,18 +596,13 @@ function MapRow({
             {DOC_TYPE_LABELS[entry.documentType]} · {file.size || "—"}
           </div>
         </div>
-        {/* Category dropdown */}
-        <select
-          value={entry.category}
-          onChange={(e) => { e.stopPropagation(); onCategoryChange(e.target.value as DocCategory); }}
-          onClick={(e) => e.stopPropagation()}
-          style={{ fontSize: 11, fontWeight: 700, color: meta.color, background: "var(--bg-surface)", border: `1px solid ${meta.color}55`, borderRadius: 3, padding: "2px 4px", cursor: "pointer" }}
+        <button
+          onClick={(e) => { e.stopPropagation(); onCycleCategory(); }}
+          style={{ fontSize: 11, fontWeight: 700, color: meta.color, background: meta.bg, border: `1px solid ${meta.color}55`, borderRadius: 3, padding: "2px 8px", cursor: "pointer", flexShrink: 0 }}
+          title="Klik untuk ganti kategori"
         >
-          {(Object.keys(CATEGORY_META) as DocCategory[]).map((cat) => (
-            <option key={cat} value={cat}>{CATEGORY_META[cat].label}</option>
-          ))}
-        </select>
-        {/* Expand reasoning */}
+          {CATEGORY_META[entry.category].label}
+        </button>
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
           style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 4px" }}
@@ -572,5 +626,20 @@ function Spinner() {
       <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid var(--border-color)", borderTopColor: "var(--accent-blue)", animation: "spin 0.8s linear infinite", flexShrink: 0 }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </>
+  );
+}
+
+function SpinnerInline() {
+  return (
+    <span style={{ display: "inline-block", width: 12, height: 12, borderRadius: "50%", border: "2px solid var(--border-color)", borderTopColor: "var(--accent-blue)", animation: "spin 0.8s linear infinite" }} />
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontSize: 22, fontWeight: 600, color: "var(--text-primary)" }}>{value}</div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{label}</div>
+    </div>
   );
 }

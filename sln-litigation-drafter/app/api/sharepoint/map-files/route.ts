@@ -5,22 +5,24 @@ import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType } from "@/typ
 export const maxDuration = 60;
 
 const DOC_TYPE_CONTEXT: Record<string, string> = {
-  gugatan: `Kami sedang menyusun GUGATAN (permohonan awal ke pengadilan). File yang KRITIS: perjanjian/kontrak yang dilanggar, somasi, bukti transaksi pembayaran, surat keberatan, korespondensi pra-litigasi. File PENDUKUNG: akta pendirian, laporan keuangan, dokumen pengiriman. File REFERENSI: putusan yang serupa. File TIDAK RELEVAN: dokumen tidak terkait perkara ini.`,
-  jawaban: `Kami sedang menyusun JAWABAN (respons tergugat). File yang KRITIS: gugatan penggugat, perjanjian yang dipersengketakan, bukti pelaksanaan kewajiban, korespondensi yang membantah dalil gugatan. File PENDUKUNG: laporan keuangan, dokumen internal. File REFERENSI: putusan serupa. Somasi hanya PENDUKUNG kecuali menjadi dasar eksepsi.`,
-  replik: `Kami sedang menyusun REPLIK (respons penggugat atas jawaban). File yang KRITIS: gugatan asli, jawaban tergugat, bukti baru yang merespons bantahan jawaban. File PENDUKUNG: korespondensi yang tidak disertakan di gugatan. File REFERENSI: putusan. Somasi hanya REFERENSI di tahap ini.`,
-  duplik: `Kami sedang menyusun DUPLIK (respons tergugat atas replik). File yang KRITIS: jawaban tergugat, replik penggugat, bukti baru yang merespons replik. File PENDUKUNG: dokumen yang memperkuat bantahan. File REFERENSI: putusan. Kontrak sudah didalilkan, statusnya PENDUKUNG.`,
-  kesimpulan: `Kami sedang menyusun KESIMPULAN (kesimpulan akhir). File yang KRITIS: semua putusan/penetapan yang diajukan selama persidangan, rangkuman bukti yang telah diverifikasi. File PENDUKUNG: dokumen yang sudah diverifikasi hakim. File REFERENSI: segala dokumen yang sudah ada di berkas perkara. Somasi hanya REFERENSI di tahap ini.`,
-  permohonan_pkpu: `Kami sedang menyusun PERMOHONAN PKPU. File yang KRITIS: perjanjian kredit/utang, bukti jumlah utang, bukti jatuh tempo, daftar kreditur lain (untuk 2-creditor test), neraca/laporan keuangan terkini. File PENDUKUNG: korespondensi dengan kreditur, dokumen jaminan. File REFERENSI: akta pendirian, izin usaha.`,
-  permohonan_pailit: `Kami sedang menyusun PERMOHONAN PAILIT. File yang KRITIS: bukti utang yang telah jatuh tempo dan dapat ditagih, bukti minimal 2 kreditur (atau satu dengan bukti insolvency), putusan pengadilan yang menguatkan tagihan. File PENDUKUNG: laporan keuangan, aset-aset debitur. File REFERENSI: akta pendirian.`,
-  jawaban_pkpu: `Kami sedang menyusun JAWABAN PKPU/PAILIT. File yang KRITIS: permohonan PKPU/pailit, bukti pelunasan atau dispute atas utang, bukti solvabilitas. File PENDUKUNG: laporan keuangan yang menunjukkan kemampuan bayar, rencana restrukturisasi awal. File REFERENSI: akta pendirian, perjanjian kredit.`,
-  rencana_perdamaian: `Kami sedang menyusun RENCANA PERDAMAIAN. File yang KRITIS: daftar kreditur terverifikasi, jumlah tagihan masing-masing, proyeksi arus kas, aset yang tersedia. File PENDUKUNG: laporan keuangan historis, perjanjian dengan kreditur utama. File REFERENSI: permohonan PKPU, penetapan pengurus.`,
-  kesimpulan_pkpu: `Kami sedang menyusun KESIMPULAN PKPU/PAILIT. File yang KRITIS: semua penetapan hakim pengawas, tagihan yang diverifikasi/dibantah, putusan pengesahan/penolakan perdamaian. File PENDUKUNG: laporan pengurus/kurator. File REFERENSI: semua dokumen yang sudah ada di berkas.`,
+  gugatan: `Kami sedang menyusun GUGATAN (permohonan awal ke pengadilan). Drafter telah memilih file yang relevan. File KRITIS: perjanjian/kontrak yang dilanggar, somasi, bukti transaksi pembayaran, surat keberatan, korespondensi pra-litigasi. File PENDUKUNG: akta pendirian, laporan keuangan, dokumen pengiriman. File REFERENSI: putusan yang serupa.`,
+  jawaban: `Kami sedang menyusun JAWABAN (respons tergugat). Drafter telah memilih file yang relevan. File KRITIS: gugatan penggugat, perjanjian yang dipersengketakan, bukti pelaksanaan kewajiban, korespondensi yang membantah dalil gugatan. File PENDUKUNG: laporan keuangan, dokumen internal. File REFERENSI: putusan serupa. Somasi hanya PENDUKUNG kecuali menjadi dasar eksepsi.`,
+  replik: `Kami sedang menyusun REPLIK (respons penggugat atas jawaban). Drafter telah memilih file yang relevan. File KRITIS: gugatan asli, jawaban tergugat, bukti baru yang merespons bantahan jawaban. File PENDUKUNG: korespondensi yang tidak disertakan di gugatan. File REFERENSI: putusan. Somasi hanya REFERENSI di tahap ini.`,
+  duplik: `Kami sedang menyusun DUPLIK (respons tergugat atas replik). Drafter telah memilih file yang relevan. File KRITIS: jawaban tergugat, replik penggugat, bukti baru yang merespons replik. File PENDUKUNG: dokumen yang memperkuat bantahan. File REFERENSI: putusan. Kontrak sudah didalilkan, statusnya PENDUKUNG.`,
+  kesimpulan: `Kami sedang menyusun KESIMPULAN (kesimpulan akhir). Drafter telah memilih file yang relevan. File KRITIS: semua putusan/penetapan yang diajukan selama persidangan, rangkuman bukti yang telah diverifikasi. File PENDUKUNG: dokumen yang sudah diverifikasi hakim. File REFERENSI: segala dokumen yang sudah ada di berkas perkara.`,
+  permohonan_pkpu: `Kami sedang menyusun PERMOHONAN PKPU. Drafter telah memilih file yang relevan. File KRITIS: perjanjian kredit/utang, bukti jumlah utang, bukti jatuh tempo, daftar kreditur lain (untuk 2-creditor test), neraca/laporan keuangan terkini. File PENDUKUNG: korespondensi dengan kreditur, dokumen jaminan. File REFERENSI: akta pendirian, izin usaha.`,
+  permohonan_pailit: `Kami sedang menyusun PERMOHONAN PAILIT. Drafter telah memilih file yang relevan. File KRITIS: bukti utang yang telah jatuh tempo dan dapat ditagih, bukti minimal 2 kreditur (atau satu dengan bukti insolvency), putusan pengadilan yang menguatkan tagihan. File PENDUKUNG: laporan keuangan, aset-aset debitur. File REFERENSI: akta pendirian.`,
+  jawaban_pkpu: `Kami sedang menyusun JAWABAN PKPU/PAILIT. Drafter telah memilih file yang relevan. File KRITIS: permohonan PKPU/pailit, bukti pelunasan atau dispute atas utang, bukti solvabilitas. File PENDUKUNG: laporan keuangan yang menunjukkan kemampuan bayar, rencana restrukturisasi awal. File REFERENSI: akta pendirian, perjanjian kredit.`,
+  rencana_perdamaian: `Kami sedang menyusun RENCANA PERDAMAIAN. Drafter telah memilih file yang relevan. File KRITIS: daftar kreditur terverifikasi, jumlah tagihan masing-masing, proyeksi arus kas, aset yang tersedia. File PENDUKUNG: laporan keuangan historis, perjanjian dengan kreditur utama. File REFERENSI: permohonan PKPU, penetapan pengurus.`,
+  kesimpulan_pkpu: `Kami sedang menyusun KESIMPULAN PKPU/PAILIT. Drafter telah memilih file yang relevan. File KRITIS: semua penetapan hakim pengawas, tagihan yang diverifikasi/dibantah, putusan pengesahan/penolakan perdamaian. File PENDUKUNG: laporan pengurus/kurator. File REFERENSI: semua dokumen yang sudah ada di berkas.`,
 };
 
 const SYSTEM_PROMPT = `Anda adalah asisten hukum senior di firma hukum Indonesia. Tugas Anda: mengkategorikan daftar file berdasarkan nama file dan konteks perkara.
 
+Drafter telah memilih file yang relevan — semua file yang dikirim dianggap relevan dengan perkara ini.
+
 Untuk setiap file, tentukan:
-1. category: "KRITIS" | "PENDUKUNG" | "REFERENSI" | "TIDAK_RELEVAN"
+1. category: "KRITIS" | "PENDUKUNG" | "REFERENSI"
 2. documentType: "perjanjian_kontrak" | "putusan_penetapan" | "surat_menyurat" | "bukti_transaksi" | "dokumen_korporasi" | "tidak_dikenali"
 3. reasoning: satu kalimat singkat dalam Bahasa Indonesia menjelaskan alasan kategorisasi
 
@@ -28,7 +30,6 @@ Aturan kategorisasi:
 - KRITIS: harus dibaca untuk menyusun dokumen ini, tanpanya argumen utama tidak dapat dibuat
 - PENDUKUNG: memperkuat argumen, baca jika waktu memungkinkan
 - REFERENSI: latar belakang saja, tidak perlu dibaca penuh
-- TIDAK_RELEVAN: tidak terkait perkara atau jenis dokumen ini
 
 Kembalikan HANYA array JSON tanpa markdown code fence, dengan format:
 [{"fileId":"...","category":"...","documentType":"...","reasoning":"..."},...]`;

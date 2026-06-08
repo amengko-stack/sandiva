@@ -9,7 +9,7 @@ export interface FileEntry {
   selected: boolean;
 }
 
-export type DocCategory = "KRITIS" | "PENDUKUNG" | "REFERENSI" | "TIDAK_RELEVAN";
+export type DocCategory = "KRITIS" | "PENDUKUNG" | "REFERENSI";
 
 export type DocDocumentType =
   | "perjanjian_kontrak"

@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
-import type { FileEntry } from "@/types";
+import type { FileEntry, DocDocumentType } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Token — plain fetch, no Azure SDK
@@ -305,65 +305,99 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
   return results;
 }
 
-export async function readFileContent(filePath: string): Promise<string> {
-  let ext: string;
-  let ab: ArrayBuffer;
-
-  // Resolved drive item path produced by listMatterFiles for folder sharing links
+async function downloadBytes(filePath: string): Promise<{ bytes: Buffer; ext: string }> {
   if (filePath.startsWith("drive:")) {
     const parts = filePath.split(":");
-    // format: drive:{driveId}:{itemId}
     const driveId = parts[1];
     const itemId = parts[2];
-    ext = fileExt(itemId.includes(".") ? itemId : ""); // itemId has no ext; handled below
-    // Fetch name first to get extension
     const metaRes = await graphFetch(`/drives/${driveId}/items/${itemId}?$select=name`);
     if (!metaRes.ok) {
       const text = await metaRes.text();
       throw new Error(`Drive item metadata error ${metaRes.status}: ${text}`);
     }
     const meta = await metaRes.json();
-    ext = fileExt(meta.name ?? "");
+    const ext = fileExt(meta.name ?? "");
     const contentRes = await graphFetch(`/drives/${driveId}/items/${itemId}/content`);
     if (!contentRes.ok) {
       const text = await contentRes.text();
       throw new Error(`Drive item download error ${contentRes.status}: ${text}`);
     }
-    ab = await contentRes.arrayBuffer();
-    return extractText(Buffer.from(ab), ext);
+    return { bytes: Buffer.from(await contentRes.arrayBuffer()), ext };
   }
 
   const parsed = await parseInput(filePath);
 
   if (parsed.kind === "sharing-link") {
-    // Resolve filename from metadata to detect extension
     const metaRes = await graphFetch(`/shares/${parsed.shareId}/driveItem?$select=name`);
     if (!metaRes.ok) {
       const text = await metaRes.text();
       throw new Error(`Share metadata error ${metaRes.status}: ${text}`);
     }
     const meta = await metaRes.json();
-    ext = fileExt(meta.name ?? "");
+    const ext = fileExt(meta.name ?? "");
     const contentRes = await graphFetch(`/shares/${parsed.shareId}/driveItem/content`);
     if (!contentRes.ok) {
       const text = await contentRes.text();
       throw new Error(`Share download error ${contentRes.status}: ${text}`);
     }
-    ab = await contentRes.arrayBuffer();
-  } else {
-    const siteId = parsed.siteAddr!;
-    const normalized = normalizePath(parsed.folderPath);
-    ext = fileExt(normalized);
-    const encoded = encodedSegments(normalized);
-    const contentRes = await graphFetch(`/sites/${siteId}/drive/root:/${encoded}:/content`);
-    if (!contentRes.ok) {
-      const text = await contentRes.text();
-      throw new Error(`File download error ${contentRes.status} [${filePath}]: ${text}`);
-    }
-    ab = await contentRes.arrayBuffer();
+    return { bytes: Buffer.from(await contentRes.arrayBuffer()), ext };
   }
 
-  return extractText(Buffer.from(ab), ext);
+  const siteId = parsed.siteAddr!;
+  const normalized = normalizePath(parsed.folderPath);
+  const ext = fileExt(normalized);
+  const encoded = encodedSegments(normalized);
+  const contentRes = await graphFetch(`/sites/${siteId}/drive/root:/${encoded}:/content`);
+  if (!contentRes.ok) {
+    const text = await contentRes.text();
+    throw new Error(`File download error ${contentRes.status} [${filePath}]: ${text}`);
+  }
+  return { bytes: Buffer.from(await contentRes.arrayBuffer()), ext };
+}
+
+export async function readFileContent(filePath: string): Promise<string> {
+  const { bytes, ext } = await downloadBytes(filePath);
+  return extractText(bytes, ext);
+}
+
+export async function readFileContentWithMode(
+  filePath: string,
+  documentType: DocDocumentType
+): Promise<string> {
+  const { bytes, ext } = await downloadBytes(filePath);
+  const rawText = await extractText(bytes, ext);
+
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  if (documentType === "perjanjian_kontrak") {
+    const res = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 2000,
+      messages: [
+        {
+          role: "user",
+          content: `Dari dokumen perjanjian/kontrak berikut, ekstrak secara terstruktur:\n- Para pihak (nama lengkap dan perannya)\n- Tanggal perjanjian\n- Kewajiban masing-masing pihak\n- Klausul wanprestasi dan konsekuensinya\n- Klausul penalti / denda\n- Nilai perjanjian\n\nDokumen:\n${rawText}`,
+        },
+      ],
+    });
+    return res.content.filter((b) => b.type === "text").map((b) => (b as { type: "text"; text: string }).text).join("\n");
+  }
+
+  if (documentType === "bukti_transaksi" || documentType === "dokumen_korporasi") {
+    const prompt =
+      documentType === "bukti_transaksi"
+        ? `Dari dokumen bukti transaksi berikut, buat ringkasan singkat yang mencakup: jumlah/nilai, tanggal transaksi, para pihak, dan deskripsi transaksi.\n\nDokumen:\n${rawText}`
+        : `Dari dokumen korporasi berikut, buat ringkasan singkat yang mencakup: nama entitas, struktur kepemilikan, direktur/komisaris, dan data relevan lainnya.\n\nDokumen:\n${rawText}`;
+    const res = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 2000,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return res.content.filter((b) => b.type === "text").map((b) => (b as { type: "text"; text: string }).text).join("\n");
+  }
+
+  // linear: putusan_penetapan, surat_menyurat, tidak_dikenali — return full text
+  return rawText;
 }
 
 export async function readMultipleFiles(
