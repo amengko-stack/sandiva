@@ -77,14 +77,17 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
   let index = 0;
 
   async function recurse(path: string) {
-    const endpoint = path
-      ? `/sites/${siteId}/drive/root:/${path}:/children?$select=id,name,size,file,folder`
+    const encodedPath = path
+      ? path.split("/").map(encodeURIComponent).join("/")
+      : "";
+    const endpoint = encodedPath
+      ? `/sites/${siteId}/drive/root:/${encodedPath}:/children?$select=id,name,size,file,folder`
       : `/sites/${siteId}/drive/root/children?$select=id,name,size,file,folder`;
 
     const res = await graphGet(endpoint);
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Graph list error ${res.status}: ${text}`);
+      throw new Error(`Graph list error ${res.status} [path: ${path}]: ${text}`);
     }
     const data = await res.json();
     const items: GraphItem[] = data.value ?? [];
@@ -115,12 +118,14 @@ export async function readFileContent(filePath: string): Promise<string> {
   const normalized = normalizePath(filePath);
   const fileExt = ext(normalized);
 
-  const res = await graphGet(
-    `/sites/${siteId}/drive/root:/${normalized}:/content`
-  );
+  // Encode each path segment individually, preserving slashes
+  const encodedPath = normalized.split("/").map(encodeURIComponent).join("/");
+  const endpoint = `/sites/${siteId}/drive/root:/${encodedPath}:/content`;
+
+  const res = await graphGet(endpoint);
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Graph download error ${res.status}: ${text}`);
+    throw new Error(`Graph download error ${res.status} [path: ${normalized}]: ${text}`);
   }
 
   const arrayBuffer = await res.arrayBuffer();
