@@ -9,6 +9,23 @@ export interface FileEntry {
   selected: boolean;
 }
 
+export type DocCategory = "KRITIS" | "PENDUKUNG" | "REFERENSI" | "TIDAK_RELEVAN";
+
+export type DocDocumentType =
+  | "perjanjian_kontrak"
+  | "putusan_penetapan"
+  | "surat_menyurat"
+  | "bukti_transaksi"
+  | "dokumen_korporasi"
+  | "tidak_dikenali";
+
+export interface DocMapEntry {
+  fileId: string;       // matches FileEntry.id
+  category: DocCategory;
+  documentType: DocDocumentType;
+  reasoning: string;
+}
+
 export interface CaseAnalysis {
   identitasPihak: string;
   hubunganHukum: string;
@@ -61,6 +78,7 @@ export interface WorkflowState {
   pihak: string | null;
   folderPath: string;
   allFiles: FileEntry[];
+  docMap: DocMapEntry[];
   selectedFiles: FileEntry[];
   caseAnalysis: CaseAnalysis | null;
   userCorrections: string;
@@ -86,7 +104,9 @@ export type WorkflowAction =
     }
   | { type: "SET_FOLDER"; folderPath: string }
   | { type: "SET_ALL_FILES"; files: FileEntry[] }
+  | { type: "SET_DOC_MAP"; map: DocMapEntry[] }
   | { type: "TOGGLE_FILE"; id: string }
+  | { type: "UPDATE_DOC_MAP_ENTRY"; fileId: string; patch: Partial<DocMapEntry> }
   | { type: "SET_SELECTED_FILES"; files: FileEntry[] }
   | { type: "SET_CASE_ANALYSIS"; analysis: CaseAnalysis }
   | { type: "SET_USER_CORRECTIONS"; text: string }

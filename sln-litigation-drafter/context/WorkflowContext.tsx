@@ -26,6 +26,7 @@ const initialState: WorkflowState = {
   pihak: null,
   folderPath: "",
   allFiles: [],
+  docMap: [],
   selectedFiles: [],
   caseAnalysis: null,
   userCorrections: "",
@@ -60,11 +61,22 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "SET_ALL_FILES":
       return { ...state, allFiles: action.files };
 
+    case "SET_DOC_MAP":
+      return { ...state, docMap: action.map };
+
     case "TOGGLE_FILE":
       return {
         ...state,
         allFiles: state.allFiles.map((f) =>
           f.id === action.id ? { ...f, selected: !f.selected } : f
+        ),
+      };
+
+    case "UPDATE_DOC_MAP_ENTRY":
+      return {
+        ...state,
+        docMap: state.docMap.map((e) =>
+          e.fileId === action.fileId ? { ...e, ...action.patch } : e
         ),
       };
 
