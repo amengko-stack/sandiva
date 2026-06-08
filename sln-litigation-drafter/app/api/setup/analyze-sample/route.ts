@@ -10,6 +10,7 @@ Analisis meliputi: struktur dokumen, pilihan bahasa formal, cara pengorganisasia
 Tulis dalam Bahasa Indonesia formal. Maksimum 1000 kata.`;
 
 export async function POST(req: NextRequest) {
+  let step = "parse";
   try {
     const { sharePointPath, docType } = await req.json();
 
@@ -17,11 +18,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "sharePointPath wajib diisi" }, { status: 400 });
     }
 
+    step = "readFile";
     const fileContent = await readFileContent(sharePointPath);
     if (!fileContent || fileContent.length < 100) {
       return NextResponse.json({ error: "Tidak dapat membaca file atau file kosong" }, { status: 400 });
     }
 
+    step = "claude";
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
@@ -41,7 +44,7 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
     const stack = e instanceof Error ? e.stack : undefined;
-    console.error("[analyze-sample]", message, stack);
-    return NextResponse.json({ error: message, stack }, { status: 500 });
+    console.error(`[analyze-sample][step=${step}]`, message, stack);
+    return NextResponse.json({ error: message, step, stack }, { status: 500 });
   }
 }
