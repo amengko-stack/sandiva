@@ -214,14 +214,14 @@ export default function SetupPage() {
               Tunjukkan sebuah gugatan yang telah disetujui dan dianggap sebagai standar kualitas firma. Aplikasi akan menganalisis gaya penulisannya.
             </p>
             <label style={{ display: "block", fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>
-              Path SharePoint file gugatan
+              Sharing link SharePoint file gugatan
             </label>
             <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
               <input
                 type="text"
                 value={data.gugatanPath}
                 onChange={(e) => setData((d) => ({ ...d, gugatanPath: e.target.value }))}
-                placeholder="Matters/SLN-2024-001/Documents/Gugatan_Final.docx"
+                placeholder="https://sandiva.sharepoint.com/:w:/s/SiteName/AbCdEfGhIj..."
                 style={{ flex: 1 }}
               />
               <button
@@ -290,14 +290,14 @@ export default function SetupPage() {
               Tunjukkan sebuah jawaban tergugat yang menjadi standar firma.
             </p>
             <label style={{ display: "block", fontSize: 13, color: "var(--text-muted)", marginBottom: 8 }}>
-              Path SharePoint file jawaban
+              Sharing link SharePoint file jawaban
             </label>
             <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
               <input
                 type="text"
                 value={data.jawabanPath}
                 onChange={(e) => setData((d) => ({ ...d, jawabanPath: e.target.value }))}
-                placeholder="Matters/SLN-2024-002/Documents/Jawaban_Final.docx"
+                placeholder="https://sandiva.sharepoint.com/:w:/s/SiteName/AbCdEfGhIj..."
                 style={{ flex: 1 }}
               />
               <button
