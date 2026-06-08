@@ -1,12 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
+import mammoth from "mammoth";
 import type { FileEntry } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Token — plain fetch to avoid Azure SDK bundling issues
+// Token — plain fetch, no Azure SDK
 // ---------------------------------------------------------------------------
 let _cachedToken: { token: string; expiresAt: number } | null = null;
 
-async function getM365Token(): Promise<string> {
+async function getGraphToken(): Promise<string> {
   const now = Date.now();
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
     return _cachedToken.token;
@@ -31,84 +32,246 @@ async function getM365Token(): Promise<string> {
   return _cachedToken.token;
 }
 
-// ---------------------------------------------------------------------------
-// MCP query via M365 connector
-// ---------------------------------------------------------------------------
-async function mcpQuery(instruction: string, systemPrompt?: string): Promise<string> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const authToken = await getM365Token();
+async function graphFetch(path: string): Promise<Response> {
+  const token = await getGraphToken();
+  return fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
 
+// ---------------------------------------------------------------------------
+// Input parsing
+// Accepted formats:
+//   1. SharePoint sharing link: https://tenant.sharepoint.com/:w:/s/SiteName/...
+//   2. Full folder/file URL:    https://tenant.sharepoint.com/sites/SiteName/Shared%20Documents/...
+//   3. Site shorthand:          SiteName/Shared Documents/Folder
+//   4. Plain path:              Shared Documents/Folder  (uses SHAREPOINT_SITE_ID env var)
+// ---------------------------------------------------------------------------
+function encodeSharingUrl(url: string): string {
+  const b64 = Buffer.from(url).toString("base64");
+  return "u!" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function isSharingLink(url: string): boolean {
+  return /\/:[\w!]:\//.test(url) || /\/s\/[A-Za-z0-9_-]{10,}/.test(url);
+}
+
+function normalizePath(p: string): string {
+  return p.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function fileExt(name: string): string {
+  return name.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+}
+
+const ALLOWED_EXTENSIONS = new Set(["docx", "pdf", "doc", "txt"]);
+
+interface ParsedInput {
+  kind: "sharing-link" | "site-url" | "plain";
+  shareId?: string;
+  siteIdOrPath?: string; // resolved site ID for site-url; env siteId for plain
+  folderPath: string;
+}
+
+const _siteIdCache: Record<string, string> = {};
+
+async function resolveSiteId(hostname: string, sitePath: string): Promise<string> {
+  const key = `${hostname}/${sitePath}`;
+  if (_siteIdCache[key]) return _siteIdCache[key];
+  const res = await graphFetch(`/sites/${hostname}:/${sitePath}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Cannot resolve site ${key}: ${text}`);
+  }
+  const data = await res.json();
+  _siteIdCache[key] = data.id;
+  return data.id;
+}
+
+async function parseInput(input: string): Promise<ParsedInput> {
+  const trimmed = input.trim();
+
+  // 1. Sharing link
+  if (trimmed.startsWith("http") && isSharingLink(trimmed)) {
+    return { kind: "sharing-link", shareId: encodeSharingUrl(trimmed), folderPath: trimmed };
+  }
+
+  // 2. Full URL
+  if (trimmed.startsWith("http")) {
+    const url = new URL(trimmed);
+    const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const sitesIdx = parts.indexOf("sites");
+    if (sitesIdx >= 0 && parts[sitesIdx + 1]) {
+      const siteName = parts[sitesIdx + 1];
+      const siteId = await resolveSiteId(url.hostname, `sites/${siteName}`);
+      const folderParts = parts
+        .slice(sitesIdx + 2)
+        .filter((p) => p !== "Forms" && !p.endsWith(".aspx"));
+      return { kind: "site-url", siteIdOrPath: siteId, folderPath: folderParts.join("/") };
+    }
+    // Root site — use env
+    const folderPath = parts.join("/");
+    return { kind: "plain", siteIdOrPath: process.env.SHAREPOINT_SITE_ID!, folderPath };
+  }
+
+  // 3. Site shorthand: "SiteName/path"
+  const firstSlash = trimmed.indexOf("/");
+  if (firstSlash > 0) {
+    const first = trimmed.slice(0, firstSlash);
+    if (/^[A-Za-z0-9_-]+$/.test(first)) {
+      const hostname = process.env.SHAREPOINT_HOSTNAME ?? "sandiva.sharepoint.com";
+      const siteId = await resolveSiteId(hostname, `sites/${first}`);
+      return { kind: "site-url", siteIdOrPath: siteId, folderPath: trimmed.slice(firstSlash + 1) };
+    }
+  }
+
+  // 4. Plain path — use env SHAREPOINT_SITE_ID
+  return { kind: "plain", siteIdOrPath: process.env.SHAREPOINT_SITE_ID!, folderPath: trimmed };
+}
+
+function encodedSegments(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+
+// ---------------------------------------------------------------------------
+// Graph helpers
+// ---------------------------------------------------------------------------
+interface GraphItem {
+  id: string;
+  name: string;
+  size?: number;
+  file?: object;
+  folder?: object;
+}
+
+async function listChildren(siteId: string, path: string): Promise<GraphItem[]> {
+  const encoded = encodedSegments(path);
+  const endpoint = encoded
+    ? `/sites/${siteId}/drive/root:/${encoded}:/children?$select=id,name,size,file,folder`
+    : `/sites/${siteId}/drive/root/children?$select=id,name,size,file,folder`;
+  const res = await graphFetch(endpoint);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Graph list error ${res.status} [${path}]: ${text}`);
+  }
+  const data = await res.json();
+  return data.value ?? [];
+}
+
+async function downloadFile(siteId: string, path: string): Promise<ArrayBuffer>;
+async function downloadFile(shareId: string): Promise<ArrayBuffer>;
+async function downloadFile(siteIdOrShareId: string, path?: string): Promise<ArrayBuffer> {
+  const endpoint = path
+    ? `/sites/${siteIdOrShareId}/drive/root:/${encodedSegments(path)}:/content`
+    : `/shares/${siteIdOrShareId}/driveItem/content`;
+  const res = await graphFetch(endpoint);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Graph download error ${res.status}: ${text}`);
+  }
+  return res.arrayBuffer();
+}
+
+// ---------------------------------------------------------------------------
+// Text extraction
+// ---------------------------------------------------------------------------
+async function extractText(bytes: Buffer, ext: string): Promise<string> {
+  if (ext === "txt") return bytes.toString("utf-8");
+
+  if (ext === "docx" || ext === "doc") {
+    const result = await mammoth.extractRawText({ buffer: bytes });
+    return result.value.trim();
+  }
+
+  // PDF — Claude document API
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const params: any = {
+  const response = await (anthropic.messages.create as any)({
     model: "claude-sonnet-4-6",
     max_tokens: 8000,
-    messages: [{ role: "user", content: instruction }],
-    mcp_servers: [
+    messages: [
       {
-        type: "url",
-        name: "microsoft365",
-        url: "https://microsoft365.mcp.claude.com/mcp",
-        authorization_token: authToken,
+        role: "user",
+        content: [
+          {
+            type: "document",
+            source: { type: "base64", media_type: "application/pdf", data: bytes.toString("base64") },
+          },
+          { type: "text", text: "Extract and return the complete text of this document. Do not summarize or truncate." },
+        ],
       },
     ],
-    betas: ["mcp-client-2025-04-04"],
-  };
-  if (systemPrompt) params.system = systemPrompt;
-
-  const response = await client.beta.messages.create(params);
+  });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (response.content as any[])
-    .filter((b: any) => b.type === "text")
-    .map((b: any) => b.text as string)
-    .join("\n")
-    .trim();
+  return (response.content as any[]).filter((b: any) => b.type === "text").map((b: any) => b.text as string).join("\n").trim();
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> {
-  const instruction = `List ALL files recursively inside this SharePoint folder: "${folderPath}"
-Include files in all subfolders. Return ONLY a JSON array, no other text:
-[
-  { "name": "filename.docx", "path": "full/path/to/file.docx", "size": "45 KB", "type": "docx" },
-  ...
-]
-Include only docx, pdf, doc, txt files. Skip folders, images, and system files.`;
+  const parsed = await parseInput(folderPath);
+  const siteId = parsed.siteIdOrPath!;
+  const results: FileEntry[] = [];
+  let index = 0;
 
-  const raw = await mcpQuery(
-    instruction,
-    "You are a SharePoint file listing assistant. Return only valid JSON arrays, no markdown, no explanation."
-  );
-
-  try {
-    const clean = raw.replace(/```json|```/g, "").trim();
-    const match = clean.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error("No JSON array found");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const files = JSON.parse(match[0]) as any[];
-    return files.map((f, i) => ({
-      id: `file-${i}`,
-      name: f.name,
-      path: f.path,
-      size: f.size || "",
-      type: f.type || f.name.split(".").pop() || "",
-      selected: true,
-    }));
-  } catch {
-    return [];
+  async function recurse(path: string) {
+    const items = await listChildren(siteId, path);
+    for (const item of items) {
+      if (item.folder) {
+        await recurse(path ? `${path}/${item.name}` : item.name);
+      } else if (item.file && ALLOWED_EXTENSIONS.has(fileExt(item.name))) {
+        const filePath = path ? `${path}/${item.name}` : item.name;
+        results.push({
+          id: `file-${index++}`,
+          name: item.name,
+          path: filePath,
+          size: item.size ? `${Math.round(item.size / 1024)} KB` : "",
+          type: fileExt(item.name),
+          selected: true,
+        });
+      }
+    }
   }
+
+  await recurse(normalizePath(parsed.folderPath));
+  return results;
 }
 
 export async function readFileContent(filePath: string): Promise<string> {
-  const instruction = `Read the full text content of this SharePoint file: "${filePath}"
-Return the complete text content of the document. Do not summarize. Do not truncate.
-Extract all readable text from the document.`;
+  const parsed = await parseInput(filePath);
+  let ext: string;
+  let ab: ArrayBuffer;
 
-  return mcpQuery(
-    instruction,
-    "You are a document reader. Return the complete raw text content of the document."
-  );
+  if (parsed.kind === "sharing-link") {
+    // Resolve filename from metadata to detect extension
+    const metaRes = await graphFetch(`/shares/${parsed.shareId}/driveItem?$select=name`);
+    if (!metaRes.ok) {
+      const text = await metaRes.text();
+      throw new Error(`Share metadata error ${metaRes.status}: ${text}`);
+    }
+    const meta = await metaRes.json();
+    ext = fileExt(meta.name ?? "");
+    const contentRes = await graphFetch(`/shares/${parsed.shareId}/driveItem/content`);
+    if (!contentRes.ok) {
+      const text = await contentRes.text();
+      throw new Error(`Share download error ${contentRes.status}: ${text}`);
+    }
+    ab = await contentRes.arrayBuffer();
+  } else {
+    const siteId = parsed.siteIdOrPath!;
+    const normalized = normalizePath(parsed.folderPath);
+    ext = fileExt(normalized);
+    const encoded = encodedSegments(normalized);
+    const contentRes = await graphFetch(`/sites/${siteId}/drive/root:/${encoded}:/content`);
+    if (!contentRes.ok) {
+      const text = await contentRes.text();
+      throw new Error(`File download error ${contentRes.status} [${filePath}]: ${text}`);
+    }
+    ab = await contentRes.arrayBuffer();
+  }
+
+  return extractText(Buffer.from(ab), ext);
 }
 
 export async function readMultipleFiles(
