@@ -69,23 +69,14 @@ const ALLOWED_EXTENSIONS = new Set(["docx", "pdf", "doc", "txt"]);
 interface ParsedInput {
   kind: "sharing-link" | "site-url" | "plain";
   shareId?: string;
-  siteIdOrPath?: string; // resolved site ID for site-url; env siteId for plain
+  siteAddr?: string; // Graph API site address: "hostname:/sites/SiteName" or env site ID
   folderPath: string;
 }
 
-const _siteIdCache: Record<string, string> = {};
-
-async function resolveSiteId(hostname: string, sitePath: string): Promise<string> {
-  const key = `${hostname}/${sitePath}`;
-  if (_siteIdCache[key]) return _siteIdCache[key];
-  const res = await graphFetch(`/sites/${hostname}:/${sitePath}`);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Cannot resolve site ${key}: ${text}`);
-  }
-  const data = await res.json();
-  _siteIdCache[key] = data.id;
-  return data.id;
+// Build the Graph API site address used directly in endpoints — no GUID lookup needed.
+// e.g. "sandiva.sharepoint.com:/sites/5018BVI"
+function siteAddr(hostname: string, siteName: string): string {
+  return `${hostname}:/sites/${siteName}`;
 }
 
 async function parseInput(input: string): Promise<ParsedInput> {
@@ -96,37 +87,42 @@ async function parseInput(input: string): Promise<ParsedInput> {
     return { kind: "sharing-link", shareId: encodeSharingUrl(trimmed), folderPath: trimmed };
   }
 
-  // 2. Full URL
+  // 2. Full URL: https://sandiva.sharepoint.com/sites/5018BVI/Shared Documents/...
   if (trimmed.startsWith("http")) {
     const url = new URL(trimmed);
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const sitesIdx = parts.indexOf("sites");
     if (sitesIdx >= 0 && parts[sitesIdx + 1]) {
       const siteName = parts[sitesIdx + 1];
-      const siteId = await resolveSiteId(url.hostname, `sites/${siteName}`);
       const folderParts = parts
         .slice(sitesIdx + 2)
         .filter((p) => p !== "Forms" && !p.endsWith(".aspx"));
-      return { kind: "site-url", siteIdOrPath: siteId, folderPath: folderParts.join("/") };
+      return {
+        kind: "site-url",
+        siteAddr: siteAddr(url.hostname, siteName),
+        folderPath: folderParts.join("/"),
+      };
     }
-    // Root site — use env
-    const folderPath = parts.join("/");
-    return { kind: "plain", siteIdOrPath: process.env.SHAREPOINT_SITE_ID!, folderPath };
+    // Root site — fall back to env SHAREPOINT_SITE_ID
+    return { kind: "plain", siteAddr: process.env.SHAREPOINT_SITE_ID!, folderPath: parts.join("/") };
   }
 
-  // 3. Site shorthand: "SiteName/path"
+  // 3. Site shorthand: "5018BVI/Shared Documents/Folder"
   const firstSlash = trimmed.indexOf("/");
   if (firstSlash > 0) {
     const first = trimmed.slice(0, firstSlash);
     if (/^[A-Za-z0-9_-]+$/.test(first)) {
       const hostname = process.env.SHAREPOINT_HOSTNAME ?? "sandiva.sharepoint.com";
-      const siteId = await resolveSiteId(hostname, `sites/${first}`);
-      return { kind: "site-url", siteIdOrPath: siteId, folderPath: trimmed.slice(firstSlash + 1) };
+      return {
+        kind: "site-url",
+        siteAddr: siteAddr(hostname, first),
+        folderPath: trimmed.slice(firstSlash + 1),
+      };
     }
   }
 
   // 4. Plain path — use env SHAREPOINT_SITE_ID
-  return { kind: "plain", siteIdOrPath: process.env.SHAREPOINT_SITE_ID!, folderPath: trimmed };
+  return { kind: "plain", siteAddr: process.env.SHAREPOINT_SITE_ID!, folderPath: trimmed };
 }
 
 function encodedSegments(path: string): string {
@@ -211,7 +207,7 @@ async function extractText(bytes: Buffer, ext: string): Promise<string> {
 // ---------------------------------------------------------------------------
 export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> {
   const parsed = await parseInput(folderPath);
-  const siteId = parsed.siteIdOrPath!;
+  const siteId = parsed.siteAddr!;
   const results: FileEntry[] = [];
   let index = 0;
 
@@ -259,7 +255,7 @@ export async function readFileContent(filePath: string): Promise<string> {
     }
     ab = await contentRes.arrayBuffer();
   } else {
-    const siteId = parsed.siteIdOrPath!;
+    const siteId = parsed.siteAddr!;
     const normalized = normalizePath(parsed.folderPath);
     ext = fileExt(normalized);
     const encoded = encodedSegments(normalized);
