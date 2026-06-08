@@ -1,16 +1,15 @@
-import { put, get } from "@vercel/blob";
+import { put } from "@vercel/blob";
 import type { MemoryLibrary, PatternEntry, StyleExample } from "@/types";
 
 const PREFIX = "litigation-memory";
 
 export async function readBlobText(path: string): Promise<string | null> {
   try {
-    const result = await get(`${PREFIX}/${path}`, {
-      access: "private",
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
-    if (!result || result.statusCode !== 200) return null;
-    return new Response(result.stream).text();
+    const baseUrl = process.env.BLOB_BASE_URL;
+    if (!baseUrl) return null;
+    const res = await fetch(`${baseUrl}/${PREFIX}/${path}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    return res.text();
   } catch {
     return null;
   }
@@ -21,7 +20,7 @@ export async function writeBlobText(
   content: string
 ): Promise<string> {
   const { url } = await put(`${PREFIX}/${path}`, content, {
-    access: "private",
+    access: "public",
     token: process.env.BLOB_READ_WRITE_TOKEN,
     allowOverwrite: true,
   });
