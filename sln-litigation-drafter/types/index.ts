@@ -84,6 +84,11 @@ export interface ExtractReport {
   skipped: number;
 }
 
+export interface InterviewAnswer {
+  question: string;
+  answer: string;
+}
+
 export interface DraftMeta {
   ref: string;
   docTypeId: string;
@@ -105,6 +110,8 @@ export interface WorkflowState {
   docMap: DocMapEntry[];
   selectedFiles: FileEntry[];
   caseAnalysis: CaseAnalysis | null;
+  interviewAnswers: InterviewAnswer[];
+  strategicAssessment: string;
   userCorrections: string;
   draftText: string;
   isDraftStreaming: boolean;
@@ -133,6 +140,8 @@ export type WorkflowAction =
   | { type: "UPDATE_DOC_MAP_ENTRY"; fileId: string; patch: Partial<DocMapEntry> }
   | { type: "SET_SELECTED_FILES"; files: FileEntry[] }
   | { type: "SET_CASE_ANALYSIS"; analysis: CaseAnalysis }
+  | { type: "SET_INTERVIEW_ANSWERS"; answers: InterviewAnswer[] }
+  | { type: "SET_STRATEGIC_ASSESSMENT"; text: string }
   | { type: "SET_USER_CORRECTIONS"; text: string }
   | { type: "APPEND_DRAFT"; chunk: string }
   | { type: "SET_DRAFT_STREAMING"; value: boolean }

@@ -1,5 +1,15 @@
 let _cachedToken: { token: string; expiresAt: number } | null = null;
 
+async function graphFetch(path: string, init?: RequestInit): Promise<Response> {
+  const token = await getGraphToken();
+  const siteId = process.env.SHAREPOINT_SITE_ID!;
+  const url = `https://graph.microsoft.com/v1.0/sites/${siteId}${path}`;
+  return fetch(url, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
+  });
+}
+
 async function getGraphToken(): Promise<string> {
   const now = Date.now();
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
@@ -59,4 +69,32 @@ export async function uploadFileToSharePoint(
 
   const data = await res.json();
   return data.webUrl || "";
+}
+
+export async function writeMatterFile(
+  matterFolderPath: string,
+  filename: string,
+  content: string | Buffer,
+  mimeType = "application/json"
+): Promise<string> {
+  const buf = typeof content === "string" ? Buffer.from(content, "utf-8") : content;
+  const path = matterFolderPath.endsWith("/") ? matterFolderPath : matterFolderPath + "/";
+  return uploadFileToSharePoint(path, filename, buf, mimeType);
+}
+
+export async function listAiFolder(
+  matterFolderPath: string
+): Promise<{ name: string; downloadUrl: string; lastModified: string }[]> {
+  const path = matterFolderPath.replace(/\/$/, "");
+  const res = await graphFetch(`/drive/root:/${path}/AI:/children`);
+  if (res.status === 404) return [];
+  if (!res.ok) return [];
+  const data = await res.json();
+  const items: { name: string; "@microsoft.graph.downloadUrl": string; lastModifiedDateTime: string }[] =
+    data.value ?? [];
+  return items.map((i) => ({
+    name: i.name,
+    downloadUrl: i["@microsoft.graph.downloadUrl"] ?? "",
+    lastModified: i.lastModifiedDateTime,
+  }));
 }

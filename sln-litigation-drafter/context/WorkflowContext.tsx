@@ -29,6 +29,8 @@ const initialState: WorkflowState = {
   docMap: [],
   selectedFiles: [],
   caseAnalysis: null,
+  interviewAnswers: [],
+  strategicAssessment: "",
   userCorrections: "",
   draftText: "",
   isDraftStreaming: false,
@@ -85,6 +87,12 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
 
     case "SET_CASE_ANALYSIS":
       return { ...state, caseAnalysis: action.analysis };
+
+    case "SET_INTERVIEW_ANSWERS":
+      return { ...state, interviewAnswers: action.answers };
+
+    case "SET_STRATEGIC_ASSESSMENT":
+      return { ...state, strategicAssessment: action.text };
 
     case "SET_USER_CORRECTIONS":
       return { ...state, userCorrections: action.text };

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
-import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType } from "@/types";
+import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, CaseAnalysis, InterviewAnswer } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -75,6 +75,19 @@ export default function Stage2Files() {
   const [spSaveStatus, setSpSaveStatus] = useState<"idle" | "pending" | "saved" | "failed">("idle");
   const [spSaveUrl, setSpSaveUrl] = useState<string | null>(null);
 
+  // Session continuity banner
+  type PriorSession = {
+    latestTimestamp: string;
+    analysis?: CaseAnalysis;
+    kronologi?: string;
+    interviewAnswers?: InterviewAnswer[];
+    strategicAssessment?: string;
+    resumeAtStage?: 3 | 4;
+    resumeAtSubstep?: "3A" | "3B" | "3C";
+  };
+  const [priorSession, setPriorSession] = useState<PriorSession | null>(null);
+  const [priorSessionDismissed, setPriorSessionDismissed] = useState(false);
+
   // ── 2A: Load filenames only ─────────────────────────────────────────────────
   async function discoverFiles() {
     const link = folderLink.trim();
@@ -93,6 +106,18 @@ export default function Stage2Files() {
       dispatch({ type: "SET_FOLDER", folderPath: link });
       dispatch({ type: "SET_ALL_FILES", files: result.files });
       setCheckedIds(new Set((result.files as FileEntry[]).map((f) => f.id)));
+
+      // Background session continuity check
+      fetch("/api/sharepoint/check-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderPath: link }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.found) setPriorSession(data as PriorSession);
+        })
+        .catch(() => {});
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan");
     } finally {
@@ -323,6 +348,36 @@ export default function Stage2Files() {
           <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 20 }}>
             Buka folder di SharePoint → klik <strong>Bagikan</strong> → salin link → tempel di sini.
           </p>
+
+          {/* Session continuity banner */}
+          {priorSession && !priorSessionDismissed && (
+            <div style={{ padding: "12px 16px", background: "rgba(91,155,213,0.08)", border: "1px solid rgba(91,155,213,0.35)", borderRadius: 4, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 13, color: "var(--text-primary)" }}>
+                ⟳ Ditemukan sesi sebelumnya dari{" "}
+                <strong>{new Date(priorSession.latestTimestamp).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</strong>.
+                Lanjutkan?
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => {
+                    if (priorSession.analysis) dispatch({ type: "SET_CASE_ANALYSIS", analysis: priorSession.analysis });
+                    if (priorSession.interviewAnswers) dispatch({ type: "SET_INTERVIEW_ANSWERS", answers: priorSession.interviewAnswers });
+                    if (priorSession.strategicAssessment) dispatch({ type: "SET_STRATEGIC_ASSESSMENT", text: priorSession.strategicAssessment });
+                    goToStage(priorSession.resumeAtStage ?? 3);
+                  }}
+                  style={{ padding: "6px 14px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 3, fontSize: 12, fontWeight: 500, cursor: "pointer" }}
+                >
+                  Ya, Lanjutkan
+                </button>
+                <button
+                  onClick={() => setPriorSessionDismissed(true)}
+                  style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 3, color: "var(--text-muted)", fontSize: 12, cursor: "pointer" }}
+                >
+                  Tidak, Mulai Baru
+                </button>
+              </div>
+            </div>
+          )}
 
           {state.allFiles.length > 0 && (
             <>

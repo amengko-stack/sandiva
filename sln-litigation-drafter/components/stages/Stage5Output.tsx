@@ -1,18 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import { CheckIcon, DownloadIcon, CloudIcon, BookmarkIcon } from "lucide-react";
 
 export default function Stage5Output() {
   const { state, dispatch, goToStage } = useWorkflow();
 
-  const [sharepointPath, setSharepointPath] = useState(
-    state.folderPath ? `${state.folderPath}/Draf` : ""
-  );
-  const [savingSharepoint, setSavingSharepoint] = useState(false);
-  const [sharepointError, setSharepointError] = useState("");
-  const [sharepointUrl, setSharepointUrl] = useState("");
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"pending" | "saved" | "failed" | "idle">("idle");
+  const [autoSaveUrl, setAutoSaveUrl] = useState("");
+  const hasFiredAutoSave = useRef(false);
+
+  useEffect(() => {
+    if (hasFiredAutoSave.current || !state.folderPath || !state.draftText) return;
+    hasFiredAutoSave.current = true;
+
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const filename = `${(state.ref || "draf").replace(/\//g, "-")}_${ts}.docx`;
+    const remotePath = `${state.folderPath.replace(/\/$/, "")}/Drafts/`;
+    setAutoSaveStatus("pending");
+
+    fetch("/api/sharepoint-save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        draftText: state.draftText,
+        ref: state.ref,
+        docType: state.docTypeId,
+        claimType: state.claimType,
+        remotePath,
+        filename,
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.webUrl) { setAutoSaveUrl(data.webUrl); setAutoSaveStatus("saved"); dispatch({ type: "SET_SAVED_SHAREPOINT", value: true }); }
+        else setAutoSaveStatus("failed");
+      })
+      .catch(() => setAutoSaveStatus("failed"));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [sharepointError] = useState("");
 
   const [approvingMemory, setApprovingMemory] = useState(false);
   const [memoryError, setMemoryError] = useState("");
@@ -57,34 +86,6 @@ export default function Stage5Output() {
 
     // Clean up session Blob data after download
     clearSession();
-  }
-
-  async function saveToSharePoint() {
-    setSavingSharepoint(true);
-    setSharepointError("");
-    try {
-      const filename = `${state.ref?.replace(/\//g, "-") || "draf"}.docx`;
-      const res = await fetch("/api/sharepoint-save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          draftText: state.draftText,
-          ref: state.ref,
-          docType: state.docTypeId,
-          claimType: state.claimType,
-          remotePath: sharepointPath,
-          filename,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal menyimpan ke SharePoint");
-      setSharepointUrl(data.webUrl || "");
-      dispatch({ type: "SET_SAVED_SHAREPOINT", value: true });
-    } catch (e: unknown) {
-      setSharepointError(e instanceof Error ? e.message : "Terjadi kesalahan");
-    } finally {
-      setSavingSharepoint(false);
-    }
   }
 
   async function approveForMemory() {
@@ -177,52 +178,28 @@ export default function Stage5Output() {
           </button>
         </ActionCard>
 
-        {/* 2. Save to SharePoint */}
+        {/* 2. Save to SharePoint (auto) */}
         <ActionCard
           icon={<CloudIcon size={20} />}
           title="Simpan ke SharePoint"
-          description="Simpan file .docx ke folder SharePoint matter."
+          description={`Draf disimpan otomatis ke ${state.folderPath ? state.folderPath + "/Drafts/" : "folder Drafts"}.`}
           done={state.savedToSharePoint}
         >
-          {!state.savedToSharePoint ? (
-            <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
-                  Path Folder Tujuan
-                </label>
-                <input
-                  type="text"
-                  value={sharepointPath}
-                  onChange={(e) => setSharepointPath(e.target.value)}
-                  placeholder="Matters/MAT-2026-001/Documents/Draf"
-                />
-              </div>
-              <button
-                onClick={saveToSharePoint}
-                disabled={savingSharepoint || !sharepointPath}
-                style={{
-                  padding: "9px 20px",
-                  background: "var(--accent-blue)",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 4,
-                  fontSize: 13,
-                  cursor: savingSharepoint ? "wait" : "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {savingSharepoint ? "Menyimpan..." : "Simpan"}
-              </button>
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: "var(--success)" }}>
-              ✓ Tersimpan ke SharePoint
-              {sharepointUrl && (
-                <a href={sharepointUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 8, color: "var(--accent-blue)" }}>
+          {autoSaveStatus === "pending" && (
+            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>Menyimpan draf ke SharePoint...</span>
+          )}
+          {autoSaveStatus === "saved" && (
+            <span style={{ fontSize: 13, color: "var(--success)" }}>
+              ✓ Draf tersimpan
+              {autoSaveUrl && (
+                <a href={autoSaveUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 8, color: "var(--accent-blue)" }}>
                   Buka →
                 </a>
               )}
-            </div>
+            </span>
+          )}
+          {autoSaveStatus === "failed" && (
+            <span style={{ fontSize: 13, color: "var(--error)" }}>Gagal menyimpan ke SharePoint</span>
           )}
           {sharepointError && (
             <p style={{ color: "var(--error)", fontSize: 12, marginTop: 6 }}>{sharepointError}</p>
