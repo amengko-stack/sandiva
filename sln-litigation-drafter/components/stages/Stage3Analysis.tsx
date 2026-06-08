@@ -48,7 +48,16 @@ export default function Stage3Analysis() {
 
     if (state.caseAnalysis) {
       setKronoText(state.caseAnalysis.kronologi || "");
-      setSubstep("3A");
+      // Resume at the furthest completed substep
+      if (state.strategicAssessment) {
+        setAssessmentText(state.strategicAssessment);
+        setSubstep("3C");
+      } else if (state.interviewAnswers.length > 0) {
+        setSubstep("3B");
+        loadInterviewQuestions();
+      } else {
+        setSubstep("3A");
+      }
     } else {
       runAnalysis();
     }
