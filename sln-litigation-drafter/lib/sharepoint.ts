@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { Client } from "@microsoft/microsoft-graph-client";
+import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
 import { TokenCredentialAuthenticationProvider } from "@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials/index.js";
 import { ClientSecretCredential } from "@azure/identity";
 import type { FileEntry } from "@/types";
@@ -99,13 +99,11 @@ export async function readFileContent(filePath: string): Promise<string> {
 
   // Download the raw file bytes
   const endpoint = `/sites/${siteId}/drive/root:/${normalized}:/content`;
-  const stream = await client.api(endpoint).getStream();
-  const bytes: Buffer = await new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
-  });
+  const arrayBuffer: ArrayBuffer = await client
+    .api(endpoint)
+    .responseType(ResponseType.ARRAYBUFFER)
+    .get();
+  const bytes = Buffer.from(arrayBuffer);
 
   // For plain text files return directly
   if (fileExt === "txt") {
