@@ -3,7 +3,7 @@ import mammoth from "mammoth";
 import type { FileEntry } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Token cache (per-invocation; Vercel functions are short-lived)
+// Token cache
 // ---------------------------------------------------------------------------
 let _cachedToken: { token: string; expiresAt: number } | null = null;
 
@@ -25,17 +25,12 @@ async function getGraphToken(): Promise<string> {
     `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
     { method: "POST", body: params }
   );
-
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Azure token error ${res.status}: ${text}`);
   }
-
   const json = await res.json();
-  _cachedToken = {
-    token: json.access_token,
-    expiresAt: now + json.expires_in * 1000,
-  };
+  _cachedToken = { token: json.access_token, expiresAt: now + json.expires_in * 1000 };
   return _cachedToken.token;
 }
 
@@ -47,6 +42,109 @@ async function graphGet(path: string): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
+// Site ID resolution cache
+// ---------------------------------------------------------------------------
+const _siteIdCache: Record<string, string> = {};
+
+async function resolveSiteId(hostname: string, sitePath: string): Promise<string> {
+  const key = `${hostname}:${sitePath}`;
+  if (_siteIdCache[key]) return _siteIdCache[key];
+
+  const res = await graphGet(`/sites/${hostname}:/${sitePath}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Cannot resolve site ${hostname}/${sitePath}: ${text}`);
+  }
+  const data = await res.json();
+  _siteIdCache[key] = data.id;
+  return data.id;
+}
+
+// ---------------------------------------------------------------------------
+// Input parsing
+//
+// Accepted formats for folder/file paths:
+//   1. Full SharePoint URL:
+//        https://sandiva.sharepoint.com/sites/5018BVI/Shared%20Documents/Matters
+//   2. SharePoint sharing link:
+//        https://sandiva.sharepoint.com/:w:/s/5018BVI/IQDJBMI...
+//   3. Site-relative shorthand (site name + folder path):
+//        5018BVI/Shared Documents/Matters
+//   4. Plain path (no site name) — uses SHAREPOINT_SITE_ID env var:
+//        Shared Documents/Matters
+// ---------------------------------------------------------------------------
+function getSharePointHostname(): string {
+  return process.env.SHAREPOINT_HOSTNAME ?? "sandiva.sharepoint.com";
+}
+
+function isSharingLink(url: string): boolean {
+  // Sharing links contain /:w:/, /:b:/, /:f:/, etc. or /s/ segments
+  return /\/:[\w]:\//.test(url) || /\/s\//.test(url);
+}
+
+interface ParsedLocation {
+  type: "sharing-link" | "site-url" | "site-path" | "plain-path";
+  siteId?: string; // pre-resolved for plain-path only
+  hostname?: string;
+  sitePath?: string; // e.g. "sites/5018BVI"
+  folderPath: string; // path relative to drive root
+  shareId?: string; // for sharing links
+}
+
+async function parseLocation(input: string): Promise<ParsedLocation> {
+  const trimmed = input.trim();
+
+  // Sharing link (URL containing sharing token)
+  if ((trimmed.startsWith("https://") || trimmed.startsWith("http://")) && isSharingLink(trimmed)) {
+    return { type: "sharing-link", folderPath: trimmed, shareId: encodeSharingUrl(trimmed) };
+  }
+
+  // Full folder URL: https://tenant.sharepoint.com/sites/SiteName/Shared Documents/...
+  if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
+    const url = new URL(trimmed);
+    const hostname = url.hostname;
+    const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    // parts: ["sites", "5018BVI", "Shared Documents", "Subfolder", ...]
+    const sitesIdx = parts.indexOf("sites");
+    if (sitesIdx >= 0 && parts[sitesIdx + 1]) {
+      const siteName = parts[sitesIdx + 1];
+      const sitePath = `sites/${siteName}`;
+      // Everything after site name is the drive-relative folder path, minus "Forms/AllItems.aspx" suffixes
+      const folderParts = parts.slice(sitesIdx + 2).filter(p => p !== "Forms" && !p.endsWith(".aspx") && !p.startsWith("?"));
+      return { type: "site-url", hostname, sitePath, folderPath: folderParts.join("/") };
+    }
+    // Root site
+    return { type: "site-url", hostname, sitePath: "", folderPath: parts.join("/") };
+  }
+
+  // Site-relative shorthand: "5018BVI/Shared Documents/Folder"
+  // Detect by checking if first segment looks like a site name (no slashes, no extension, no spaces)
+  const firstSlash = trimmed.indexOf("/");
+  if (firstSlash > 0) {
+    const firstSegment = trimmed.slice(0, firstSlash);
+    const rest = trimmed.slice(firstSlash + 1);
+    // Site names are short alphanumeric strings without spaces or dots
+    if (/^[A-Za-z0-9_-]+$/.test(firstSegment)) {
+      return {
+        type: "site-path",
+        hostname: getSharePointHostname(),
+        sitePath: `sites/${firstSegment}`,
+        folderPath: rest,
+      };
+    }
+  }
+
+  // Plain path — use env SHAREPOINT_SITE_ID
+  return { type: "plain-path", siteId: process.env.SHAREPOINT_SITE_ID!, folderPath: trimmed };
+}
+
+async function getSiteId(loc: ParsedLocation): Promise<string> {
+  if (loc.siteId) return loc.siteId;
+  if (loc.hostname && loc.sitePath) return resolveSiteId(loc.hostname, loc.sitePath);
+  return process.env.SHAREPOINT_SITE_ID!;
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function normalizePath(p: string): string {
@@ -54,9 +152,13 @@ function normalizePath(p: string): string {
 }
 
 function ext(name: string): string {
-  // Strip query string before extracting extension
   const base = name.split("?")[0];
   return base.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function encodeSharingUrl(url: string): string {
+  const base64 = Buffer.from(url).toString("base64");
+  return "u!" + base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 const ALLOWED_EXTENSIONS = new Set(["docx", "pdf", "doc", "txt"]);
@@ -73,15 +175,13 @@ interface GraphItem {
 // Public API
 // ---------------------------------------------------------------------------
 export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> {
-  const siteId = process.env.SHAREPOINT_SITE_ID!;
-  const normalized = normalizePath(folderPath);
+  const loc = await parseLocation(folderPath);
+  const siteId = await getSiteId(loc);
   const results: FileEntry[] = [];
   let index = 0;
 
   async function recurse(path: string) {
-    const encodedPath = path
-      ? path.split("/").map(encodeURIComponent).join("/")
-      : "";
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
     const endpoint = encodedPath
       ? `/sites/${siteId}/drive/root:/${encodedPath}:/children?$select=id,name,size,file,folder`
       : `/sites/${siteId}/drive/root/children?$select=id,name,size,file,folder`;
@@ -111,36 +211,30 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
     }
   }
 
-  await recurse(normalized);
+  await recurse(normalizePath(loc.folderPath));
   return results;
 }
 
-function encodeSharingUrl(url: string): string {
-  // Graph API sharing link encoding: base64url("u!" + url)
-  const base64 = Buffer.from(url).toString("base64");
-  const base64url = base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `u!${base64url}`;
-}
-
 export async function readFileContent(filePath: string): Promise<string> {
-  let fileExt = ext(filePath);
+  const loc = await parseLocation(filePath);
+  let fileExt: string;
   let contentEndpoint: string;
 
-  if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
-    // SharePoint sharing link — resolve metadata first to get real filename
-    const shareId = encodeSharingUrl(filePath);
-    const metaRes = await graphGet(`/shares/${shareId}/driveItem?$select=name`);
+  if (loc.type === "sharing-link") {
+    // Resolve metadata to get real filename/extension
+    const metaRes = await graphGet(`/shares/${loc.shareId}/driveItem?$select=name`);
     if (!metaRes.ok) {
       const text = await metaRes.text();
       throw new Error(`Graph share resolve error ${metaRes.status}: ${text}`);
     }
     const meta = await metaRes.json();
     fileExt = ext(meta.name ?? "");
-    contentEndpoint = `/shares/${shareId}/driveItem/content`;
+    contentEndpoint = `/shares/${loc.shareId}/driveItem/content`;
   } else {
-    const siteId = process.env.SHAREPOINT_SITE_ID!;
-    const normalized = normalizePath(filePath);
+    const siteId = await getSiteId(loc);
+    const normalized = normalizePath(loc.folderPath);
     const encodedPath = normalized.split("/").map(encodeURIComponent).join("/");
+    fileExt = ext(normalized);
     contentEndpoint = `/sites/${siteId}/drive/root:/${encodedPath}:/content`;
   }
 
@@ -153,9 +247,7 @@ export async function readFileContent(filePath: string): Promise<string> {
   const arrayBuffer = await res.arrayBuffer();
   const bytes = Buffer.from(arrayBuffer);
 
-  if (fileExt === "txt") {
-    return bytes.toString("utf-8");
-  }
+  if (fileExt === "txt") return bytes.toString("utf-8");
 
   if (fileExt === "docx" || fileExt === "doc") {
     const result = await mammoth.extractRawText({ buffer: bytes });
@@ -174,16 +266,9 @@ export async function readFileContent(filePath: string): Promise<string> {
         content: [
           {
             type: "document",
-            source: {
-              type: "base64",
-              media_type: "application/pdf",
-              data: bytes.toString("base64"),
-            },
+            source: { type: "base64", media_type: "application/pdf", data: bytes.toString("base64") },
           },
-          {
-            type: "text",
-            text: "Extract and return the complete text content of this document. Do not summarize. Do not truncate. Return only the raw text.",
-          },
+          { type: "text", text: "Extract and return the complete text content of this document. Do not summarize. Do not truncate. Return only the raw text." },
         ],
       },
     ],
