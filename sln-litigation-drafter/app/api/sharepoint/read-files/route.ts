@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
           }
 
           // Write Blob after every file so partial progress survives timeouts
-          await writeBlobText(`sessions/${sessionId}/documents.txt`, combinedText);
+          await writeBlobText(`sessions/${sessionId}/extracted_text.json`, combinedText);
         }
 
         // Write audit report JSON for inventory PDF generation

@@ -70,6 +70,11 @@ export default function Stage2Files() {
   const [processedCount, setProcessedCount] = useState(0);
   const [skippedCount, setSkippedCount] = useState(0);
 
+  // 2D: inventory collapse/expand + SharePoint save status
+  const [inventoryExpanded, setInventoryExpanded] = useState(true);
+  const [spSaveStatus, setSpSaveStatus] = useState<"idle" | "pending" | "saved" | "failed">("idle");
+  const [spSaveUrl, setSpSaveUrl] = useState<string | null>(null);
+
   // ── 2A: Load filenames only ─────────────────────────────────────────────────
   async function discoverFiles() {
     const link = folderLink.trim();
@@ -146,17 +151,6 @@ export default function Stage2Files() {
   }
 
   // ── 2B: Drafter adjusts categories ──────────────────────────────────────────
-  function cycleCategory(fileId: string) {
-    setLocalMap((m) =>
-      m.map((e) => {
-        if (e.fileId !== fileId) return e;
-        const idx = CATEGORY_CYCLE.indexOf(e.category);
-        const next = CATEGORY_CYCLE[(idx + 1) % CATEGORY_CYCLE.length];
-        return { ...e, category: next };
-      })
-    );
-  }
-
   function toggleCheck2B(fileId: string) {
     setB2CheckedIds((prev) => {
       const next = new Set(prev);
@@ -256,6 +250,19 @@ export default function Stage2Files() {
             } else if (ev.type === "complete") {
               setExtractDone(true);
               setSubstep("2D");
+              // Fire-and-forget SharePoint save
+              setSpSaveStatus("pending");
+              fetch("/api/docx/inventory-save", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sessionId: state.sessionId, folderPath: state.folderPath }),
+              })
+                .then((r) => r.json())
+                .then((data) => {
+                  if (data.webUrl) { setSpSaveUrl(data.webUrl); setSpSaveStatus("saved"); }
+                  else setSpSaveStatus("failed");
+                })
+                .catch(() => setSpSaveStatus("failed"));
             } else if (ev.error) {
               throw new Error(ev.error as string);
             }
@@ -412,7 +419,7 @@ export default function Stage2Files() {
                             isLast={i === entries.length - 1}
                             checked={b2CheckedIds.has(entry.fileId)}
                             onToggle={() => toggleCheck2B(entry.fileId)}
-                            onCycleCategory={() => cycleCategory(entry.fileId)}
+                            onCategoryChange={(cat) => setLocalMap((m) => m.map((e) => e.fileId === entry.fileId ? { ...e, category: cat } : e))}
                             meta={meta}
                           />
                         );
@@ -492,21 +499,67 @@ export default function Stage2Files() {
             <Stat label="Total karakter" value={`${(totalChars / 1000).toFixed(1)}k`} />
           </div>
 
-          {/* Category summary */}
-          <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-            {CATEGORY_CYCLE.map((cat) => {
-              const count = extractLog.filter((e) => e.category === cat && e.status === "selesai").length;
-              if (count === 0) return null;
-              const meta = CATEGORY_META[cat];
-              return (
-                <span key={cat} style={{ fontSize: 12, padding: "4px 10px", background: meta.bg, color: meta.color, borderRadius: 3, fontWeight: 600, border: `1px solid ${meta.color}33` }}>
-                  {meta.label} {count}
-                </span>
-              );
-            })}
+          {/* SharePoint save status */}
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
+            {spSaveStatus === "pending" && "Menyimpan inventaris ke SharePoint..."}
+            {spSaveStatus === "saved" && spSaveUrl && (
+              <a href={spSaveUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--success)", textDecoration: "none" }}>
+                ✓ Inventaris tersimpan di SharePoint
+              </a>
+            )}
+            {spSaveStatus === "saved" && !spSaveUrl && "✓ Inventaris tersimpan di SharePoint"}
+            {spSaveStatus === "failed" && <span style={{ color: "var(--text-muted)" }}>Gagal disimpan ke SharePoint</span>}
           </div>
 
-          {/* Failed files */}
+          {/* Inventory toggle + table */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {CATEGORY_CYCLE.map((cat) => {
+                const count = extractLog.filter((e) => e.category === cat && e.status === "selesai").length;
+                if (count === 0) return null;
+                const meta = CATEGORY_META[cat];
+                return (
+                  <span key={cat} style={{ fontSize: 12, padding: "4px 10px", background: meta.bg, color: meta.color, borderRadius: 3, fontWeight: 600, border: `1px solid ${meta.color}33` }}>
+                    {meta.label} {count}
+                  </span>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setInventoryExpanded((v) => !v)}
+              style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "1px solid var(--border-color)", borderRadius: 3, padding: "3px 10px", cursor: "pointer" }}
+            >
+              {inventoryExpanded ? "▲ Sembunyikan" : "▼ Tampilkan"} Inventaris
+            </button>
+          </div>
+
+          {inventoryExpanded && (
+            <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
+              {extractLog.map((entry, i) => {
+                const meta = CATEGORY_META[entry.category];
+                return (
+                  <div
+                    key={i}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.02)" : "transparent" }}
+                  >
+                    <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "gagal" ? "var(--error)" : "var(--text-muted)" }}>
+                      {entry.status === "selesai" ? "✓" : entry.status === "gagal" ? "✗" : "·"}
+                    </span>
+                    <span style={{ flex: 1, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
+                    {entry.status === "selesai" && entry.charCount !== undefined && (
+                      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0, minWidth: 50, textAlign: "right" }}>{(entry.charCount / 1000).toFixed(1)}k</span>
+                    )}
+                    {entry.status === "gagal" && entry.reason && (
+                      <span style={{ fontSize: 11, color: "var(--error)", flexShrink: 0 }} title={entry.reason}>gagal</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Failed files summary */}
           {skippedCount > 0 && (
             <div style={{ padding: "10px 14px", background: "rgba(192,57,43,0.06)", border: "1px solid rgba(192,57,43,0.2)", borderRadius: 4, fontSize: 12, marginBottom: 20 }}>
               <strong style={{ color: "var(--error)" }}>{skippedCount} file gagal diekstrak:</strong>
@@ -534,7 +587,7 @@ export default function Stage2Files() {
               onClick={() => goToStage(3)}
               style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: "pointer" }}
             >
-              Lanjut ke Analisis →
+              Lanjut ke Kronologi →
             </button>
           </div>
         </div>
@@ -586,7 +639,7 @@ function MapRow({
   isLast,
   checked,
   onToggle,
-  onCycleCategory,
+  onCategoryChange,
   meta,
 }: {
   file: FileEntry;
@@ -594,10 +647,11 @@ function MapRow({
   isLast: boolean;
   checked: boolean;
   onToggle: () => void;
-  onCycleCategory: () => void;
+  onCategoryChange: (cat: DocCategory) => void;
   meta: { color: string; bg: string };
 }) {
   const [expanded, setExpanded] = useState(false);
+  const catMeta = CATEGORY_META[entry.category];
 
   return (
     <div style={{ borderBottom: isLast ? "none" : "1px solid var(--border-color)", background: checked ? meta.bg : "transparent" }}>
@@ -612,13 +666,18 @@ function MapRow({
             {DOC_TYPE_LABELS[entry.documentType]} · {file.size || "—"}
           </div>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onCycleCategory(); }}
-          style={{ fontSize: 11, fontWeight: 700, color: meta.color, background: meta.bg, border: `1px solid ${meta.color}55`, borderRadius: 3, padding: "2px 8px", cursor: "pointer", flexShrink: 0 }}
-          title="Klik untuk ganti kategori"
+        <select
+          value={entry.category}
+          onChange={(e) => { e.stopPropagation(); onCategoryChange(e.target.value as DocCategory); }}
+          onClick={(e) => e.stopPropagation()}
+          style={{ fontSize: 11, fontWeight: 700, color: catMeta.color, background: catMeta.bg, border: `1px solid ${catMeta.color}55`, borderRadius: 3, padding: "2px 6px", cursor: "pointer", flexShrink: 0, appearance: "none", WebkitAppearance: "none" }}
         >
-          {CATEGORY_META[entry.category].label}
-        </button>
+          {CATEGORY_CYCLE.map((cat) => (
+            <option key={cat} value={cat} style={{ color: CATEGORY_META[cat].color, background: "var(--bg-surface, #1e2a3a)", fontWeight: 700 }}>
+              {cat}
+            </option>
+          ))}
+        </select>
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
           style={{ fontSize: 11, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", padding: "2px 4px" }}
