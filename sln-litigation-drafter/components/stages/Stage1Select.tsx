@@ -2,38 +2,51 @@
 
 import { useState } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
-import { PRACTICE_AREAS, generateRef } from "@/config/documentTypes";
+import {
+  CLAIM_TYPES,
+  getClaimTypesForForum,
+  getForumDocTypes,
+  generateRef,
+} from "@/config/documentTypes";
 
 export default function Stage1Select() {
   const { state, dispatch, goToStage } = useWorkflow();
 
-  const [practiceAreaId, setPracticeAreaId] = useState(
-    state.practiceAreaId || ""
-  );
-  const [docTypeId, setDocTypeId] = useState(state.docTypeId || "");
-  const [claimType, setClaimType] = useState(state.claimType || "");
-  const [pihak, setPihak] = useState(state.pihak || "");
+  const [forumId,   setForumId]   = useState(state.practiceAreaId || "");
+  const [claimType, setClaimType] = useState(state.claimType      || "");
+  const [docTypeId, setDocTypeId] = useState(state.docTypeId      || "");
+  const [pihak,     setPihak]     = useState(state.pihak          || "");
 
-  const selectedArea = PRACTICE_AREAS.find((a) => a.id === practiceAreaId);
-  const selectedDocType = selectedArea?.docTypes.find(
-    (d) => d.id === docTypeId
-  );
+  const claimTypes = forumId ? getClaimTypesForForum(forumId) : [];
+  const docTypes   = forumId && claimType ? getForumDocTypes(forumId, claimType) : [];
+  const selectedDocType = docTypes.find((d) => d.id === docTypeId);
+  const needsPihak = selectedDocType?.hasPihak ?? false;
 
-  const needsClaimType =
-    selectedDocType && selectedDocType.claimTypes.length > 0;
-  const needsPihak = selectedDocType?.hasPihak;
+  const canProceed = !!(forumId && claimType && docTypeId && (!needsPihak || pihak));
 
-  const canProceed =
-    practiceAreaId &&
-    docTypeId &&
-    (!needsClaimType || claimType) &&
-    (!needsPihak || pihak);
+  function handleForumChange(id: string) {
+    setForumId(id);
+    setClaimType("");
+    setDocTypeId("");
+    setPihak("");
+  }
+
+  function handleClaimTypeChange(id: string) {
+    setClaimType(id);
+    setDocTypeId("");
+    setPihak("");
+  }
+
+  function handleDocTypeChange(id: string) {
+    setDocTypeId(id);
+    setPihak("");
+  }
 
   function handleProceed() {
     const ref = generateRef(docTypeId);
     dispatch({
       type: "SET_SELECTION",
-      practiceAreaId,
+      practiceAreaId: forumId,
       docTypeId,
       claimType: claimType || null,
       pihak: pihak || null,
@@ -42,260 +55,81 @@ export default function Stage1Select() {
     goToStage(2);
   }
 
-  function handlePracticeAreaChange(id: string) {
-    setPracticeAreaId(id);
-    setDocTypeId("");
-    setClaimType("");
-    setPihak("");
-  }
-
   return (
     <div>
-      <h1
-        style={{
-          fontSize: 22,
-          fontWeight: 600,
-          color: "var(--text-primary)",
-          marginBottom: 8,
-        }}
-      >
+      <h1 style={{ fontSize: 22, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
         Pilih Jenis Dokumen
       </h1>
       <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 32 }}>
-        Pilih bidang hukum dan jenis dokumen yang akan dibuat.
+        Pilih forum, jenis gugatan, dan jenis dokumen yang akan dibuat.
       </p>
 
-      {/* Practice Area */}
-      <div style={{ marginBottom: 28 }}>
-        <label
-          style={{
-            display: "block",
-            fontSize: 13,
-            fontWeight: 500,
-            color: "var(--text-muted)",
-            marginBottom: 12,
-            letterSpacing: "0.05em",
-            textTransform: "uppercase",
-          }}
-        >
-          Bidang Hukum
-        </label>
-        <div style={{ display: "flex", gap: 12 }}>
-          {PRACTICE_AREAS.map((area) => (
-            <div
-              key={area.id}
-              className={`radio-card ${practiceAreaId === area.id ? "selected" : ""}`}
-              style={{ flex: 1, cursor: "pointer" }}
-              onClick={() => handlePracticeAreaChange(area.id)}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                }}
-              >
-                <div
-                  style={{
-                    width: 16,
-                    height: 16,
-                    borderRadius: "50%",
-                    border:
-                      practiceAreaId === area.id
-                        ? "5px solid var(--accent-blue)"
-                        : "2px solid var(--border-color)",
-                    flexShrink: 0,
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: 14,
-                    color:
-                      practiceAreaId === area.id
-                        ? "var(--text-primary)"
-                        : "var(--text-muted)",
-                    fontWeight: practiceAreaId === area.id ? 500 : 400,
-                  }}
-                >
-                  {area.label}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
+      {/* ── Step 1: Forum ────────────────────────────────────────────────── */}
+      <SectionLabel>Forum Pengadilan / Arbitrase</SectionLabel>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 28 }}>
+        {CLAIM_TYPES.map((forum) => (
+          <RadioCard key={forum.id} selected={forumId === forum.id} onClick={() => handleForumChange(forum.id)}>
+            <span style={{ fontSize: 14, fontWeight: forumId === forum.id ? 500 : 400, color: forumId === forum.id ? "var(--text-primary)" : "var(--text-muted)" }}>
+              {forum.label}
+            </span>
+          </RadioCard>
+        ))}
       </div>
 
-      {/* Doc Type */}
-      {selectedArea && (
-        <div style={{ marginBottom: 28 }}>
-          <label
-            style={{
-              display: "block",
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--text-muted)",
-              marginBottom: 12,
-              letterSpacing: "0.05em",
-              textTransform: "uppercase",
-            }}
-          >
-            Jenis Dokumen
-          </label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {selectedArea.docTypes.map((dt) => (
-              <div
-                key={dt.id}
-                className={`radio-card ${docTypeId === dt.id ? "selected" : ""}`}
-                style={{ cursor: "pointer" }}
-                onClick={() => {
-                  setDocTypeId(dt.id);
-                  setClaimType("");
-                  setPihak("");
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: "50%",
-                      border:
-                        docTypeId === dt.id
-                          ? "5px solid var(--accent-blue)"
-                          : "2px solid var(--border-color)",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: 14,
-                      color:
-                        docTypeId === dt.id
-                          ? "var(--text-primary)"
-                          : "var(--text-muted)",
-                      fontWeight: docTypeId === dt.id ? 500 : 400,
-                    }}
-                  >
-                    {dt.label}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Claim Type */}
-      {needsClaimType && selectedDocType && (
-        <div style={{ marginBottom: 28 }}>
-          <label
-            style={{
-              display: "block",
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--text-muted)",
-              marginBottom: 12,
-              letterSpacing: "0.05em",
-              textTransform: "uppercase",
-            }}
-          >
-            Dasar Gugatan
-          </label>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {selectedDocType.claimTypes.map((ct) => (
-              <div
-                key={ct.id}
-                className={`radio-card ${claimType === ct.id ? "selected" : ""}`}
-                style={{ cursor: "pointer" }}
-                onClick={() => setClaimType(ct.id)}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: "50%",
-                      border:
-                        claimType === ct.id
-                          ? "5px solid var(--accent-blue)"
-                          : "2px solid var(--border-color)",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: 14,
-                      color:
-                        claimType === ct.id
-                          ? "var(--text-primary)"
-                          : "var(--text-muted)",
-                    }}
-                  >
+      {/* ── Step 2: Jenis Gugatan ─────────────────────────────────────────── */}
+      {forumId && claimTypes.length > 0 && (
+        <>
+          <SectionLabel>Jenis Gugatan / Klaim</SectionLabel>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
+            {claimTypes.map((ct) => (
+              <RadioCard key={ct.id} selected={claimType === ct.id} onClick={() => handleClaimTypeChange(ct.id)}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: claimType === ct.id ? 500 : 400, color: claimType === ct.id ? "var(--text-primary)" : "var(--text-muted)" }}>
                     {ct.label}
-                  </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, opacity: 0.75 }}>
+                    {ct.statute}
+                  </div>
                 </div>
-              </div>
+              </RadioCard>
             ))}
           </div>
-        </div>
+        </>
       )}
 
-      {/* Pihak */}
+      {/* ── Step 3: Jenis Dokumen ─────────────────────────────────────────── */}
+      {forumId && claimType && docTypes.length > 0 && (
+        <>
+          <SectionLabel>Jenis Dokumen</SectionLabel>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 28 }}>
+            {docTypes.map((dt) => (
+              <RadioCard key={dt.id} selected={docTypeId === dt.id} onClick={() => handleDocTypeChange(dt.id)}>
+                <span style={{ fontSize: 14, fontWeight: docTypeId === dt.id ? 500 : 400, color: docTypeId === dt.id ? "var(--text-primary)" : "var(--text-muted)" }}>
+                  {dt.label}
+                </span>
+              </RadioCard>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── Step 4: Pihak ────────────────────────────────────────────────── */}
       {needsPihak && (
-        <div style={{ marginBottom: 28 }}>
-          <label
-            style={{
-              display: "block",
-              fontSize: 13,
-              fontWeight: 500,
-              color: "var(--text-muted)",
-              marginBottom: 12,
-              letterSpacing: "0.05em",
-              textTransform: "uppercase",
-            }}
-          >
-            Pihak yang Diwakili
-          </label>
-          <div style={{ display: "flex", gap: 12 }}>
+        <>
+          <SectionLabel>Pihak yang Diwakili</SectionLabel>
+          <div style={{ display: "flex", gap: 12, marginBottom: 28 }}>
             {[
               { id: "penggugat", label: "Penggugat / Pemohon" },
-              { id: "tergugat", label: "Tergugat / Termohon" },
+              { id: "tergugat",  label: "Tergugat / Termohon" },
             ].map((p) => (
-              <div
-                key={p.id}
-                className={`radio-card ${pihak === p.id ? "selected" : ""}`}
-                style={{ flex: 1, cursor: "pointer" }}
-                onClick={() => setPihak(p.id)}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: "50%",
-                      border:
-                        pihak === p.id
-                          ? "5px solid var(--accent-blue)"
-                          : "2px solid var(--border-color)",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: 14,
-                      color:
-                        pihak === p.id
-                          ? "var(--text-primary)"
-                          : "var(--text-muted)",
-                    }}
-                  >
-                    {p.label}
-                  </span>
-                </div>
-              </div>
+              <RadioCard key={p.id} selected={pihak === p.id} onClick={() => setPihak(p.id)} flex>
+                <span style={{ fontSize: 14, color: pihak === p.id ? "var(--text-primary)" : "var(--text-muted)" }}>
+                  {p.label}
+                </span>
+              </RadioCard>
             ))}
           </div>
-        </div>
+        </>
       )}
 
       <button
@@ -315,6 +149,55 @@ export default function Stage1Select() {
       >
         Lanjut ke Pemilihan File →
       </button>
+    </div>
+  );
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <label style={{
+      display: "block",
+      fontSize: 13,
+      fontWeight: 500,
+      color: "var(--text-muted)",
+      marginBottom: 12,
+      letterSpacing: "0.05em",
+      textTransform: "uppercase",
+    }}>
+      {children}
+    </label>
+  );
+}
+
+function RadioCard({
+  selected,
+  onClick,
+  children,
+  flex,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  flex?: boolean;
+}) {
+  return (
+    <div
+      className={`radio-card ${selected ? "selected" : ""}`}
+      style={{ cursor: "pointer", ...(flex ? { flex: 1 } : {}) }}
+      onClick={onClick}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          flexShrink: 0,
+          border: selected ? "5px solid var(--accent-blue)" : "2px solid var(--border-color)",
+        }} />
+        {children}
+      </div>
     </div>
   );
 }
