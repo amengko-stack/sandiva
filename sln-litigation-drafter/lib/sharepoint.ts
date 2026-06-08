@@ -1,79 +1,97 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
-import { TokenCredentialAuthenticationProvider } from "@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials/index.js";
-import { ClientSecretCredential } from "@azure/identity";
 import mammoth from "mammoth";
 import type { FileEntry } from "@/types";
 
-let _graphClient: Client | null = null;
+// ---------------------------------------------------------------------------
+// Token cache (per-invocation; Vercel functions are short-lived)
+// ---------------------------------------------------------------------------
+let _cachedToken: { token: string; expiresAt: number } | null = null;
 
-function getGraphClient(): Client {
-  if (_graphClient) return _graphClient;
-  const credential = new ClientSecretCredential(
-    process.env.AZURE_TENANT_ID!,
-    process.env.AZURE_CLIENT_ID!,
-    process.env.AZURE_CLIENT_SECRET!
-  );
-  const authProvider = new TokenCredentialAuthenticationProvider(credential, {
-    scopes: ["https://graph.microsoft.com/.default"],
+async function getGraphToken(): Promise<string> {
+  const now = Date.now();
+  if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
+    return _cachedToken.token;
+  }
+
+  const tenantId = process.env.AZURE_TENANT_ID!;
+  const params = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: process.env.AZURE_CLIENT_ID!,
+    client_secret: process.env.AZURE_CLIENT_SECRET!,
+    scope: "https://graph.microsoft.com/.default",
   });
-  _graphClient = Client.initWithMiddleware({ authProvider });
-  return _graphClient;
+
+  const res = await fetch(
+    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    { method: "POST", body: params }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Azure token error ${res.status}: ${text}`);
+  }
+
+  const json = await res.json();
+  _cachedToken = {
+    token: json.access_token,
+    expiresAt: now + json.expires_in * 1000,
+  };
+  return _cachedToken.token;
 }
 
-function getAnthropicClient(): Anthropic {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+async function graphGet(path: string): Promise<Response> {
+  const token = await getGraphToken();
+  return fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
 }
 
-// Resolve a human-readable SharePoint folder path to a Graph drive item path.
-// Accepts either "Sites/SiteName/Shared Documents/FolderName" style paths
-// or just the relative folder path under the default drive root.
-function normalizeFolderPath(folderPath: string): string {
-  // Strip leading slash
-  return folderPath.replace(/^\/+/, "");
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function normalizePath(p: string): string {
+  return p.replace(/^\/+/, "").replace(/\/+$/, "");
 }
-
-interface GraphDriveItem {
-  id: string;
-  name: string;
-  size?: number;
-  file?: { mimeType: string };
-  folder?: object;
-  parentReference?: { path: string };
-  "@microsoft.graph.downloadUrl"?: string;
-}
-
-const ALLOWED_EXTENSIONS = new Set(["docx", "pdf", "doc", "txt"]);
 
 function ext(name: string): string {
   return name.split(".").pop()?.toLowerCase() ?? "";
 }
 
-export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> {
-  const client = getGraphClient();
-  const siteId = process.env.SHAREPOINT_SITE_ID!;
-  const normalized = normalizeFolderPath(folderPath);
+const ALLOWED_EXTENSIONS = new Set(["docx", "pdf", "doc", "txt"]);
 
+interface GraphItem {
+  id: string;
+  name: string;
+  size?: number;
+  file?: { mimeType: string };
+  folder?: object;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> {
+  const siteId = process.env.SHAREPOINT_SITE_ID!;
+  const normalized = normalizePath(folderPath);
   const results: FileEntry[] = [];
   let index = 0;
 
   async function recurse(path: string) {
     const endpoint = path
-      ? `/sites/${siteId}/drive/root:/${path}:/children`
-      : `/sites/${siteId}/drive/root/children`;
+      ? `/sites/${siteId}/drive/root:/${path}:/children?$select=id,name,size,file,folder`
+      : `/sites/${siteId}/drive/root/children?$select=id,name,size,file,folder`;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response: any = await client
-      .api(endpoint)
-      .select("id,name,size,file,folder,parentReference")
-      .get();
-
-    const items: GraphDriveItem[] = response.value ?? [];
+    const res = await graphGet(endpoint);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Graph list error ${res.status}: ${text}`);
+    }
+    const data = await res.json();
+    const items: GraphItem[] = data.value ?? [];
 
     for (const item of items) {
       if (item.folder) {
-        const childPath = path ? `${path}/${item.name}` : item.name;
-        await recurse(childPath);
+        await recurse(path ? `${path}/${item.name}` : item.name);
       } else if (item.file && ALLOWED_EXTENSIONS.has(ext(item.name))) {
         const filePath = path ? `${path}/${item.name}` : item.name;
         results.push({
@@ -93,32 +111,32 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
 }
 
 export async function readFileContent(filePath: string): Promise<string> {
-  const client = getGraphClient();
   const siteId = process.env.SHAREPOINT_SITE_ID!;
-  const normalized = normalizeFolderPath(filePath);
+  const normalized = normalizePath(filePath);
   const fileExt = ext(normalized);
 
-  // Download the raw file bytes
-  const endpoint = `/sites/${siteId}/drive/root:/${normalized}:/content`;
-  const arrayBuffer: ArrayBuffer = await client
-    .api(endpoint)
-    .responseType(ResponseType.ARRAYBUFFER)
-    .get();
+  const res = await graphGet(
+    `/sites/${siteId}/drive/root:/${normalized}:/content`
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Graph download error ${res.status}: ${text}`);
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
   const bytes = Buffer.from(arrayBuffer);
 
-  // Plain text — return directly
   if (fileExt === "txt") {
     return bytes.toString("utf-8");
   }
 
-  // DOCX / DOC — extract text with mammoth (no API call needed)
   if (fileExt === "docx" || fileExt === "doc") {
     const result = await mammoth.extractRawText({ buffer: bytes });
     return result.value.trim();
   }
 
-  // PDF — send to Claude as a base64 document block
-  const anthropic = getAnthropicClient();
+  // PDF — use Claude's document API
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await (anthropic.messages.create as any)({
     model: "claude-sonnet-4-6",
