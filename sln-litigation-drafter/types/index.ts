@@ -60,6 +60,30 @@ export interface StyleExample {
   content: string;
 }
 
+export interface ExtractReportFile {
+  name: string;
+  category: DocCategory;
+  documentType: DocDocumentType;
+  extractionMode: string;
+  status: "selesai" | "gagal";
+  charCount?: number;
+  reason?: string;
+}
+
+export interface ExtractReport {
+  sessionId: string;
+  folderPath: string;
+  docTypeId: string;
+  practiceAreaId: string | null;
+  claimType: string | null;
+  ref: string;
+  timestamp: string;
+  files: ExtractReportFile[];
+  totalChars: number;
+  processed: number;
+  skipped: number;
+}
+
 export interface DraftMeta {
   ref: string;
   docTypeId: string;

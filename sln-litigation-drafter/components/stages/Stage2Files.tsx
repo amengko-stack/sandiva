@@ -200,7 +200,16 @@ export default function Stage2Files() {
       const res = await fetch("/api/sharepoint/read-files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files: sorted, docMap: localMap, sessionId: state.sessionId }),
+        body: JSON.stringify({
+          files: sorted,
+          docMap: localMap,
+          sessionId: state.sessionId,
+          folderPath: state.folderPath,
+          docTypeId: state.docTypeId,
+          practiceAreaId: state.practiceAreaId,
+          claimType: state.claimType,
+          ref: state.ref,
+        }),
       });
       if (!res.ok) {
         const err = await res.json();
@@ -507,13 +516,20 @@ export default function Stage2Files() {
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 12 }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <button
               onClick={() => setSubstep("2B")}
               style={{ padding: "10px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: "pointer" }}
             >
               ← Ulang Pilihan
             </button>
+            <a
+              href={`/api/docx/inventory?sessionId=${state.sessionId}`}
+              download
+              style={{ padding: "10px 18px", background: "transparent", border: "1px solid var(--accent-gold)", borderRadius: 4, color: "var(--accent-gold)", fontSize: 13, fontWeight: 500, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              ↓ Unduh Inventaris PDF
+            </a>
             <button
               onClick={() => goToStage(3)}
               style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: "pointer" }}
