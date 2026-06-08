@@ -39,7 +39,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ analysis, previewText: fileContent.slice(0, 1000) });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Terjadi kesalahan";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const message = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error("[analyze-sample]", message, stack);
+    return NextResponse.json({ error: message, stack }, { status: 500 });
   }
 }
