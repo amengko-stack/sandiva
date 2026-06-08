@@ -54,7 +54,9 @@ function normalizePath(p: string): string {
 }
 
 function ext(name: string): string {
-  return name.split(".").pop()?.toLowerCase() ?? "";
+  // Strip query string before extracting extension
+  const base = name.split("?")[0];
+  return base.split(".").pop()?.toLowerCase() ?? "";
 }
 
 const ALLOWED_EXTENSIONS = new Set(["docx", "pdf", "doc", "txt"]);
@@ -113,19 +115,39 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
   return results;
 }
 
+function encodeSharingUrl(url: string): string {
+  // Graph API sharing link encoding: base64url("u!" + url)
+  const base64 = Buffer.from(url).toString("base64");
+  const base64url = base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `u!${base64url}`;
+}
+
 export async function readFileContent(filePath: string): Promise<string> {
-  const siteId = process.env.SHAREPOINT_SITE_ID!;
-  const normalized = normalizePath(filePath);
-  const fileExt = ext(normalized);
+  let fileExt = ext(filePath);
+  let contentEndpoint: string;
 
-  // Encode each path segment individually, preserving slashes
-  const encodedPath = normalized.split("/").map(encodeURIComponent).join("/");
-  const endpoint = `/sites/${siteId}/drive/root:/${encodedPath}:/content`;
+  if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
+    // SharePoint sharing link — resolve metadata first to get real filename
+    const shareId = encodeSharingUrl(filePath);
+    const metaRes = await graphGet(`/shares/${shareId}/driveItem?$select=name`);
+    if (!metaRes.ok) {
+      const text = await metaRes.text();
+      throw new Error(`Graph share resolve error ${metaRes.status}: ${text}`);
+    }
+    const meta = await metaRes.json();
+    fileExt = ext(meta.name ?? "");
+    contentEndpoint = `/shares/${shareId}/driveItem/content`;
+  } else {
+    const siteId = process.env.SHAREPOINT_SITE_ID!;
+    const normalized = normalizePath(filePath);
+    const encodedPath = normalized.split("/").map(encodeURIComponent).join("/");
+    contentEndpoint = `/sites/${siteId}/drive/root:/${encodedPath}:/content`;
+  }
 
-  const res = await graphGet(endpoint);
+  const res = await graphGet(contentEndpoint);
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Graph download error ${res.status} [path: ${normalized}]: ${text}`);
+    throw new Error(`Graph download error ${res.status} [${filePath}]: ${text}`);
   }
 
   const arrayBuffer = await res.arrayBuffer();
