@@ -17,6 +17,17 @@ export default function Stage5Output() {
   const [approvingMemory, setApprovingMemory] = useState(false);
   const [memoryError, setMemoryError] = useState("");
 
+  async function clearSession() {
+    if (!state.sessionId) return;
+    try {
+      await fetch("/api/session/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: state.sessionId }),
+      });
+    } catch {}
+  }
+
   async function downloadDocx() {
     const res = await fetch("/api/docx", {
       method: "POST",
@@ -43,6 +54,9 @@ export default function Stage5Output() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    // Clean up session Blob data after download
+    clearSession();
   }
 
   async function saveToSharePoint() {
@@ -254,6 +268,7 @@ export default function Stage5Output() {
       <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px solid var(--border-color)" }}>
         <button
           onClick={() => {
+            clearSession();
             dispatch({ type: "RESET" });
             goToStage(1);
           }}

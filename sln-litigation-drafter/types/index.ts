@@ -54,6 +54,7 @@ export interface DraftMeta {
 
 export interface WorkflowState {
   stage: Stage;
+  sessionId: string;
   practiceAreaId: string | null;
   docTypeId: string | null;
   claimType: string | null;

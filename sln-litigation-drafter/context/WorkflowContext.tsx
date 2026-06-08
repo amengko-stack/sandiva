@@ -11,8 +11,15 @@ import type { WorkflowState, WorkflowAction, Stage } from "@/types";
 
 const SESSION_KEY = "sln_workflow_state";
 
+function newSessionId(): string {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 const initialState: WorkflowState = {
   stage: 1,
+  sessionId: newSessionId(),
   practiceAreaId: null,
   docTypeId: null,
   claimType: null,
@@ -98,7 +105,7 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       return { ...state, error: action.error };
 
     case "RESET":
-      return { ...initialState };
+      return { ...initialState, sessionId: newSessionId() };
 
     default:
       return state;
