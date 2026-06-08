@@ -4,10 +4,6 @@ const nextConfig = {
     serverComponentsExternalPackages: [
       "docx",
       "@anthropic-ai/sdk",
-      "@azure/identity",
-      "@azure/core-rest-pipeline",
-      "@azure/core-auth",
-      "@microsoft/microsoft-graph-client",
       "mammoth",
     ],
   },
