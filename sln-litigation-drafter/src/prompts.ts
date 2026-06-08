@@ -13,6 +13,33 @@ STANDAR KUALITAS:
 - Sertakan yurisprudensi MA yang relevan bila dapat diidentifikasi dari fakta
 `;
 
+const CLAIM_LABELS: Record<string, string> = {
+  pmh: "Perbuatan Melawan Hukum (Pasal 1365 KUH Perdata)",
+  wanprestasi: "Wanprestasi (Pasal 1243 jo. Pasal 1238 KUH Perdata)",
+  pembatalan_perjanjian: "Pembatalan Perjanjian (Pasal 1320 jo. 1449 KUH Perdata)",
+  pmh_penguasa: "PMH oleh Penguasa / OOD (Pasal 1365 KUH Perdata jo. SEMA)",
+  kepemilikan: "Gugatan Kepemilikan (Pasal 570 KUH Perdata)",
+  waris: "Gugatan Waris (KUH Perdata Buku II)",
+  piercing: "Tanggung Jawab Korporasi / Piercing the Corporate Veil (Pasal 3 jo. 97 UUPT)",
+  pembatalan_rups: "Pembatalan RUPS (Pasal 61 UUPT)",
+  tanggung_jawab_direksi: "Tanggung Jawab Direksi/Komisaris (Pasal 97 UUPT)",
+  pembubaran_pt: "Pembubaran PT (Pasal 146 UUPT)",
+  gugatan_derivatif: "Gugatan Derivatif Pemegang Saham (Pasal 61 UUPT)",
+  pkpu: "PKPU (UU No. 37/2004 Pasal 222)",
+  pailit: "Kepailitan (UU No. 37/2004 Pasal 2 ayat 1)",
+  actio_pauliana: "Actio Pauliana (Pasal 41 UU 37/2004)",
+  pembatalan_perdamaian: "Pembatalan Perdamaian (Pasal 291 UU 37/2004)",
+  merek: "Pelanggaran Merek (UU No. 20 Tahun 2016)",
+  hak_cipta: "Pelanggaran Hak Cipta (UU No. 28 Tahun 2014)",
+  paten: "Pelanggaran Paten (UU No. 13 Tahun 2016)",
+  pembatalan_ktun: "Pembatalan KTUN (UU No. 51 Tahun 2009)",
+  pmh_pemerintah: "PMH Pemerintah (Pasal 1365 KUH Perdata jo. PERMA 2/2019)",
+  bani: "Arbitrase BANI (UU No. 30 Tahun 1999)",
+  siac: "Arbitrase SIAC (SIAC Rules 2016)",
+  icc: "Arbitrase ICC (ICC Rules 2021)",
+  adhoc: "Arbitrase Ad Hoc (UU No. 30 Tahun 1999)",
+};
+
 interface PromptArgs {
   caseAnalysis: string;
   memoryContext: string;
@@ -38,6 +65,11 @@ export function getSystemPrompt(
     jawaban_pkpu: () => jawabanPkpu(caseAnalysis, memoryContext, ref),
     rencana_perdamaian: () => rencanaPerdamaian(caseAnalysis, memoryContext, ref),
     kesimpulan_pkpu: () => kesimpulanPkpu(caseAnalysis, memoryContext, ref, pihak),
+    surat_tuntutan: () => suratTuntutan(caseAnalysis, memoryContext, claimType, ref),
+    statement_of_defense: () => statementOfDefense(caseAnalysis, memoryContext, claimType, ref),
+    reply_arb: () => replyArb(caseAnalysis, memoryContext, claimType, ref),
+    rejoinder: () => rejoinder(caseAnalysis, memoryContext, claimType, ref),
+    closing_submission: () => closingSubmission(caseAnalysis, memoryContext, claimType, ref, pihak),
   };
 
   const fn = promptFns[docTypeId];
@@ -53,10 +85,7 @@ function gugatan(
   claimType: string | null,
   ref: string
 ): string {
-  const claimLabel =
-    claimType === "pmh"
-      ? "Perbuatan Melawan Hukum (Pasal 1365 KUH Perdata)"
-      : "Wanprestasi (Pasal 1243 jo. Pasal 1238 KUH Perdata)";
+  const claimLabel = CLAIM_LABELS[claimType ?? ""] ?? claimType ?? "—";
 
   return `
 ${BASE}
@@ -95,39 +124,7 @@ I. DUDUK PERKARA
 [Narasi kronologis faktual — bukan poin-poin, tapi prosa yang mengalir]
 
 II. DASAR HUKUM
-${
-  claimType === "pmh"
-    ? `
-A. Perbuatan Melawan Hukum
-[Uraikan elemen pertama: perbuatan konkret tergugat]
-
-B. Kesalahan Tergugat
-[Uraikan: disengaja atau kelalaian, dan buktinya]
-
-C. Kerugian yang Diderita Penggugat
-[Kerugian materiil: rincian dan jumlah]
-[Kerugian immateriil: uraian dan jumlah]
-
-D. Hubungan Kausal
-[Nexus antara perbuatan dan kerugian]
-`
-    : `
-A. Perjanjian yang Sah dan Mengikat
-[Identifikasi perjanjian: nomor, tanggal, objek, nilai]
-
-B. Kewajiban Tergugat Berdasarkan Perjanjian
-[Kewajiban spesifik yang diperjanjikan]
-
-C. Wanprestasi Tergugat
-[Bagaimana tergugat gagal memenuhi kewajiban]
-
-D. Somasi dan Ingebrekestelling
-[Somasi yang telah dikirimkan atau dasar hukum tanpa somasi]
-
-E. Kerugian Akibat Wanprestasi
-[Kerugian materiil dengan rincian dan jumlah]
-`
-}
+[Uraikan elemen-elemen ${claimLabel} secara sistematis berdasarkan analisis kasus]
 
 III. TUNTUTAN SITA JAMINAN (CONSERVATOIR BESLAG)
 [Jika relevan berdasarkan fakta — identifikasi aset yang dapat disita]
@@ -197,21 +194,7 @@ I. BANTAHAN ATAS DUDUK PERKARA
 [Respons per poin gugatan — akui eksplisit yang benar, bantah dengan kontra-narasi yang kuat untuk yang tidak benar]
 
 II. BANTAHAN ATAS DASAR HUKUM
-${
-  claimType === "pmh"
-    ? `
-A. Tidak Terpenuhinya Unsur Perbuatan Melawan Hukum
-B. Tidak Adanya Kesalahan Tergugat
-C. Bantahan atas Kerugian yang Diklaim
-D. Tidak Adanya Hubungan Kausal
-`
-    : `
-A. Bantahan atas Keabsahan atau Tafsir Perjanjian
-B. Bantahan atas Dalil Wanprestasi
-C. Bantahan atas Somasi
-D. Bantahan atas Besaran Kerugian
-`
-}
+[Bantah setiap elemen klaim penggugat — tidak terpenuhi, tidak terbukti, atau salah tafsir]
 
 III. DALAM REKONVENSI (jika ada klaim balik yang layak berdasarkan fakta)
 [Identifikasi apakah ada klaim rekonvensi yang kuat — jika tidak ada, hilangkan bagian ini]
@@ -369,20 +352,7 @@ III. FAKTA-FAKTA YANG TIDAK TERBUKTI OLEH PIHAK LAWAN
 [Apa yang gagal dibuktikan pihak lawan]
 
 IV. ANALISIS HUKUM
-${
-  claimType === "pmh"
-    ? `
-A. Terpenuhinya Unsur Perbuatan Melawan Hukum
-B. Terbuktinya Kesalahan Tergugat
-C. Kerugian yang Diderita Penggugat
-D. Hubungan Kausal yang Terbukti
-`
-    : `
-A. Keabsahan Perjanjian dan Kewajiban Tergugat
-B. Terbuktinya Wanprestasi
-C. Kerugian Akibat Wanprestasi
-`
-}
+[Analisis per elemen klaim — terbukti/tidak, dan konsekuensi hukumnya]
 
 V. KESIMPULAN
 [Jawaban tegas: semua elemen terpenuhi / tidak terpenuhi, dan konsekuensi hukumnya]
@@ -760,5 +730,258 @@ VI. MOHON PUTUSAN
 [Petitum akhir sesuai posisi klien]
 
 [PENUTUP]
+`;
+}
+
+// ─── ARBITRASE ────────────────────────────────────────────────────────────────
+
+function suratTuntutan(
+  caseAnalysis: string,
+  memoryContext: string,
+  claimType: string | null,
+  ref: string
+): string {
+  const claimLabel = CLAIM_LABELS[claimType ?? ""] ?? claimType ?? "—";
+  return `
+${BASE}
+${memoryContext}
+
+=== ANALISIS KASUS ===
+${caseAnalysis}
+
+=== TUGAS ===
+Susun SURAT TUNTUTAN / REQUEST FOR ARBITRATION lengkap.
+Nomor referensi SLN: ${ref}
+Dasar klaim: ${claimLabel}
+
+STRUKTUR WAJIB:
+
+REQUEST FOR ARBITRATION / SURAT TUNTUTAN
+
+I. PARTIES
+Claimant: [identitas lengkap]
+Respondent: [identitas lengkap]
+
+II. ARBITRATION AGREEMENT
+[Klausul arbitrase: pasal, nomor perjanjian, tanggal, institusi yang dipilih]
+
+III. FACTS
+[Kronologi faktual — narasi yang mengalir, termasuk tanggal dan dokumen kunci]
+
+IV. LEGAL BASIS / DASAR HUKUM
+[Uraikan klaim berdasarkan ${claimLabel}]
+
+V. RELIEF SOUGHT / TUNTUTAN
+[Rinci: damages dengan angka, bunga, biaya arbitrase, biaya kuasa hukum, dan remedy lainnya]
+
+VI. PROPOSED ARBITRAL TRIBUNAL
+[Jumlah arbiter, mekanisme penunjukan, seat of arbitration, governing law]
+
+VII. DOCUMENTS SUBMITTED
+[Daftar dokumen yang dilampirkan sebagai Exhibit C-1, C-2, dst]
+
+[TANDA TANGAN DAN TANGGAL]
+Kuasa Hukum Claimant
+${FIRM}
+`;
+}
+
+function statementOfDefense(
+  caseAnalysis: string,
+  memoryContext: string,
+  claimType: string | null,
+  ref: string
+): string {
+  const claimLabel = CLAIM_LABELS[claimType ?? ""] ?? claimType ?? "—";
+  return `
+${BASE}
+${memoryContext}
+
+=== ANALISIS KASUS ===
+${caseAnalysis}
+
+=== TUGAS ===
+Susun STATEMENT OF DEFENSE lengkap dalam proses arbitrase.
+Nomor referensi SLN: ${ref}
+Posisi: Kamu mewakili RESPONDENT.
+
+STRUKTUR WAJIB:
+
+STATEMENT OF DEFENSE
+
+I. INTRODUCTION
+[Perkenalan posisi Respondent — ringkas dan tegas]
+
+II. PRELIMINARY OBJECTIONS
+[Objeksi yurisdiksi, keabsahan klausul arbitrase, admissibilitas klaim — hanya jika ada dasar kuat]
+
+III. RESPONSE TO FACTS
+[Respons per fakta yang diklaim Claimant — akui eksplisit, bantah dengan kontra-narasi]
+
+IV. LEGAL DEFENCE
+[Bantah setiap elemen klaim ${claimLabel}: tidak terpenuhi, tidak terbukti, atau salah tafsir]
+
+V. COUNTERCLAIM (if any)
+[Jika ada klaim balik yang layak — identifikasi dasar dan quantifikasi kerugian]
+
+VI. RELIEF SOUGHT
+1. Dismiss Claimant's claims in their entirety;
+2. [Counterclaim relief if applicable];
+3. Award costs of arbitration to Respondent.
+
+VII. DOCUMENTS SUBMITTED
+[Daftar Exhibit R-1, R-2, dst]
+
+[TANDA TANGAN]
+Kuasa Hukum Respondent
+${FIRM}
+`;
+}
+
+function replyArb(
+  caseAnalysis: string,
+  memoryContext: string,
+  claimType: string | null,
+  ref: string
+): string {
+  const claimLabel = CLAIM_LABELS[claimType ?? ""] ?? claimType ?? "—";
+  return `
+${BASE}
+${memoryContext}
+
+=== ANALISIS KASUS ===
+${caseAnalysis}
+
+=== TUGAS ===
+Susun REPLY TO STATEMENT OF DEFENSE lengkap dalam arbitrase.
+Nomor referensi SLN: ${ref}
+Posisi: Kamu mewakili CLAIMANT merespons Statement of Defense.
+
+PRINSIP REPLY:
+- Respons langsung terhadap setiap objeksi dan bantahan Respondent
+- Perkuat dalil klaim ${claimLabel} — eksploitasi kelemahan defense
+- Jangan perkenalkan fakta baru di luar Request for Arbitration
+- Response to Counterclaim jika ada
+
+STRUKTUR WAJIB:
+
+REPLY TO STATEMENT OF DEFENSE
+
+I. INTRODUCTION
+II. RESPONSE TO PRELIMINARY OBJECTIONS
+[Bantah setiap objeksi yurisdiksi atau admissibilitas]
+
+III. REPLY TO FACTUAL RESPONSE
+[Perkuat kronologi — respons per poin bantahan Respondent]
+
+IV. REINFORCEMENT OF LEGAL CLAIMS
+[Perkuat setiap elemen klaim yang dibantah — argumen hukum baru jika perlu]
+
+V. RESPONSE TO COUNTERCLAIM (if any)
+[Bantah klaim balik Respondent]
+
+VI. RELIEF SOUGHT
+[Konfirmasi relief yang diminta dalam Request for Arbitration]
+
+[TANDA TANGAN]
+`;
+}
+
+function rejoinder(
+  caseAnalysis: string,
+  memoryContext: string,
+  claimType: string | null,
+  ref: string
+): string {
+  return `
+${BASE}
+${memoryContext}
+
+=== ANALISIS KASUS ===
+${caseAnalysis}
+
+=== TUGAS ===
+Susun REJOINDER lengkap dalam arbitrase.
+Nomor referensi SLN: ${ref}
+Posisi: Kamu mewakili RESPONDENT merespons Reply Claimant.
+
+PRINSIP REJOINDER:
+- Pertahankan dan perkuat defense dalam Statement of Defense
+- Eksploitasi inkonsistensi antara Request for Arbitration dan Reply
+- Ini adalah dokumen terakhir sebelum hearing — pastikan posisi Respondent solid
+- Perkuat Counterclaim jika ada
+
+STRUKTUR WAJIB:
+
+REJOINDER
+
+I. INTRODUCTION
+II. RESPONSE TO CLAIMANT'S REPLY
+[Per poin — identifikasi apa yang gagal direspons Claimant dalam Reply]
+
+III. REINFORCEMENT OF DEFENCE
+[Perkuat bantahan faktual dan hukum dari Statement of Defense]
+
+IV. REINFORCEMENT OF COUNTERCLAIM (if any)
+[Pertahankan dan perkuat tuntutan balik]
+
+V. RELIEF SOUGHT
+[Konfirmasi relief yang diminta: dismiss claims, award counterclaim, award costs]
+
+[TANDA TANGAN]
+`;
+}
+
+function closingSubmission(
+  caseAnalysis: string,
+  memoryContext: string,
+  claimType: string | null,
+  ref: string,
+  pihak?: string | null
+): string {
+  const isClaimant = pihak === "penggugat";
+  const claimLabel = CLAIM_LABELS[claimType ?? ""] ?? claimType ?? "—";
+  return `
+${BASE}
+${memoryContext}
+
+=== ANALISIS KASUS ===
+${caseAnalysis}
+
+=== TUGAS ===
+Susun CLOSING SUBMISSION ${isClaimant ? "CLAIMANT" : "RESPONDENT"} lengkap dalam arbitrase.
+Nomor referensi SLN: ${ref}
+Posisi: Kamu mewakili ${isClaimant ? "CLAIMANT" : "RESPONDENT"}.
+
+PRINSIP CLOSING:
+- Referensikan bukti yang telah diajukan: ${isClaimant ? "C-1, C-2, dst" : "R-1, R-2, dst"}
+- Struktur: established facts → applicable law → analysis per element → relief
+- Jangan perkenalkan argumen baru
+- Bahasa harus persuasif dan ringkas
+
+STRUKTUR WAJIB:
+
+CLOSING SUBMISSION — ${isClaimant ? "CLAIMANT" : "RESPONDENT"}
+
+I. INTRODUCTION
+[Konteks perkara, posisi klien, isu yang akan diputus]
+
+II. ESTABLISHED FACTS
+[Fakta yang terbukti dari alat bukti dan hearing — referensikan Exhibit secara eksplisit]
+
+III. UNPROVEN ALLEGATIONS BY THE OTHER SIDE
+[Apa yang gagal dibuktikan pihak lawan]
+
+IV. APPLICABLE LAW AND ANALYSIS
+[Analisis per elemen ${claimLabel} — terbukti/tidak terbukti dan konsekuensinya]
+
+V. CONCLUSION
+[Pernyataan tegas: klaim harus dikabulkan/ditolak seluruhnya]
+
+VI. RELIEF REQUESTED
+[Petitum final sesuai posisi klien — dengan angka yang dikuantifikasi]
+
+[TANDA TANGAN]
+${FIRM}
 `;
 }

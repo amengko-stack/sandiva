@@ -1,7 +1,7 @@
 "use client";
 
 import { useWorkflow } from "@/context/WorkflowContext";
-import { findDocType, findPracticeArea } from "@/config/documentTypes";
+import { findDocType, resolveForumLabel, getClaimTypeLabel } from "@/config/documentTypes";
 import { CheckIcon } from "lucide-react";
 
 const STAGES = [
@@ -16,11 +16,12 @@ export default function Sidebar() {
   const { state } = useWorkflow();
   const { stage, practiceAreaId, docTypeId } = state;
 
-  const area = practiceAreaId ? findPracticeArea(practiceAreaId) : null;
+  const areaLabel = practiceAreaId ? resolveForumLabel(practiceAreaId) : null;
   const docType =
     practiceAreaId && docTypeId
       ? findDocType(practiceAreaId, docTypeId)
       : null;
+
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -135,7 +136,7 @@ export default function Sidebar() {
       </nav>
 
       {/* Current selection info */}
-      {(area || docType) && (
+      {(areaLabel || docType) && (
         <div
           style={{
             padding: "16px 20px",
@@ -143,9 +144,9 @@ export default function Sidebar() {
             borderBottom: "1px solid var(--border-color)",
           }}
         >
-          {area && (
+          {areaLabel && (
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>
-              {area.label}
+              {areaLabel}
             </div>
           )}
           {docType && (
@@ -155,7 +156,7 @@ export default function Sidebar() {
           )}
           {state.claimType && (
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-              {state.claimType === "pmh" ? "PMH" : state.claimType === "wanprestasi" ? "Wanprestasi" : state.claimType}
+              {getClaimTypeLabel(state.claimType)}
             </div>
           )}
           {state.ref && (

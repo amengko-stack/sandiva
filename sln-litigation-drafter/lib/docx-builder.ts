@@ -12,6 +12,7 @@ import {
   TabStopType,
   TabStopPosition,
 } from "docx";
+import { getClaimTypeLabel } from "@/config/documentTypes";
 
 interface DocxMeta {
   ref: string;
@@ -77,7 +78,7 @@ export async function buildLitigationDocx(
                 spacing: { after: 100 },
                 children: [
                   new TextRun({
-                    text: `SANDIVA LEGAL NETWORK  |  ${meta.docType.toUpperCase()} — ${meta.claimType.toUpperCase()}  |  RAHASIA`,
+                    text: `SANDIVA LEGAL NETWORK  |  ${meta.docType.toUpperCase()} — ${getClaimTypeLabel(meta.claimType).toUpperCase()}  |  RAHASIA`,
                     size: 16,
                     font: "Arial",
                     color: "888888",
