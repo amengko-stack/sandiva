@@ -20,7 +20,7 @@ export async function writeBlobText(
   content: string
 ): Promise<string> {
   const { url } = await put(`${PREFIX}/${path}`, content, {
-    access: "public",
+    access: "private",
     token: process.env.BLOB_READ_WRITE_TOKEN,
     allowOverwrite: true,
   });
