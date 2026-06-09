@@ -4,6 +4,13 @@ export async function POST(req: NextRequest) {
   try {
     const { password } = await req.json();
 
+    console.log('ENV CHECK:', {
+      hasPassword: !!process.env.APP_PASSWORD,
+      passwordLength: process.env.APP_PASSWORD?.length ?? 0,
+      hasToken: !!process.env.APP_SESSION_TOKEN,
+      tokenLength: process.env.APP_SESSION_TOKEN?.length ?? 0,
+    });
+
     const expectedPassword = process.env.APP_PASSWORD;
     const sessionToken = process.env.APP_SESSION_TOKEN;
 
