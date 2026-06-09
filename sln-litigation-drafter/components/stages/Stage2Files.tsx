@@ -51,9 +51,13 @@ export default function Stage2Files() {
   const [mapping, setMapping] = useState(false);
   const [error, setError] = useState("");
 
-  // 2A: local checked state (mirrors allFiles.selected)
+  // 2A: local checked state — initialize from allFiles (handles both fresh load and back-navigation)
   const [checkedIds, setCheckedIds] = useState<Set<string>>(
-    () => new Set(state.allFiles.filter((f) => f.selected).map((f) => f.id))
+    () => new Set(
+      state.allFiles.length > 0
+        ? state.allFiles.map((f) => f.id)          // all checked by default on back-navigation
+        : []                                         // empty until discoverFiles populates
+    )
   );
 
   // 2B: local docMap with category edits
@@ -382,35 +386,63 @@ export default function Stage2Files() {
           {state.allFiles.length > 0 && (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                  {state.allFiles.length} file ditemukan — {checkedIds.size} dipilih
+                <span style={{ fontSize: 13, color: checkedIds.size === 0 ? "var(--error)" : "var(--text-muted)" }}>
+                  {checkedIds.size} dari {state.allFiles.length} file dipilih
                 </span>
                 <div style={{ display: "flex", gap: 8 }}>
                   <button onClick={selectAll2A} style={{ fontSize: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer" }}>Pilih Semua</button>
-                  <button onClick={clearAll2A} style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>Hapus Pilihan</button>
+                  <button onClick={clearAll2A} style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>Batalkan Semua</button>
                 </div>
               </div>
-              <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 280, overflowY: "auto", marginBottom: 20 }}>
-                {state.allFiles.map((f, i) => (
-                  <div
-                    key={f.id}
-                    style={{ display: "flex", gap: 10, padding: "8px 12px", borderBottom: i < state.allFiles.length - 1 ? "1px solid var(--border-color)" : "none", alignItems: "center", cursor: "pointer", background: checkedIds.has(f.id) ? "rgba(91,155,213,0.04)" : "transparent" }}
-                    onClick={() => toggleCheck2A(f.id)}
-                  >
-                    <input type="checkbox" checked={checkedIds.has(f.id)} onChange={() => toggleCheck2A(f.id)} onClick={(e) => e.stopPropagation()} />
-                    <span style={{ fontSize: 14 }}>{FILE_ICON[f.type] || "📎"}</span>
-                    <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.size}</span>
-                    <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase" }}>{f.type}</span>
-                  </div>
-                ))}
+              <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 300, overflowY: "auto", marginBottom: 12 }}>
+                {state.allFiles.map((f, i) => {
+                  const checked = checkedIds.has(f.id);
+                  return (
+                    <label
+                      key={f.id}
+                      htmlFor={`file-cb-${f.id}`}
+                      style={{
+                        display: "flex", gap: 10, padding: "9px 12px",
+                        borderBottom: i < state.allFiles.length - 1 ? "1px solid var(--border-color)" : "none",
+                        alignItems: "center", cursor: "pointer",
+                        background: checked ? "rgba(91,155,213,0.05)" : "rgba(0,0,0,0.01)",
+                        opacity: checked ? 1 : 0.5,
+                        userSelect: "none",
+                      }}
+                    >
+                      <input
+                        id={`file-cb-${f.id}`}
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleCheck2A(f.id)}
+                        style={{ flexShrink: 0, cursor: "pointer" }}
+                      />
+                      <span style={{ fontSize: 14, flexShrink: 0 }}>{FILE_ICON[f.type] || "📎"}</span>
+                      <span style={{
+                        flex: 1, fontSize: 13,
+                        color: checked ? "var(--text-primary)" : "var(--text-muted)",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        textDecoration: checked ? "none" : "line-through",
+                      }}>
+                        {f.name}
+                      </span>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{f.size}</span>
+                      <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", flexShrink: 0 }}>{f.type}</span>
+                    </label>
+                  );
+                })}
               </div>
+              {checkedIds.size === 0 && (
+                <p style={{ fontSize: 13, color: "var(--error)", marginBottom: 12 }}>
+                  Pilih minimal satu file untuk melanjutkan.
+                </p>
+              )}
               <button
                 onClick={confirmSelection}
                 disabled={checkedIds.size === 0}
                 style={{ padding: "10px 24px", background: checkedIds.size > 0 ? "var(--accent-blue)" : "var(--border-color)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: checkedIds.size > 0 ? "pointer" : "not-allowed" }}
               >
-                Konfirmasi Pilihan ({checkedIds.size} file) →
+                Konfirmasi Pilihan File ({checkedIds.size}) →
               </button>
             </>
           )}
