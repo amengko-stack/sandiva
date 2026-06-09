@@ -398,24 +398,23 @@ export default function Stage2Files() {
                 {state.allFiles.map((f, i) => {
                   const checked = checkedIds.has(f.id);
                   return (
-                    <label
+                    <div
                       key={f.id}
-                      htmlFor={`file-cb-${f.id}`}
+                      onClick={() => toggleCheck2A(f.id)}
                       style={{
                         display: "flex", gap: 10, padding: "9px 12px",
                         borderBottom: i < state.allFiles.length - 1 ? "1px solid var(--border-color)" : "none",
                         alignItems: "center", cursor: "pointer",
-                        background: checked ? "rgba(91,155,213,0.05)" : "rgba(0,0,0,0.01)",
-                        opacity: checked ? 1 : 0.5,
+                        background: checked ? "rgba(91,155,213,0.05)" : "transparent",
+                        opacity: checked ? 1 : 0.45,
                         userSelect: "none",
                       }}
                     >
                       <input
-                        id={`file-cb-${f.id}`}
                         type="checkbox"
                         checked={checked}
-                        onChange={() => toggleCheck2A(f.id)}
-                        style={{ flexShrink: 0, cursor: "pointer" }}
+                        onChange={() => {}}
+                        style={{ flexShrink: 0, pointerEvents: "none" }}
                       />
                       <span style={{ fontSize: 14, flexShrink: 0 }}>{FILE_ICON[f.type] || "📎"}</span>
                       <span style={{
@@ -428,7 +427,7 @@ export default function Stage2Files() {
                       </span>
                       <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{f.size}</span>
                       <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", flexShrink: 0 }}>{f.type}</span>
-                    </label>
+                    </div>
                   );
                 })}
               </div>
