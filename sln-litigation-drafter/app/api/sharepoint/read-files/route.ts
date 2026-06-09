@@ -100,6 +100,9 @@ export async function POST(req: NextRequest) {
 
           // Write Blob after every file so partial progress survives timeouts
           await writeBlobText(`sessions/${sessionId}/extracted_text.json`, combinedText);
+
+          // 300ms breathing room so the stop button is responsive on the frontend
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
 
         // Write audit report JSON for inventory PDF generation

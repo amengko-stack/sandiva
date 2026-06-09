@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, CaseAnalysis, InterviewAnswer } from "@/types";
 
@@ -35,6 +35,38 @@ interface ExtractLogEntry {
   reason?: string;
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function ts() {
+  return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+}
+
+function fireAndForget(url: string, body: object) {
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Stage2Resume =
+  | { type: "file_list"; files: FileEntry[]; timestamp: string }
+  | { type: "categorization"; docMap: DocMapEntry[]; selectedFileIds: string[]; timestamp: string }
+  | { type: "extraction_progress"; docMap: DocMapEntry[]; completedFiles: ExtractLogEntry[]; remainingFiles: FileEntry[]; processed: number; totalChars: number; timestamp: string };
+
+type PriorSession = {
+  latestTimestamp: string;
+  analysis?: CaseAnalysis;
+  kronologi?: string;
+  interviewAnswers?: InterviewAnswer[];
+  strategicAssessment?: string;
+  resumeAtStage?: 3 | 4;
+  resumeAtSubstep?: "3A" | "3B" | "3C";
+  stage2Resume?: Stage2Resume;
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function Stage2Files() {
@@ -51,18 +83,17 @@ export default function Stage2Files() {
   const [mapping, setMapping] = useState(false);
   const [error, setError] = useState("");
 
-  // 2A: local checked state — initialize from allFiles (handles both fresh load and back-navigation)
+  // 2A: local checked state
   const [checkedIds, setCheckedIds] = useState<Set<string>>(
     () => new Set(
       state.allFiles.length > 0
-        ? state.allFiles.map((f) => f.id)          // all checked by default on back-navigation
-        : []                                         // empty until discoverFiles populates
+        ? state.allFiles.map((f) => f.id)
+        : []
     )
   );
 
   // 2B: local docMap with category edits
   const [localMap, setLocalMap] = useState<DocMapEntry[]>(state.docMap);
-  // Which files are checked in 2B (all on by default)
   const [b2CheckedIds, setB2CheckedIds] = useState<Set<string>>(
     () => new Set(state.docMap.map((e) => e.fileId))
   );
@@ -73,6 +104,7 @@ export default function Stage2Files() {
   const [totalChars, setTotalChars] = useState(0);
   const [processedCount, setProcessedCount] = useState(0);
   const [skippedCount, setSkippedCount] = useState(0);
+  const [stoppedEarly, setStoppedEarly] = useState(false);
 
   // 2D: inventory collapse/expand + SharePoint save status
   const [inventoryExpanded, setInventoryExpanded] = useState(true);
@@ -80,17 +112,13 @@ export default function Stage2Files() {
   const [spSaveUrl, setSpSaveUrl] = useState<string | null>(null);
 
   // Session continuity banner
-  type PriorSession = {
-    latestTimestamp: string;
-    analysis?: CaseAnalysis;
-    kronologi?: string;
-    interviewAnswers?: InterviewAnswer[];
-    strategicAssessment?: string;
-    resumeAtStage?: 3 | 4;
-    resumeAtSubstep?: "3A" | "3B" | "3C";
-  };
   const [priorSession, setPriorSession] = useState<PriorSession | null>(null);
   const [priorSessionDismissed, setPriorSessionDismissed] = useState(false);
+
+  // Refs for abort / stop
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const stopRequestedRef = useRef(false);
+  const saveProgressRef = useRef(false);
 
   // ── 2A: Load filenames only ─────────────────────────────────────────────────
   async function discoverFiles() {
@@ -110,6 +138,13 @@ export default function Stage2Files() {
       dispatch({ type: "SET_FOLDER", folderPath: link });
       dispatch({ type: "SET_ALL_FILES", files: result.files });
       setCheckedIds(new Set((result.files as FileEntry[]).map((f) => f.id)));
+
+      // Save file list to SharePoint AI folder
+      fireAndForget("/api/sharepoint/save-matter-file", {
+        folderPath: link,
+        filename: `AI/file_list_${ts()}.json`,
+        content: JSON.stringify({ files: result.files, timestamp: new Date().toISOString() }),
+      });
 
       // Background session continuity check
       fetch("/api/sharepoint/check-session", {
@@ -145,7 +180,7 @@ export default function Stage2Files() {
     setCheckedIds(new Set());
   }
 
-  // Confirm selection → immediately trigger AI mapping
+  // Confirm selection → trigger AI mapping
   async function confirmSelection() {
     const selected = state.allFiles.filter((f) => checkedIds.has(f.id));
     if (selected.length === 0) {
@@ -153,6 +188,8 @@ export default function Stage2Files() {
       return;
     }
     dispatch({ type: "SET_SELECTED_FILES", files: selected });
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setMapping(true);
     setError("");
     setSubstep("2B");
@@ -165,6 +202,7 @@ export default function Stage2Files() {
           docTypeId: state.docTypeId,
           claimType: state.claimType,
         }),
+        signal: controller.signal,
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error ?? "Gagal membuat peta dokumen");
@@ -172,8 +210,13 @@ export default function Stage2Files() {
       setLocalMap(result.map);
       setB2CheckedIds(new Set((result.map as DocMapEntry[]).map((e) => e.fileId)));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Terjadi kesalahan");
-      setSubstep("2A");
+      if (e instanceof Error && e.name === "AbortError") {
+        setSubstep("2A");
+        setError("AI kategorisasi dihentikan. Coba lagi atau lanjutkan nanti.");
+      } else {
+        setError(e instanceof Error ? e.message : "Terjadi kesalahan");
+        setSubstep("2A");
+      }
     } finally {
       setMapping(false);
     }
@@ -196,7 +239,6 @@ export default function Stage2Files() {
       return;
     }
 
-    // Build files list sorted KRITIS → PENDUKUNG → REFERENSI
     const filesById = new Map(state.selectedFiles.map((f) => [f.id, f]));
     const sorted = [...checkedEntries]
       .sort((a, b) => CATEGORY_CYCLE.indexOf(a.category) - CATEGORY_CYCLE.indexOf(b.category))
@@ -205,17 +247,63 @@ export default function Stage2Files() {
 
     dispatch({ type: "SET_DOC_MAP", map: localMap });
 
-    // Initialize log
-    setExtractLog(
-      sorted.map((f) => {
-        const entry = localMap.find((e) => e.fileId === f.id);
-        return { name: f.name, category: entry?.category ?? "REFERENSI", status: "memproses" };
-      })
-    );
+    // Save confirmed categorization to SharePoint before starting SSE
+    if (state.folderPath) {
+      fireAndForget("/api/sharepoint/save-matter-file", {
+        folderPath: state.folderPath,
+        filename: `AI/categorization_${ts()}.json`,
+        content: JSON.stringify({
+          docMap: localMap,
+          selectedFileIds: sorted.map((f) => f.id),
+          timestamp: new Date().toISOString(),
+        }),
+      });
+    }
+
+    setStoppedEarly(false);
+    await runExtraction(sorted, localMap, [], 0, 0, 0);
+  }
+
+  // Resume extraction from saved progress
+  async function startExtractionFromResume(
+    remainingFiles: FileEntry[],
+    savedDocMap: DocMapEntry[],
+    priorLog: ExtractLogEntry[],
+    priorProcessed: number,
+    priorSkipped: number,
+    priorTotalChars: number,
+  ) {
+    setLocalMap(savedDocMap);
+    dispatch({ type: "SET_DOC_MAP", map: savedDocMap });
+    setStoppedEarly(false);
+    await runExtraction(remainingFiles, savedDocMap, priorLog, priorProcessed, priorSkipped, priorTotalChars);
+  }
+
+  // Core SSE extraction loop
+  async function runExtraction(
+    filesToExtract: FileEntry[],
+    mapEntries: DocMapEntry[],
+    prependLog: ExtractLogEntry[],
+    priorProcessed: number,
+    priorSkipped: number,
+    priorTotalChars: number,
+  ) {
+    stopRequestedRef.current = false;
+    saveProgressRef.current = false;
+
+    const newEntries: ExtractLogEntry[] = filesToExtract.map((f) => {
+      const entry = mapEntries.find((e) => e.fileId === f.id);
+      return { name: f.name, category: entry?.category ?? "REFERENSI", status: "memproses" };
+    });
+    let localLog: ExtractLogEntry[] = [...prependLog, ...newEntries];
+    setExtractLog(localLog);
     setExtractDone(false);
-    setTotalChars(0);
-    setProcessedCount(0);
-    setSkippedCount(0);
+    let runTotalChars = priorTotalChars;
+    let runProcessed = priorProcessed;
+    let runSkipped = priorSkipped;
+    setTotalChars(priorTotalChars);
+    setProcessedCount(priorProcessed);
+    setSkippedCount(priorSkipped);
     setError("");
     setSubstep("2C");
 
@@ -224,8 +312,8 @@ export default function Stage2Files() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          files: sorted,
-          docMap: localMap,
+          files: filesToExtract,
+          docMap: mapEntries,
           sessionId: state.sessionId,
           folderPath: state.folderPath,
           docTypeId: state.docTypeId,
@@ -242,8 +330,10 @@ export default function Stage2Files() {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let stopped = false;
 
       while (true) {
+        if (stopped) break;
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -255,31 +345,52 @@ export default function Stage2Files() {
           if (!jsonStr) continue;
           try {
             const ev = JSON.parse(jsonStr) as Record<string, unknown>;
-            if (ev.type === "done") {
-              const idx = ev.index as number;
-              setExtractLog((log) =>
-                log.map((entry, i) =>
-                  i === idx
-                    ? { ...entry, status: "selesai", charCount: ev.charCount as number }
-                    : entry
-                )
-              );
-              setTotalChars((t) => t + (ev.charCount as number));
-              setProcessedCount((c) => c + 1);
-            } else if (ev.type === "error") {
-              const idx = ev.index as number;
-              setExtractLog((log) =>
-                log.map((entry, i) =>
-                  i === idx
-                    ? { ...entry, status: "gagal", reason: ev.reason as string }
-                    : entry
-                )
-              );
-              setSkippedCount((c) => c + 1);
+            if (ev.type === "done" || ev.type === "error") {
+              const fileIdx = ev.index as number;
+              const logIdx = fileIdx + prependLog.length;
+              if (ev.type === "done") {
+                localLog = localLog.map((entry, i) =>
+                  i === logIdx ? { ...entry, status: "selesai", charCount: ev.charCount as number } : entry
+                );
+                runTotalChars += ev.charCount as number;
+                runProcessed += 1;
+                setTotalChars(runTotalChars);
+                setProcessedCount(runProcessed);
+              } else {
+                localLog = localLog.map((entry, i) =>
+                  i === logIdx ? { ...entry, status: "gagal", reason: ev.reason as string } : entry
+                );
+                runSkipped += 1;
+                setSkippedCount(runSkipped);
+              }
+              setExtractLog([...localLog]);
+
+              if (stopRequestedRef.current) {
+                reader.cancel();
+                stopped = true;
+                if (saveProgressRef.current && state.folderPath) {
+                  const remaining = filesToExtract.slice(fileIdx + 1);
+                  fireAndForget("/api/sharepoint/save-matter-file", {
+                    folderPath: state.folderPath,
+                    filename: `AI/extraction_progress_${ts()}.json`,
+                    content: JSON.stringify({
+                      sessionId: state.sessionId,
+                      docMap: mapEntries,
+                      completedFiles: localLog.filter((e) => e.status !== "memproses"),
+                      remainingFiles: remaining,
+                      processed: runProcessed,
+                      totalChars: runTotalChars,
+                      timestamp: new Date().toISOString(),
+                    }),
+                  });
+                }
+                setStoppedEarly(true);
+                setSubstep("2D");
+                break;
+              }
             } else if (ev.type === "complete") {
               setExtractDone(true);
               setSubstep("2D");
-              // Fire-and-forget SharePoint save
               setSpSaveStatus("pending");
               fetch("/api/docx/inventory-save", {
                 method: "POST",
@@ -353,13 +464,13 @@ export default function Stage2Files() {
             Buka folder di SharePoint → klik <strong>Bagikan</strong> → salin link → tempel di sini.
           </p>
 
-          {/* Session continuity banner */}
-          {priorSession && !priorSessionDismissed && (
+          {/* Stage 3 session continuity banner */}
+          {priorSession && !priorSessionDismissed && priorSession.analysis && (
             <div style={{ padding: "12px 16px", background: "rgba(91,155,213,0.08)", border: "1px solid rgba(91,155,213,0.35)", borderRadius: 4, marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
               <div style={{ fontSize: 13, color: "var(--text-primary)" }}>
                 ⟳ Ditemukan sesi sebelumnya dari{" "}
                 <strong>{new Date(priorSession.latestTimestamp).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</strong>.
-                Lanjutkan?
+                Lanjutkan dari Tahap 3?
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
@@ -381,6 +492,51 @@ export default function Stage2Files() {
                 </button>
               </div>
             </div>
+          )}
+
+          {/* Stage 2 session resume banner (shown only when no Stage 3 analysis) */}
+          {priorSession && !priorSessionDismissed && !priorSession.analysis && priorSession.stage2Resume && (
+            <Stage2ResumeBanner
+              resume={priorSession.stage2Resume}
+              onDismiss={() => setPriorSessionDismissed(true)}
+              onResumeFileList={(files) => {
+                dispatch({ type: "SET_ALL_FILES", files });
+                setCheckedIds(new Set(files.map((f) => f.id)));
+                setPriorSessionDismissed(true);
+              }}
+              onResumeCategorization={(docMap, selectedFileIds) => {
+                const byId = new Map(state.allFiles.map((f) => [f.id, f]));
+                const selected = selectedFileIds.map((id) => byId.get(id)).filter((f): f is FileEntry => !!f);
+                dispatch({ type: "SET_SELECTED_FILES", files: selected });
+                dispatch({ type: "SET_DOC_MAP", map: docMap });
+                setLocalMap(docMap);
+                setB2CheckedIds(new Set(selectedFileIds));
+                setSubstep("2B");
+                setPriorSessionDismissed(true);
+              }}
+              onResumeExtractionProgress={(resume) => {
+                const completedLog = resume.completedFiles;
+                dispatch({ type: "SET_DOC_MAP", map: resume.docMap });
+                setExtractLog(completedLog);
+                setProcessedCount(resume.processed);
+                setTotalChars(resume.totalChars);
+                setSkippedCount(completedLog.filter((e) => e.status === "gagal").length);
+                setStoppedEarly(true);
+                setSubstep("2D");
+                setPriorSessionDismissed(true);
+              }}
+              onContinueExtraction={(resume) => {
+                setPriorSessionDismissed(true);
+                startExtractionFromResume(
+                  resume.remainingFiles,
+                  resume.docMap,
+                  resume.completedFiles,
+                  resume.processed,
+                  resume.completedFiles.filter((e) => e.status === "gagal").length,
+                  resume.totalChars,
+                );
+              }}
+            />
           )}
 
           {state.allFiles.length > 0 && (
@@ -463,9 +619,15 @@ export default function Stage2Files() {
           {mapping ? (
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 20, background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 4 }}>
               <Spinner />
-              <span style={{ fontSize: 14, color: "var(--text-muted)" }}>
+              <span style={{ fontSize: 14, color: "var(--text-muted)", flex: 1 }}>
                 AI sedang mengategorikan {state.selectedFiles.length} file...
               </span>
+              <button
+                onClick={() => abortControllerRef.current?.abort()}
+                style={{ padding: "5px 14px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 3, color: "var(--text-muted)", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
+              >
+                Hentikan
+              </button>
             </div>
           ) : (
             <>
@@ -538,9 +700,27 @@ export default function Stage2Files() {
       {/* ── 2C: Extraction Progress ───────────────────────────────────────────── */}
       {substep === "2C" && (
         <div>
-          <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 16 }}>
-            Mengekstrak konten dokumen. File KRITIS diproses terlebih dahulu.
-          </p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+            <p style={{ color: "var(--text-muted)", fontSize: 14, margin: 0 }}>
+              Mengekstrak konten dokumen. File KRITIS diproses terlebih dahulu.
+            </p>
+            {!extractDone && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { stopRequestedRef.current = true; }}
+                  style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 3, color: "var(--text-muted)", fontSize: 12, cursor: "pointer" }}
+                >
+                  Hentikan Ekstraksi
+                </button>
+                <button
+                  onClick={() => { stopRequestedRef.current = true; saveProgressRef.current = true; }}
+                  style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--accent-gold)", borderRadius: 3, color: "var(--accent-gold)", fontSize: 12, cursor: "pointer" }}
+                >
+                  Lanjutkan Nanti
+                </button>
+              </div>
+            )}
+          </div>
           <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
             {extractLog.map((entry, i) => {
               const meta = CATEGORY_META[entry.category];
@@ -575,9 +755,15 @@ export default function Stage2Files() {
       {/* ── 2D: Completion Summary ────────────────────────────────────────────── */}
       {substep === "2D" && (
         <div>
-          <div style={{ padding: "14px 18px", background: "rgba(39,174,96,0.08)", border: "1px solid var(--success)", borderRadius: 4, fontSize: 14, color: "var(--success)", marginBottom: 20, fontWeight: 500 }}>
-            ✓ Ekstraksi selesai
-          </div>
+          {stoppedEarly ? (
+            <div style={{ padding: "14px 18px", background: "rgba(230,126,34,0.08)", border: "1px solid var(--accent-gold)", borderRadius: 4, fontSize: 14, color: "var(--accent-gold)", marginBottom: 20, fontWeight: 500 }}>
+              ⏸ Ekstraksi dihentikan — draf akan dibuat dari dokumen yang sudah diekstrak.
+            </div>
+          ) : (
+            <div style={{ padding: "14px 18px", background: "rgba(39,174,96,0.08)", border: "1px solid var(--success)", borderRadius: 4, fontSize: 14, color: "var(--success)", marginBottom: 20, fontWeight: 500 }}>
+              ✓ Ekstraksi selesai
+            </div>
+          )}
 
           <div style={{ display: "flex", gap: 24, marginBottom: 20, flexWrap: "wrap" }}>
             <Stat label="File diproses" value={processedCount} />
@@ -586,16 +772,18 @@ export default function Stage2Files() {
           </div>
 
           {/* SharePoint save status */}
-          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
-            {spSaveStatus === "pending" && "Menyimpan inventaris ke SharePoint..."}
-            {spSaveStatus === "saved" && spSaveUrl && (
-              <a href={spSaveUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--success)", textDecoration: "none" }}>
-                ✓ Inventaris tersimpan di SharePoint
-              </a>
-            )}
-            {spSaveStatus === "saved" && !spSaveUrl && "✓ Inventaris tersimpan di SharePoint"}
-            {spSaveStatus === "failed" && <span style={{ color: "var(--text-muted)" }}>Gagal disimpan ke SharePoint</span>}
-          </div>
+          {!stoppedEarly && (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
+              {spSaveStatus === "pending" && "Menyimpan inventaris ke SharePoint..."}
+              {spSaveStatus === "saved" && spSaveUrl && (
+                <a href={spSaveUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--success)", textDecoration: "none" }}>
+                  ✓ Inventaris tersimpan di SharePoint
+                </a>
+              )}
+              {spSaveStatus === "saved" && !spSaveUrl && "✓ Inventaris tersimpan di SharePoint"}
+              {spSaveStatus === "failed" && <span style={{ color: "var(--text-muted)" }}>Gagal disimpan ke SharePoint</span>}
+            </div>
+          )}
 
           {/* Inventory toggle + table */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -662,13 +850,15 @@ export default function Stage2Files() {
             >
               ← Ulang Pilihan
             </button>
-            <a
-              href={`/api/docx/inventory?sessionId=${state.sessionId}`}
-              download
-              style={{ padding: "10px 18px", background: "transparent", border: "1px solid var(--accent-gold)", borderRadius: 4, color: "var(--accent-gold)", fontSize: 13, fontWeight: 500, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              ↓ Unduh Inventaris PDF
-            </a>
+            {!stoppedEarly && (
+              <a
+                href={`/api/docx/inventory?sessionId=${state.sessionId}`}
+                download
+                style={{ padding: "10px 18px", background: "transparent", border: "1px solid var(--accent-gold)", borderRadius: 4, color: "var(--accent-gold)", fontSize: 13, fontWeight: 500, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                ↓ Unduh Inventaris PDF
+              </a>
+            )}
             <button
               onClick={() => goToStage(3)}
               style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: "pointer" }}
@@ -678,6 +868,109 @@ export default function Stage2Files() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Stage 2 Resume Banner ────────────────────────────────────────────────────
+
+type ExtractionProgressResume = {
+  type: "extraction_progress";
+  docMap: DocMapEntry[];
+  completedFiles: ExtractLogEntry[];
+  remainingFiles: FileEntry[];
+  processed: number;
+  totalChars: number;
+  timestamp: string;
+};
+
+function Stage2ResumeBanner({
+  resume,
+  onDismiss,
+  onResumeFileList,
+  onResumeCategorization,
+  onResumeExtractionProgress,
+  onContinueExtraction,
+}: {
+  resume: Stage2Resume;
+  onDismiss: () => void;
+  onResumeFileList: (files: FileEntry[]) => void;
+  onResumeCategorization: (docMap: DocMapEntry[], selectedFileIds: string[]) => void;
+  onResumeExtractionProgress: (resume: ExtractionProgressResume) => void;
+  onContinueExtraction: (resume: ExtractionProgressResume) => void;
+}) {
+  const dateStr = new Date(resume.timestamp).toLocaleString("id-ID", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+
+  const bannerStyle: React.CSSProperties = {
+    padding: "12px 16px",
+    background: "rgba(91,155,213,0.08)",
+    border: "1px solid rgba(91,155,213,0.35)",
+    borderRadius: 4,
+    marginBottom: 16,
+  };
+
+  const btnPrimary: React.CSSProperties = {
+    padding: "6px 14px", background: "var(--accent-blue)", color: "white",
+    border: "none", borderRadius: 3, fontSize: 12, fontWeight: 500, cursor: "pointer",
+  };
+  const btnSecondary: React.CSSProperties = {
+    padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)",
+    borderRadius: 3, color: "var(--text-muted)", fontSize: 12, cursor: "pointer",
+  };
+
+  if (resume.type === "file_list") {
+    return (
+      <div style={bannerStyle}>
+        <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 10 }}>
+          ⟳ Ditemukan daftar file dari <strong>{dateStr}</strong> ({resume.files.length} file).
+          Muat ulang folder tidak diperlukan.
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button style={btnPrimary} onClick={() => onResumeFileList(resume.files)}>Lanjutkan</button>
+          <button style={btnSecondary} onClick={onDismiss}>Mulai Baru</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (resume.type === "categorization") {
+    return (
+      <div style={bannerStyle}>
+        <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 10 }}>
+          ⟳ Ditemukan kategorisasi dari <strong>{dateStr}</strong>.{" "}
+          {resume.selectedFileIds.length} file siap diekstrak.
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button style={btnPrimary} onClick={() => onResumeCategorization(resume.docMap, resume.selectedFileIds)}>Langsung Ekstrak</button>
+          <button style={btnSecondary} onClick={onDismiss}>Mulai Baru</button>
+        </div>
+      </div>
+    );
+  }
+
+  // extraction_progress
+  const ep = resume as ExtractionProgressResume;
+  const completedCount = ep.completedFiles.filter((e) => e.status === "selesai").length;
+  const totalCount = completedCount + ep.remainingFiles.length;
+  return (
+    <div style={bannerStyle}>
+      <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 10 }}>
+        ⟳ Ekstraksi sebelumnya dihentikan dari <strong>{dateStr}</strong>:{" "}
+        <strong>{completedCount}/{totalCount}</strong> file selesai.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button style={btnPrimary} onClick={() => onResumeExtractionProgress(ep)}>
+          Lanjut dengan Dokumen yang Ada
+        </button>
+        {ep.remainingFiles.length > 0 && (
+          <button style={{ ...btnPrimary, background: "var(--accent-gold)" }} onClick={() => onContinueExtraction(ep)}>
+            Lanjutkan Ekstraksi ({ep.remainingFiles.length} sisa)
+          </button>
+        )}
+        <button style={btnSecondary} onClick={onDismiss}>Mulai Baru</button>
+      </div>
     </div>
   );
 }

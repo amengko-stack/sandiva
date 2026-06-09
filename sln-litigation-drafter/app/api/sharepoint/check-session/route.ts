@@ -4,6 +4,21 @@ import type { CaseAnalysis, InterviewAnswer } from "@/types";
 
 export const maxDuration = 30;
 
+type Stage2Resume = {
+  type: "file_list" | "categorization" | "extraction_progress";
+  timestamp: string;
+  // file_list
+  files?: unknown[];
+  // categorization
+  docMap?: unknown[];
+  selectedFileIds?: string[];
+  // extraction_progress
+  completedFiles?: unknown[];
+  remainingFiles?: unknown[];
+  processed?: number;
+  totalChars?: number;
+};
+
 type CheckSessionResponse = {
   found: boolean;
   latestTimestamp?: string;
@@ -13,6 +28,7 @@ type CheckSessionResponse = {
   strategicAssessment?: string;
   resumeAtStage?: 3 | 4;
   resumeAtSubstep?: "3A" | "3B" | "3C";
+  stage2Resume?: Stage2Resume;
 };
 
 async function downloadJson(url: string): Promise<unknown> {
@@ -39,15 +55,70 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ found: false } satisfies CheckSessionResponse);
     }
 
+    // ── Stage 3 artifacts ────────────────────────────────────────────────────
     const analysisFile = latestFile(files, "analysis_");
     const kronoFile = latestFile(files, "kronologi_");
     const interviewFile = latestFile(files, "interview_");
     const assessmentFile = latestFile(files, "strategic_assessment_");
 
-    if (!analysisFile) {
+    // ── Stage 2 artifacts ────────────────────────────────────────────────────
+    const progressFile = latestFile(files, "extraction_progress_");
+    const categorizationFile = latestFile(files, "categorization_");
+    const fileListFile = latestFile(files, "file_list_");
+
+    const hasAnyArtifact = !!(analysisFile || progressFile || categorizationFile || fileListFile);
+    if (!hasAnyArtifact) {
       return NextResponse.json({ found: false } satisfies CheckSessionResponse);
     }
 
+    // ── Resolve Stage 2 resume (highest priority wins) ───────────────────────
+    let stage2Resume: Stage2Resume | undefined;
+
+    if (progressFile) {
+      const data = await downloadJson(progressFile.downloadUrl) as Record<string, unknown> | null;
+      if (data) {
+        stage2Resume = {
+          type: "extraction_progress",
+          timestamp: progressFile.lastModified,
+          docMap: (data.docMap as unknown[]) ?? [],
+          completedFiles: (data.completedFiles as unknown[]) ?? [],
+          remainingFiles: (data.remainingFiles as unknown[]) ?? [],
+          processed: (data.processed as number) ?? 0,
+          totalChars: (data.totalChars as number) ?? 0,
+        };
+      }
+    } else if (categorizationFile) {
+      const data = await downloadJson(categorizationFile.downloadUrl) as Record<string, unknown> | null;
+      if (data) {
+        stage2Resume = {
+          type: "categorization",
+          timestamp: categorizationFile.lastModified,
+          docMap: (data.docMap as unknown[]) ?? [],
+          selectedFileIds: (data.selectedFileIds as string[]) ?? [],
+        };
+      }
+    } else if (fileListFile) {
+      const data = await downloadJson(fileListFile.downloadUrl) as Record<string, unknown> | null;
+      if (data) {
+        stage2Resume = {
+          type: "file_list",
+          timestamp: fileListFile.lastModified,
+          files: (data.files as unknown[]) ?? [],
+        };
+      }
+    }
+
+    // ── If no Stage 3 analysis, return Stage 2 resume only ──────────────────
+    if (!analysisFile) {
+      const latestTimestamp = stage2Resume?.timestamp ?? "";
+      return NextResponse.json({
+        found: true,
+        latestTimestamp,
+        stage2Resume,
+      } satisfies CheckSessionResponse);
+    }
+
+    // ── Stage 3 resolution ───────────────────────────────────────────────────
     const analysisData = await downloadJson(analysisFile.downloadUrl) as { analysis: CaseAnalysis } | null;
     const kronoData = kronoFile ? await downloadJson(kronoFile.downloadUrl) as { kronologi: string } | null : null;
     const interviewData = interviewFile ? await downloadJson(interviewFile.downloadUrl) as { answers: InterviewAnswer[] } | null : null;
@@ -78,6 +149,7 @@ export async function POST(req: NextRequest) {
       strategicAssessment: assessmentData?.assessment,
       resumeAtStage,
       resumeAtSubstep,
+      stage2Resume,
     } satisfies CheckSessionResponse);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Gagal memeriksa sesi sebelumnya";
