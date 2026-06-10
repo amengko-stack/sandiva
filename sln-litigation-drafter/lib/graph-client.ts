@@ -139,8 +139,24 @@ export async function uploadFileToSharePoint(
 }
 
 // ---------------------------------------------------------------------------
-// writeMatterFile — resolves sharing links to driveId+itemId before writing
+// writeMatterFile — resolves sharing links to the matter's own driveId+itemId
+// then writes with the drive-item path format. The `filename` may include
+// subfolders (e.g. "AI/file_list.json" or "Drafts/draft.docx"); Graph's
+// path-based upload auto-creates missing parent folders, so the AI/ and
+// Drafts/ folders are created on first write if absent.
 // ---------------------------------------------------------------------------
+
+// Encode each path segment but KEEP the "/" separators so Graph treats them as
+// folder boundaries (auto-creating parents). encodeURIComponent on the whole
+// string would turn "AI/x.json" into "AI%2Fx.json" — a single bad filename.
+function encodeRelPath(relPath: string): string {
+  return relPath
+    .split("/")
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join("/");
+}
+
 export async function writeMatterFile(
   matterFolderPath: string,
   filename: string,
@@ -152,13 +168,14 @@ export async function writeMatterFile(
 
   let uploadUrl: string;
   if (ref.kind === "drive") {
-    // Drive-based write: /drives/{driveId}/items/{folderId}:/{filename}:/content
-    uploadUrl = `https://graph.microsoft.com/v1.0/drives/${ref.driveId}/items/${ref.itemId}:/${encodeURIComponent(filename)}:/content`;
+    // Write into the matter folder's OWN drive/site, resolved from the sharing link.
+    // /drives/{driveId}/items/{folderItemId}:/{AI/filename}:/content
+    uploadUrl = `https://graph.microsoft.com/v1.0/drives/${ref.driveId}/items/${ref.itemId}:/${encodeRelPath(filename)}:/content`;
   } else {
-    // Site-based write: /sites/{siteId}/drive/root:/{relPath}/{filename}:/content
+    // Plain relative path against the configured root site.
     const siteId = process.env.SHAREPOINT_SITE_ID!;
     const base = ref.relPath ? `${ref.relPath}/${filename}` : filename;
-    uploadUrl = `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${base}:/content`;
+    uploadUrl = `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${encodeRelPath(base)}:/content`;
   }
 
   console.log(`[writeMatterFile] PUT ${uploadUrl.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, "")}`);

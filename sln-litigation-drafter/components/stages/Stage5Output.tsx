@@ -16,8 +16,7 @@ export default function Stage5Output() {
     hasFiredAutoSave.current = true;
 
     const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filename = `${(state.ref || "draf").replace(/\//g, "-")}_${ts}.docx`;
-    const remotePath = `${state.folderPath.replace(/\/$/, "")}/Drafts/`;
+    const filename = `Drafts/${(state.ref || "draf").replace(/\//g, "-")}_${ts}.docx`;
     setAutoSaveStatus("pending");
 
     fetch("/api/sharepoint-save", {
@@ -28,7 +27,7 @@ export default function Stage5Output() {
         ref: state.ref,
         docType: state.docTypeId,
         claimType: state.claimType,
-        remotePath,
+        folderPath: state.folderPath,
         filename,
       }),
     })
