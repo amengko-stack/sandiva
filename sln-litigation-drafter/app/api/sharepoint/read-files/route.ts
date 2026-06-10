@@ -6,16 +6,17 @@ import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, ExtractRepor
 
 export const maxDuration = 300;
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
 const CONCURRENCY = 3;
 
 const CATEGORY_ORDER: DocCategory[] = ["KRITIS", "PENDUKUNG", "REFERENSI"];
 
 const METHOD_LABEL: Record<string, string> = {
-  full:          "Teks penuh",
-  structured:    "Terstruktur (pihak, kewajiban, pembayaran, penalti)",
-  truncated_30k: "Teks penuh (30 ribu karakter pertama)",
-  summary_5k:    "Ringkas (5 ribu karakter pertama)",
+  full:           "Teks penuh",
+  structured:     "Terstruktur (pihak, kewajiban, pembayaran, penalti)",
+  truncated_30k:  "Teks penuh (30 ribu karakter pertama)",
+  summary_5k:     "Ringkas (5 ribu karakter pertama)",
+  pdf_text:       "Teks penuh (PDF, per halaman)",
+  scanned_vision: "PDF pindaian (vision, sebagian halaman)",
 };
 
 function sse(data: object): string {
@@ -87,15 +88,7 @@ export async function POST(req: NextRequest) {
 
         enqueue({ type: "start", name: file.name, category, index: i, total });
 
-        const sizeKb = parseFloat(file.size) || 0;
-        if (sizeKb > 0 && sizeKb * 1024 > MAX_FILE_BYTES) {
-          skipped++;
-          const reason = "Ukuran file melebihi 5 MB";
-          reportFiles[i] = { name: file.name, category, documentType, extractionMode: "—", status: "gagal", reason };
-          enqueue({ type: "error", name: file.name, category, reason, index: i, total });
-          return;
-        }
-
+        // No size gate — every file is read fully or partially, never skipped for size.
         try {
           const currentModifiedAt = await getFileLastModified(file.path);
 
@@ -111,7 +104,7 @@ export async function POST(req: NextRequest) {
               extractionMode: `${METHOD_LABEL[cached.metadata.extractionMethod] ?? cached.metadata.extractionMethod} [Dari Cache]`,
               status: "selesai", charCount: cached.content.length,
             };
-            enqueue({ type: "done", name: file.name, category, charCount: cached.content.length, index: i, total, fromCache: true });
+            enqueue({ type: "done", name: file.name, category, charCount: cached.content.length, index: i, total, fromCache: true, method: cached.metadata.extractionMethod });
             return;
           }
 
@@ -135,7 +128,7 @@ export async function POST(req: NextRequest) {
             extractionMode: METHOD_LABEL[extractionMethod] ?? extractionMethod,
             status: "selesai", charCount: content.length,
           };
-          enqueue({ type: "done", name: file.name, category, charCount: content.length, index: i, total, fromCache: false });
+          enqueue({ type: "done", name: file.name, category, charCount: content.length, index: i, total, fromCache: false, method: extractionMethod });
         } catch (e: unknown) {
           const reason = e instanceof Error ? e.message : String(e);
           skipped++;

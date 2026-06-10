@@ -33,6 +33,7 @@ interface ExtractLogEntry {
   status: "antri" | "memproses" | "selesai" | "cache" | "gagal";
   charCount?: number;
   reason?: string;
+  method?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -402,7 +403,7 @@ export default function Stage2Files() {
                 const fromCache = ev.fromCache === true;
                 localLog = localLog.map((entry, i) =>
                   i === logIdx
-                    ? { ...entry, status: fromCache ? "cache" : "selesai", charCount: ev.charCount as number }
+                    ? { ...entry, status: fromCache ? "cache" : "selesai", charCount: ev.charCount as number, method: ev.method as string | undefined }
                     : entry
                 );
                 runTotalChars += ev.charCount as number;
@@ -888,6 +889,17 @@ export default function Stage2Files() {
             </div>
           )}
 
+          {/* Scanned / partially-read files notice */}
+          {(() => {
+            const scanned = extractLog.filter((e) => e.method === "scanned_vision");
+            if (scanned.length === 0) return null;
+            return (
+              <div style={{ padding: "10px 14px", background: "rgba(230,126,34,0.08)", border: "1px solid var(--accent-gold)", borderRadius: 4, fontSize: 12, color: "#b7550a", marginBottom: 16 }}>
+                ⚠ {scanned.length} file dibaca sebagian via pemindaian (PDF pindaian): {scanned.map((e) => e.name).join(", ")}
+              </div>
+            );
+          })()}
+
           {/* Inventory toggle + table */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -923,6 +935,9 @@ export default function Stage2Files() {
                       {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : "·"}
                     </span>
                     <span style={{ flex: 1, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                    {entry.method === "scanned_vision" && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: "#b7550a", background: "rgba(230,126,34,0.12)", padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em", flexShrink: 0 }} title="Dibaca sebagian via vision (PDF pindaian)">PINDAIAN</span>
+                    )}
                     <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
                     {(entry.status === "selesai" || entry.status === "cache") && entry.charCount !== undefined && (
                       <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0, minWidth: 50, textAlign: "right" }}>{(entry.charCount / 1000).toFixed(1)}k</span>

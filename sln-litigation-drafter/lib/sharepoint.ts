@@ -442,6 +442,108 @@ const PDF_KRITIS_CHAR_CAP = 80_000;
 const PENDUKUNG_CHAR_CAP = 30_000;
 const REFERENSI_CHAR_CAP = 5_000;
 
+// Page caps for scanned-PDF vision reads (per category)
+const PAGE_CAP: Record<DocCategory, number> = { KRITIS: 60, PENDUKUNG: 25, REFERENSI: 10 };
+// Avg chars/page below this ⇒ treat as scanned (image) PDF
+const SCANNED_CHARS_PER_PAGE = 100;
+// Pages per Claude vision document block (stays well under the API's 100-page limit)
+const VISION_CHUNK_PAGES = 20;
+
+// ---------------------------------------------------------------------------
+// PDF handling — local text extraction + scanned detection + page-batched vision
+// ---------------------------------------------------------------------------
+
+interface SmartPdfResult { text: string; method: string; scanned: boolean; pagesRead: number }
+
+// Local per-page text extraction via pdfjs. Stops early once charCap is hit so
+// huge text PDFs are never fully walked. Returns text + numPages for detection.
+async function extractPdfTextPaged(
+  bytes: Buffer,
+  charCap: number
+): Promise<{ text: string; numPages: number; pagesRead: number }> {
+  // Legacy build works in Node without a DOM/canvas (getTextContent needs neither)
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const data = new Uint8Array(bytes);
+  const loadingTask = pdfjs.getDocument({ data, disableWorker: true } as Parameters<typeof pdfjs.getDocument>[0]);
+  const doc = await loadingTask.promise;
+  const numPages = doc.numPages;
+  let text = "";
+  let pagesRead = 0;
+  for (let p = 1; p <= numPages; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((it) => ("str" in it ? (it as { str: string }).str : ""))
+      .join(" ");
+    text += pageText + "\n";
+    pagesRead = p;
+    if (text.length >= charCap) break;
+  }
+  await loadingTask.destroy();
+  return { text, numPages, pagesRead };
+}
+
+// Scanned PDF → Claude vision. Slices first pageCap pages into ≤20-page
+// sub-PDFs (pdf-lib) and OCRs each via the document block.
+async function extractScannedPdf(bytes: Buffer, pageCap: number): Promise<{ text: string; pagesRead: number }> {
+  const { PDFDocument } = await import("pdf-lib");
+  const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const totalPages = src.getPageCount();
+  const pagesToRead = Math.min(totalPages, pageCap);
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const parts: string[] = [];
+  for (let start = 0; start < pagesToRead; start += VISION_CHUNK_PAGES) {
+    const end = Math.min(start + VISION_CHUNK_PAGES, pagesToRead);
+    const chunk = await PDFDocument.create();
+    const indices = Array.from({ length: end - start }, (_, k) => start + k);
+    const copied = await chunk.copyPages(src, indices);
+    copied.forEach((pg) => chunk.addPage(pg));
+    const chunkBytes = Buffer.from(await chunk.save());
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await (anthropic.messages.create as any)({
+      model: MODELS.extraction,
+      max_tokens: 8000,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: chunkBytes.toString("base64") } },
+            { type: "text", text: "Bacalah dokumen hasil pindaian ini dan kembalikan seluruh teksnya secara verbatim. Jangan meringkas atau memotong." },
+          ],
+        },
+      ],
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const chunkText = (response.content as any[]).filter((b: any) => b.type === "text").map((b: any) => b.text as string).join("\n");
+    parts.push(chunkText);
+  }
+
+  return { text: parts.join("\n").trim(), pagesRead: pagesToRead };
+}
+
+// Decide text vs scanned, extract accordingly, capped by category.
+async function extractPdfSmart(bytes: Buffer, charCap: number, pageCap: number): Promise<SmartPdfResult> {
+  const { text, pagesRead } = await extractPdfTextPaged(bytes, charCap);
+  const avgPerPage = pagesRead > 0 ? text.trim().length / pagesRead : 0;
+
+  if (avgPerPage >= SCANNED_CHARS_PER_PAGE) {
+    const capped = text.length > charCap ? text.slice(0, charCap) : text;
+    return { text: capped, method: "pdf_text", scanned: false, pagesRead };
+  }
+
+  // Scanned (image) PDF — OCR via vision, page-capped
+  const { text: visionText, pagesRead: visionPages } = await extractScannedPdf(bytes, pageCap);
+  const capped = visionText.length > charCap ? visionText.slice(0, charCap) : visionText;
+  return {
+    text: `[PDF Pindaian — ${visionPages} halaman pertama dibaca via vision]\n${capped}`,
+    method: "scanned_vision",
+    scanned: true,
+    pagesRead: visionPages,
+  };
+}
+
 async function structuredContractExtract(rawText: string): Promise<string> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const res = await anthropic.messages.create({
@@ -475,18 +577,41 @@ export async function extractWithTier(
   category: DocCategory
 ): Promise<{ content: string; extractionMethod: string }> {
   const { bytes, ext } = await downloadBytes(filePath);
-  let raw = await extractText(bytes, ext);
+
+  const charCap =
+    category === "KRITIS" ? PDF_KRITIS_CHAR_CAP : category === "PENDUKUNG" ? PENDUKUNG_CHAR_CAP : REFERENSI_CHAR_CAP;
+
+  // PDFs: size-aware path — local text extraction, scanned detection, page-batched vision.
+  // Any failure here is left to propagate to the per-file catch in the route (marks gagal).
+  if (ext === "pdf") {
+    const smart = await extractPdfSmart(bytes, charCap, PAGE_CAP[category]);
+    const raw = smart.text;
+
+    if (category === "KRITIS") {
+      // Contracts: structured extraction over text PDFs; scanned stays as OCR text.
+      if (!smart.scanned && CONTRACT_FILENAME_RE.test(fileName)) {
+        const structured = await structuredContractExtract(raw);
+        return { content: `[Ekstraksi Terstruktur]\n${structured}`, extractionMethod: "structured" };
+      }
+      return { content: raw, extractionMethod: smart.method };
+    }
+
+    if (category === "PENDUKUNG") {
+      // raw is already capped at PENDUKUNG_CHAR_CAP by extractPdfSmart
+      return { content: raw, extractionMethod: smart.scanned ? "scanned_vision" : "pdf_text" };
+    }
+
+    // REFERENSI — already capped at 5k
+    return { content: smart.scanned ? raw : `[Ekstraksi Ringkas]\n${raw}`, extractionMethod: smart.method };
+  }
+
+  // DOCX / DOC / TXT — text-only via mammoth/utf-8; never gated by size
+  const raw = await extractText(bytes, ext);
 
   if (category === "KRITIS") {
-    if (ext === "pdf" && raw.length > PDF_KRITIS_CHAR_CAP) {
-      raw = raw.slice(0, PDF_KRITIS_CHAR_CAP);
-    }
     if (CONTRACT_FILENAME_RE.test(fileName)) {
       const structured = await structuredContractExtract(raw);
-      return {
-        content: `[Ekstraksi Terstruktur]\n${structured}`,
-        extractionMethod: "structured",
-      };
+      return { content: `[Ekstraksi Terstruktur]\n${structured}`, extractionMethod: "structured" };
     }
     return { content: raw, extractionMethod: "full" };
   }
