@@ -10,6 +10,14 @@ async function graphFetch(path: string, init?: RequestInit): Promise<Response> {
   });
 }
 
+async function graphFetchAbsolute(url: string, init?: RequestInit): Promise<Response> {
+  const token = await getGraphToken();
+  return fetch(url, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
+  });
+}
+
 async function getGraphToken(): Promise<string> {
   const now = Date.now();
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
@@ -42,6 +50,67 @@ async function getGraphToken(): Promise<string> {
   return _cachedToken.token;
 }
 
+// ---------------------------------------------------------------------------
+// Sharing-link helpers (mirrors lib/sharepoint.ts — kept local to avoid coupling)
+// ---------------------------------------------------------------------------
+
+function encodeSharingUrl(url: string): string {
+  const b64 = Buffer.from(url).toString("base64");
+  return "u!" + b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function isSharingLink(url: string): boolean {
+  return url.startsWith("http") && (/\/:[\w!]:\//.test(url) || /\/s\/[A-Za-z0-9_-]{10,}/.test(url));
+}
+
+// ---------------------------------------------------------------------------
+// Resolve a matter folder path to a concrete drive location for writes.
+// Sharing links must be resolved to driveId + itemId so we can write via
+// /drives/{driveId}/items/{itemId}:/{filename}:/content instead of the
+// root:/ path format, which fails when the path is a full sharing URL.
+// Result is cached in-memory keyed by the input path.
+// ---------------------------------------------------------------------------
+
+type FolderRef =
+  | { kind: "drive"; driveId: string; itemId: string }
+  | { kind: "site"; relPath: string };
+
+const _folderRefCache = new Map<string, FolderRef>();
+
+async function resolveFolderRef(matterFolderPath: string): Promise<FolderRef> {
+  const cached = _folderRefCache.get(matterFolderPath);
+  if (cached) return cached;
+
+  if (isSharingLink(matterFolderPath)) {
+    const shareId = encodeSharingUrl(matterFolderPath);
+    const token = await getGraphToken();
+    const res = await graphFetchAbsolute(
+      `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,
+      undefined
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Cannot resolve sharing link ${res.status}: ${text.slice(0, 300)}`);
+    }
+    const item = await res.json() as { id: string; parentReference?: { driveId?: string } };
+    const driveId = item.parentReference?.driveId;
+    if (!driveId) throw new Error("Sharing link resolved but driveId missing from parentReference");
+    console.log(`[resolveFolderRef] sharing link → driveId=${driveId} itemId=${item.id}`);
+    const ref: FolderRef = { kind: "drive", driveId, itemId: item.id };
+    _folderRefCache.set(matterFolderPath, ref);
+    return ref;
+  }
+
+  // Plain relative path — use site drive root:/ format
+  const relPath = matterFolderPath.replace(/^\/+/, "").replace(/\/+$/, "");
+  const ref: FolderRef = { kind: "site", relPath };
+  _folderRefCache.set(matterFolderPath, ref);
+  return ref;
+}
+
+// ---------------------------------------------------------------------------
+// uploadFileToSharePoint — kept for inventory DOCX upload (uses plain path)
+// ---------------------------------------------------------------------------
 export async function uploadFileToSharePoint(
   remotePath: string,
   filename: string,
@@ -55,10 +124,7 @@ export async function uploadFileToSharePoint(
 
   const res = await fetch(url, {
     method: "PUT",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": mimeType,
-    },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": mimeType },
     body: fileBuffer as unknown as BodyInit,
   });
 
@@ -72,24 +138,9 @@ export async function uploadFileToSharePoint(
   return data.webUrl || "";
 }
 
-// Ensures the AI/ subfolder exists under matterFolderPath. Creates it if missing.
-async function ensureAiFolder(matterFolderPath: string): Promise<void> {
-  const cleanPath = matterFolderPath.replace(/\/$/, "");
-  const checkRes = await graphFetch(`/drive/root:/${cleanPath}/AI`);
-  if (checkRes.ok) return;
-  if (checkRes.status !== 404) return;
-
-  const createRes = await graphFetch(`/drive/root:/${cleanPath}:/children`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: "AI", folder: {}, "@microsoft.graph.conflictBehavior": "replace" }),
-  });
-  if (!createRes.ok) {
-    const text = await createRes.text();
-    console.error(`[ensureAiFolder] Failed to create AI/ folder: ${createRes.status}`, text);
-  }
-}
-
+// ---------------------------------------------------------------------------
+// writeMatterFile — resolves sharing links to driveId+itemId before writing
+// ---------------------------------------------------------------------------
 export async function writeMatterFile(
   matterFolderPath: string,
   filename: string,
@@ -97,29 +148,59 @@ export async function writeMatterFile(
   mimeType = "application/json"
 ): Promise<string> {
   const buf = typeof content === "string" ? Buffer.from(content, "utf-8") : content;
-  const path = matterFolderPath.endsWith("/") ? matterFolderPath : matterFolderPath + "/";
-  try {
-    return await uploadFileToSharePoint(path, filename, buf, mimeType);
-  } catch (e) {
-    // If 404, AI/ folder likely doesn't exist yet — create it and retry once
-    if (e instanceof Error && e.message.includes("404")) {
-      await ensureAiFolder(matterFolderPath);
-      return uploadFileToSharePoint(path, filename, buf, mimeType);
-    }
-    throw e;
+  const ref = await resolveFolderRef(matterFolderPath);
+
+  let uploadUrl: string;
+  if (ref.kind === "drive") {
+    // Drive-based write: /drives/{driveId}/items/{folderId}:/{filename}:/content
+    uploadUrl = `https://graph.microsoft.com/v1.0/drives/${ref.driveId}/items/${ref.itemId}:/${encodeURIComponent(filename)}:/content`;
+  } else {
+    // Site-based write: /sites/{siteId}/drive/root:/{relPath}/{filename}:/content
+    const siteId = process.env.SHAREPOINT_SITE_ID!;
+    const base = ref.relPath ? `${ref.relPath}/${filename}` : filename;
+    uploadUrl = `https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${base}:/content`;
   }
+
+  console.log(`[writeMatterFile] PUT ${uploadUrl.replace(/^https:\/\/graph\.microsoft\.com\/v1\.0/, "")}`);
+  const token = await getGraphToken();
+  const res = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": mimeType },
+    body: buf as unknown as BodyInit,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`[writeMatterFile] Graph ${res.status} for ${filename}:`, text);
+    // Invalidate cached folder ref so next call re-resolves (handles token expiry, etc.)
+    _folderRefCache.delete(matterFolderPath);
+    throw new Error(`Graph write error ${res.status}: ${text.slice(0, 500)}`);
+  }
+
+  const data = await res.json();
+  return (data as { webUrl?: string }).webUrl || "";
 }
 
 export async function listAiFolder(
   matterFolderPath: string
 ): Promise<{ name: string; downloadUrl: string; lastModified: string }[]> {
-  const path = matterFolderPath.replace(/\/$/, "");
-  const res = await graphFetch(`/drive/root:/${path}/AI:/children`);
+  const ref = await resolveFolderRef(matterFolderPath);
+  let res: Response;
+
+  if (ref.kind === "drive") {
+    const token = await getGraphToken();
+    // List children named "AI" under the matter folder, then list AI's children
+    const aiChildUrl = `https://graph.microsoft.com/v1.0/drives/${ref.driveId}/items/${ref.itemId}:/AI:/children`;
+    res = await graphFetchAbsolute(aiChildUrl);
+  } else {
+    const path = ref.relPath ? `${ref.relPath}/AI` : "AI";
+    res = await graphFetch(`/drive/root:/${path}:/children`);
+  }
+
   if (res.status === 404) return [];
   if (!res.ok) return [];
-  const data = await res.json();
-  const items: { name: string; "@microsoft.graph.downloadUrl": string; lastModifiedDateTime: string }[] =
-    data.value ?? [];
+  const data = await res.json() as { value?: { name: string; "@microsoft.graph.downloadUrl": string; lastModifiedDateTime: string }[] };
+  const items = data.value ?? [];
   return items.map((i) => ({
     name: i.name,
     downloadUrl: i["@microsoft.graph.downloadUrl"] ?? "",
