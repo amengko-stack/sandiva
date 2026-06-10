@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { CaseAnalysis } from "@/types";
+import { MODELS } from "@/config/models";
 
 const ANALYSIS_SYSTEM = `Kamu adalah senior litigator Indonesia dengan keahlian dalam hukum perdata dan kepailitan.
 Tugasmu adalah membaca dokumen perkara dan menghasilkan analisis kasus yang akurat dan tajam.
@@ -234,7 +235,7 @@ Panduan per field:
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: MODELS.kronologi,
     max_tokens: 4000,
     system: ANALYSIS_SYSTEM,
     messages: [{ role: "user", content: prompt }],

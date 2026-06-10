@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { writeBlobText, readBlobText } from "@/lib/blob";
+import { MODELS } from "@/config/models";
 
 export const maxDuration = 120;
 
@@ -79,7 +80,7 @@ Dokumen harus mencakup:
 7. Instruksi untuk AI drafter`;
 
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.patterns,
       max_tokens: 4000,
       system: SETUP_SYSTEM,
       messages: [{ role: "user", content: prompt }],

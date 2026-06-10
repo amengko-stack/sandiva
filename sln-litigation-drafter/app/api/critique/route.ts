@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { MODELS } from "@/config/models";
 
 export const maxDuration = 60;
 
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.critique,
       max_tokens: 1500,
       system: CRITIQUE_SYSTEM,
       messages: [

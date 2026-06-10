@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getSystemPrompt } from "@/src/prompts";
 import { loadMemoryLibrary, buildMemoryContext } from "@/lib/blob";
 import type { CaseAnalysis } from "@/types";
+import { MODELS } from "@/config/models";
 
 export const maxDuration = 300;
 
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const stream = await client.messages.stream({
-      model: "claude-sonnet-4-6",
+      model: MODELS.drafting,
       max_tokens: 8192,
       system: systemPrompt,
       messages: [

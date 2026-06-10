@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileContent } from "@/lib/sharepoint";
 import Anthropic from "@anthropic-ai/sdk";
+import { MODELS } from "@/config/models";
 
 export const maxDuration = 120;
 
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     step = "claude";
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.patterns,
       max_tokens: 1500,
       system: ANALYSIS_SYSTEM,
       messages: [

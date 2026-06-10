@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { CaseAnalysis, InterviewAnswer } from "@/types";
+import { MODELS } from "@/config/models";
 
 export const maxDuration = 30;
 
@@ -34,7 +35,7 @@ ${answersText || "(tidak ada jawaban)"}
 Asesmen strategis harus mencakup: (1) kekuatan posisi klien, (2) risiko utama, (3) strategi pembuktian, (4) rekomendasi tindakan prioritas.`;
 
     const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.assessment,
       max_tokens: 2000,
       system: "Anda adalah litigator senior yang menulis rencana strategis litigasi berdasarkan analisis perkara dan informasi klien.",
       messages: [{ role: "user", content: prompt }],

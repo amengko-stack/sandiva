@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { CaseAnalysis } from "@/types";
+import { MODELS } from "@/config/models";
 
 export const maxDuration = 30;
 
@@ -27,7 +28,7 @@ ${caseAnalysis.analisisElemen}
 Hasilkan pertanyaan yang spesifik, faktual, dan dapat dijawab klien. Format respons sebagai JSON array string: ["pertanyaan 1", "pertanyaan 2", ...]`;
 
     const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.interview,
       max_tokens: 1000,
       system: "Anda adalah litigator senior yang mempersiapkan wawancara klien untuk mengisi celah fakta dalam analisis perkara.",
       messages: [{ role: "user", content: prompt }],

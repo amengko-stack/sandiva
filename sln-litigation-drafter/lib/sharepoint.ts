@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
 import type { FileEntry, DocDocumentType, DocCategory } from "@/types";
+import { MODELS } from "@/config/models";
 
 // ---------------------------------------------------------------------------
 // Token — plain fetch, no Azure SDK
@@ -183,7 +184,7 @@ async function extractText(bytes: Buffer, ext: string): Promise<string> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await (anthropic.messages.create as any)({
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 8000,
     messages: [
       {
@@ -371,7 +372,7 @@ export async function readFileContentWithMode(
 
   if (documentType === "perjanjian_kontrak") {
     const res = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 2000,
       messages: [
         {
@@ -389,7 +390,7 @@ export async function readFileContentWithMode(
         ? `Dari dokumen bukti transaksi berikut, buat ringkasan singkat yang mencakup: jumlah/nilai, tanggal transaksi, para pihak, dan deskripsi transaksi.\n\nDokumen:\n${rawText}`
         : `Dari dokumen korporasi berikut, buat ringkasan singkat yang mencakup: nama entitas, struktur kepemilikan, direktur/komisaris, dan data relevan lainnya.\n\nDokumen:\n${rawText}`;
     const res = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 2000,
       messages: [{ role: "user", content: prompt }],
     });
@@ -444,7 +445,7 @@ const REFERENSI_CHAR_CAP = 5_000;
 async function structuredContractExtract(rawText: string): Promise<string> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const res = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 4000,
     messages: [
       {
