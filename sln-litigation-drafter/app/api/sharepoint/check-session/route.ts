@@ -15,6 +15,7 @@ type Stage2Resume = {
   // extraction_progress
   completedFiles?: unknown[];
   remainingFiles?: unknown[];
+  perluOcrFiles?: unknown[];
   processed?: number;
   totalChars?: number;
 };
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest) {
           docMap: (data.docMap as unknown[]) ?? [],
           completedFiles: (data.completedFiles as unknown[]) ?? [],
           remainingFiles: (data.remainingFiles as unknown[]) ?? [],
+          perluOcrFiles: (data.perluOcrFiles as unknown[]) ?? [],
           processed: (data.processed as number) ?? 0,
           totalChars: (data.totalChars as number) ?? 0,
         };

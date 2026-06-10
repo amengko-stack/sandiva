@@ -55,7 +55,7 @@ function fireAndForget(url: string, body: object) {
 type Stage2Resume =
   | { type: "file_list"; files: FileEntry[]; timestamp: string }
   | { type: "categorization"; docMap: DocMapEntry[]; selectedFileIds: string[]; timestamp: string }
-  | { type: "extraction_progress"; docMap: DocMapEntry[]; completedFiles: ExtractLogEntry[]; remainingFiles: FileEntry[]; processed: number; totalChars: number; timestamp: string };
+  | { type: "extraction_progress"; docMap: DocMapEntry[]; completedFiles: ExtractLogEntry[]; remainingFiles: FileEntry[]; perluOcrFiles?: FileEntry[]; processed: number; totalChars: number; timestamp: string };
 
 type PriorSession = {
   latestTimestamp: string;
@@ -330,11 +330,12 @@ export default function Stage2Files() {
     priorProcessed: number,
     priorSkipped: number,
     priorTotalChars: number,
+    priorOcrFiles: FileEntry[] = [],
   ) {
     setLocalMap(savedDocMap);
     dispatch({ type: "SET_DOC_MAP", map: savedDocMap });
     setStoppedEarly(false);
-    await runExtraction(remainingFiles, savedDocMap, priorLog, priorProcessed, priorSkipped, priorTotalChars);
+    await runExtraction(remainingFiles, savedDocMap, priorLog, priorProcessed, priorSkipped, priorTotalChars, priorOcrFiles);
   }
 
   // Core SSE extraction loop
@@ -345,6 +346,7 @@ export default function Stage2Files() {
     priorProcessed: number,
     priorSkipped: number,
     priorTotalChars: number,
+    priorOcrFiles: FileEntry[] = [],
   ) {
     stopRequestedRef.current = false;
     saveProgressRef.current = false;
@@ -366,7 +368,8 @@ export default function Stage2Files() {
     setBatchInfo(null);
     setEtaSeconds(null);
     setRecheckMsg(null);
-    const ocrCollected: FileEntry[] = [];
+    // Seed with OCR files already known from a prior (resumed) run; dedup by path below.
+    const ocrCollected: FileEntry[] = [...priorOcrFiles];
     const extractionStartedAt = Date.now();
     setError("");
     setSubstep("2C");
@@ -423,7 +426,7 @@ export default function Stage2Files() {
               );
               setExtractLog([...localLog]);
               const ocrFile = filesToExtract[ev.index as number];
-              if (ocrFile) ocrCollected.push(ocrFile);
+              if (ocrFile && !ocrCollected.some((f) => f.path === ocrFile.path)) ocrCollected.push(ocrFile);
             } else if (ev.type === "done" || ev.type === "error") {
               const fileIdx = ev.index as number;
               const logIdx = fileIdx + prependLog.length;
@@ -473,6 +476,7 @@ export default function Stage2Files() {
                       docMap: mapEntries,
                       completedFiles: localLog.filter((e) => e.status !== "memproses" && e.status !== "antri"),
                       remainingFiles: remaining,
+                      perluOcrFiles: ocrCollected,
                       processed: runProcessed,
                       totalChars: runTotalChars,
                       timestamp: new Date().toISOString(),
@@ -488,6 +492,27 @@ export default function Stage2Files() {
               setExtractDone(true);
               setEtaSeconds(null);
               setSubstep("2D");
+
+              // When scanned files need OCR, persist a progress artifact (even on
+              // normal completion) so the PERLU_OCR list survives resume and
+              // "Periksa Ulang Dokumen" works across sessions.
+              if (ocrCollected.length > 0 && state.folderPath) {
+                saveMatterFile({
+                  folderPath: state.folderPath,
+                  filename: `AI/extraction_progress_${ts()}.json`,
+                  content: JSON.stringify({
+                    sessionId: state.sessionId,
+                    docMap: mapEntries,
+                    completedFiles: localLog.filter((e) => e.status !== "memproses" && e.status !== "antri"),
+                    remainingFiles: [],
+                    perluOcrFiles: ocrCollected,
+                    processed: runProcessed,
+                    totalChars: runTotalChars,
+                    timestamp: new Date().toISOString(),
+                  }),
+                }, "progres ekstraksi");
+              }
+
               setSpSaveStatus("pending");
               fetch("/api/docx/inventory-save", {
                 method: "POST",
@@ -693,12 +718,14 @@ export default function Stage2Files() {
                 setProcessedCount(resume.processed);
                 setTotalChars(resume.totalChars);
                 setSkippedCount(completedLog.filter((e) => e.status === "gagal").length);
+                setPerluOcrFiles(resume.perluOcrFiles ?? []);
                 setStoppedEarly(true);
                 setSubstep("2D");
                 setPriorSessionDismissed(true);
               }}
               onContinueExtraction={(resume) => {
                 setPriorSessionDismissed(true);
+                setPerluOcrFiles(resume.perluOcrFiles ?? []);
                 startExtractionFromResume(
                   resume.remainingFiles,
                   resume.docMap,
@@ -706,6 +733,7 @@ export default function Stage2Files() {
                   resume.processed,
                   resume.completedFiles.filter((e) => e.status === "gagal").length,
                   resume.totalChars,
+                  resume.perluOcrFiles ?? [],
                 );
               }}
             />
@@ -1116,6 +1144,7 @@ type ExtractionProgressResume = {
   docMap: DocMapEntry[];
   completedFiles: ExtractLogEntry[];
   remainingFiles: FileEntry[];
+  perluOcrFiles?: FileEntry[];
   processed: number;
   totalChars: number;
   timestamp: string;
