@@ -30,7 +30,7 @@ const FILE_ICON: Record<string, string> = { docx: "📄", doc: "📄", pdf: "�
 interface ExtractLogEntry {
   name: string;
   category: DocCategory;
-  status: "memproses" | "selesai" | "gagal";
+  status: "antri" | "memproses" | "selesai" | "cache" | "gagal";
   charCount?: number;
   reason?: string;
 }
@@ -105,6 +105,9 @@ export default function Stage2Files() {
   const [processedCount, setProcessedCount] = useState(0);
   const [skippedCount, setSkippedCount] = useState(0);
   const [stoppedEarly, setStoppedEarly] = useState(false);
+  const [cacheCount, setCacheCount] = useState(0);
+  const [batchInfo, setBatchInfo] = useState<{ batch: number; totalBatches: number } | null>(null);
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
 
   // 2D: inventory collapse/expand + SharePoint save status
   const [inventoryExpanded, setInventoryExpanded] = useState(true);
@@ -314,7 +317,7 @@ export default function Stage2Files() {
 
     const newEntries: ExtractLogEntry[] = filesToExtract.map((f) => {
       const entry = mapEntries.find((e) => e.fileId === f.id);
-      return { name: f.name, category: entry?.category ?? "REFERENSI", status: "memproses" };
+      return { name: f.name, category: entry?.category ?? "REFERENSI", status: "antri" };
     });
     let localLog: ExtractLogEntry[] = [...prependLog, ...newEntries];
     setExtractLog(localLog);
@@ -325,6 +328,10 @@ export default function Stage2Files() {
     setTotalChars(priorTotalChars);
     setProcessedCount(priorProcessed);
     setSkippedCount(priorSkipped);
+    setCacheCount(0);
+    setBatchInfo(null);
+    setEtaSeconds(null);
+    const extractionStartedAt = Date.now();
     setError("");
     setSubstep("2C");
 
@@ -366,17 +373,27 @@ export default function Stage2Files() {
           if (!jsonStr) continue;
           try {
             const ev = JSON.parse(jsonStr) as Record<string, unknown>;
-            if (ev.type === "done" || ev.type === "error") {
+            if (ev.type === "start") {
+              const logIdx = (ev.index as number) + prependLog.length;
+              localLog = localLog.map((entry, i) =>
+                i === logIdx ? { ...entry, status: "memproses" } : entry
+              );
+              setExtractLog([...localLog]);
+            } else if (ev.type === "done" || ev.type === "error") {
               const fileIdx = ev.index as number;
               const logIdx = fileIdx + prependLog.length;
               if (ev.type === "done") {
+                const fromCache = ev.fromCache === true;
                 localLog = localLog.map((entry, i) =>
-                  i === logIdx ? { ...entry, status: "selesai", charCount: ev.charCount as number } : entry
+                  i === logIdx
+                    ? { ...entry, status: fromCache ? "cache" : "selesai", charCount: ev.charCount as number }
+                    : entry
                 );
                 runTotalChars += ev.charCount as number;
                 runProcessed += 1;
                 setTotalChars(runTotalChars);
                 setProcessedCount(runProcessed);
+                if (fromCache) setCacheCount((c) => c + 1);
               } else {
                 localLog = localLog.map((entry, i) =>
                   i === logIdx ? { ...entry, status: "gagal", reason: ev.reason as string } : entry
@@ -385,19 +402,31 @@ export default function Stage2Files() {
                 setSkippedCount(runSkipped);
               }
               setExtractLog([...localLog]);
+            } else if (ev.type === "batch_end") {
+              const nextIndex = ev.nextIndex as number;
+              setBatchInfo({ batch: ev.batch as number, totalBatches: ev.totalBatches as number });
+              // ETA from average completion time of files so far
+              const elapsed = Date.now() - extractionStartedAt;
+              const remainingFiles = filesToExtract.length - nextIndex;
+              if (nextIndex > 0 && remainingFiles > 0) {
+                setEtaSeconds(Math.round((elapsed / nextIndex) * remainingFiles / 1000));
+              } else {
+                setEtaSeconds(null);
+              }
 
+              // Stop is honored between batches — the current batch always completes
               if (stopRequestedRef.current) {
                 reader.cancel();
                 stopped = true;
                 if (saveProgressRef.current && state.folderPath) {
-                  const remaining = filesToExtract.slice(fileIdx + 1);
+                  const remaining = filesToExtract.slice(nextIndex);
                   fireAndForget("/api/sharepoint/save-matter-file", {
                     folderPath: state.folderPath,
                     filename: `AI/extraction_progress_${ts()}.json`,
                     content: JSON.stringify({
                       sessionId: state.sessionId,
                       docMap: mapEntries,
-                      completedFiles: localLog.filter((e) => e.status !== "memproses"),
+                      completedFiles: localLog.filter((e) => e.status !== "memproses" && e.status !== "antri"),
                       remainingFiles: remaining,
                       processed: runProcessed,
                       totalChars: runTotalChars,
@@ -411,6 +440,7 @@ export default function Stage2Files() {
               }
             } else if (ev.type === "complete") {
               setExtractDone(true);
+              setEtaSeconds(null);
               setSubstep("2D");
               setSpSaveStatus("pending");
               fetch("/api/docx/inventory-save", {
@@ -721,15 +751,16 @@ export default function Stage2Files() {
       {/* ── 2C: Extraction Progress ───────────────────────────────────────────── */}
       {substep === "2C" && (
         <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
             <p style={{ color: "var(--text-muted)", fontSize: 14, margin: 0 }}>
-              Mengekstrak konten dokumen. File KRITIS diproses terlebih dahulu.
+              Mengekstrak konten dokumen (3 file paralel). File KRITIS diproses terlebih dahulu.
             </p>
             {!extractDone && (
               <div style={{ display: "flex", gap: 8 }}>
                 <button
                   onClick={() => { stopRequestedRef.current = true; }}
                   style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 3, color: "var(--text-muted)", fontSize: 12, cursor: "pointer" }}
+                  title="Batch yang sedang berjalan akan diselesaikan dahulu"
                 >
                   Hentikan Ekstraksi
                 </button>
@@ -742,20 +773,45 @@ export default function Stage2Files() {
               </div>
             )}
           </div>
+
+          {/* Progress meta: batch, ETA, cache hits */}
+          <div style={{ display: "flex", gap: 16, marginBottom: 12, fontSize: 12, color: "var(--text-muted)", flexWrap: "wrap" }}>
+            {batchInfo && (
+              <span>Batch <strong style={{ color: "var(--text-primary)" }}>{batchInfo.batch}</strong> dari {batchInfo.totalBatches}</span>
+            )}
+            {etaSeconds !== null && (
+              <span>≈ {etaSeconds >= 60 ? `${Math.floor(etaSeconds / 60)}m ${etaSeconds % 60}s` : `${etaSeconds}s`} tersisa</span>
+            )}
+            {cacheCount > 0 && (
+              <span style={{ color: "var(--accent-blue)" }}>{cacheCount} dari {extractLog.length} file dari cache</span>
+            )}
+          </div>
+
           <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
             {extractLog.map((entry, i) => {
               const meta = CATEGORY_META[entry.category];
+              const rowBg =
+                entry.status === "gagal" ? "rgba(192,57,43,0.04)"
+                : entry.status === "selesai" ? "rgba(39,174,96,0.04)"
+                : entry.status === "cache" ? "rgba(91,155,213,0.06)"
+                : "transparent";
               return (
                 <div
                   key={i}
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.04)" : "transparent" }}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: rowBg, opacity: entry.status === "antri" ? 0.55 : 1 }}
                 >
-                  <span style={{ fontSize: 13, width: 20, textAlign: "center", flexShrink: 0 }}>
-                    {entry.status === "selesai" ? "✓" : entry.status === "gagal" ? "✗" : <SpinnerInline />}
+                  <span style={{ fontSize: 13, width: 20, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "cache" ? "var(--accent-blue)" : entry.status === "gagal" ? "var(--error)" : "var(--text-muted)" }}>
+                    {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : entry.status === "antri" ? "·" : <SpinnerInline />}
                   </span>
                   <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
                   <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
-                  {entry.status === "selesai" && entry.charCount !== undefined && (
+                  {entry.status === "antri" && (
+                    <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>antri</span>
+                  )}
+                  {entry.status === "cache" && (
+                    <span style={{ fontSize: 11, color: "var(--accent-blue)", flexShrink: 0 }}>dari cache</span>
+                  )}
+                  {(entry.status === "selesai" || entry.status === "cache") && entry.charCount !== undefined && (
                     <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{(entry.charCount / 1000).toFixed(1)}k chars</span>
                   )}
                   {entry.status === "gagal" && entry.reason && (
@@ -788,6 +844,7 @@ export default function Stage2Files() {
 
           <div style={{ display: "flex", gap: 24, marginBottom: 20, flexWrap: "wrap" }}>
             <Stat label="File diproses" value={processedCount} />
+            {cacheCount > 0 && <Stat label="Dari cache" value={cacheCount} />}
             <Stat label="File gagal" value={skippedCount} />
             <Stat label="Total karakter" value={`${(totalChars / 1000).toFixed(1)}k`} />
           </div>
@@ -810,7 +867,7 @@ export default function Stage2Files() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               {CATEGORY_CYCLE.map((cat) => {
-                const count = extractLog.filter((e) => e.category === cat && e.status === "selesai").length;
+                const count = extractLog.filter((e) => e.category === cat && (e.status === "selesai" || e.status === "cache")).length;
                 if (count === 0) return null;
                 const meta = CATEGORY_META[cat];
                 return (
@@ -835,14 +892,14 @@ export default function Stage2Files() {
                 return (
                   <div
                     key={i}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.02)" : "transparent" }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.02)" : entry.status === "cache" ? "rgba(91,155,213,0.04)" : "transparent" }}
                   >
-                    <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "gagal" ? "var(--error)" : "var(--text-muted)" }}>
-                      {entry.status === "selesai" ? "✓" : entry.status === "gagal" ? "✗" : "·"}
+                    <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "cache" ? "var(--accent-blue)" : entry.status === "gagal" ? "var(--error)" : "var(--text-muted)" }}>
+                      {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : "·"}
                     </span>
                     <span style={{ flex: 1, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
                     <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
-                    {entry.status === "selesai" && entry.charCount !== undefined && (
+                    {(entry.status === "selesai" || entry.status === "cache") && entry.charCount !== undefined && (
                       <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0, minWidth: 50, textAlign: "right" }}>{(entry.charCount / 1000).toFixed(1)}k</span>
                     )}
                     {entry.status === "gagal" && entry.reason && (
@@ -973,7 +1030,7 @@ function Stage2ResumeBanner({
 
   // extraction_progress
   const ep = resume as ExtractionProgressResume;
-  const completedCount = ep.completedFiles.filter((e) => e.status === "selesai").length;
+  const completedCount = ep.completedFiles.filter((e) => e.status === "selesai" || e.status === "cache").length;
   const totalCount = completedCount + ep.remainingFiles.length;
   return (
     <div style={bannerStyle}>

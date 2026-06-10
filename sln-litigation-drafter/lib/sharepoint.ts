@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
-import type { FileEntry, DocDocumentType } from "@/types";
+import type { FileEntry, DocDocumentType, DocCategory } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Token — plain fetch, no Azure SDK
@@ -398,6 +398,115 @@ export async function readFileContentWithMode(
 
   // linear: putusan_penetapan, surat_menyurat, tidak_dikenali — return full text
   return rawText;
+}
+
+// ---------------------------------------------------------------------------
+// Lightweight metadata lookup (for cache validation) — single $select call
+// ---------------------------------------------------------------------------
+export async function getFileLastModified(filePath: string): Promise<string | null> {
+  try {
+    if (filePath.startsWith("drive:")) {
+      const [, driveId, itemId] = filePath.split(":");
+      const res = await graphFetch(`/drives/${driveId}/items/${itemId}?$select=lastModifiedDateTime`);
+      if (!res.ok) return null;
+      const meta = await res.json();
+      return meta.lastModifiedDateTime ?? null;
+    }
+    const parsed = await parseInput(filePath);
+    if (parsed.kind === "sharing-link") {
+      const res = await graphFetch(`/shares/${parsed.shareId}/driveItem?$select=lastModifiedDateTime`);
+      if (!res.ok) return null;
+      const meta = await res.json();
+      return meta.lastModifiedDateTime ?? null;
+    }
+    const encoded = encodedSegments(normalizePath(parsed.folderPath));
+    const res = await graphFetch(`/sites/${parsed.siteAddr}/drive/root:/${encoded}?$select=lastModifiedDateTime`);
+    if (!res.ok) return null;
+    const meta = await res.json();
+    return meta.lastModifiedDateTime ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tiered extraction — depth determined by 2B category
+//   KRITIS:    full (PDF capped at 80k chars); contracts by filename get
+//              structured extraction labeled [Ekstraksi Terstruktur]
+//   PENDUKUNG: first 30.000 chars, labeled if truncated
+//   REFERENSI: first 5.000 chars, labeled [Ekstraksi Ringkas]
+// ---------------------------------------------------------------------------
+const CONTRACT_FILENAME_RE = /perjanjian|pks|nda|akta|kontrak/i;
+const PDF_KRITIS_CHAR_CAP = 80_000;
+const PENDUKUNG_CHAR_CAP = 30_000;
+const REFERENSI_CHAR_CAP = 5_000;
+
+async function structuredContractExtract(rawText: string): Promise<string> {
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const res = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 4000,
+    messages: [
+      {
+        role: "user",
+        content: `Dari dokumen perjanjian/kontrak berikut, ekstrak secara terstruktur:
+- Para pihak (nama lengkap dan perannya)
+- Kewajiban masing-masing pihak (kutip verbatim klausul kewajiban)
+- Ketentuan pembayaran (nilai, jadwal, metode)
+- Ketentuan pengakhiran perjanjian
+- Penyelesaian sengketa (forum, hukum yang berlaku)
+- Klausul penalti / denda (kutip verbatim)
+
+Dokumen:
+${rawText}`,
+      },
+    ],
+  });
+  return res.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b as { type: "text"; text: string }).text)
+    .join("\n");
+}
+
+export async function extractWithTier(
+  filePath: string,
+  fileName: string,
+  category: DocCategory
+): Promise<{ content: string; extractionMethod: string }> {
+  const { bytes, ext } = await downloadBytes(filePath);
+  let raw = await extractText(bytes, ext);
+
+  if (category === "KRITIS") {
+    if (ext === "pdf" && raw.length > PDF_KRITIS_CHAR_CAP) {
+      raw = raw.slice(0, PDF_KRITIS_CHAR_CAP);
+    }
+    if (CONTRACT_FILENAME_RE.test(fileName)) {
+      const structured = await structuredContractExtract(raw);
+      return {
+        content: `[Ekstraksi Terstruktur]\n${structured}`,
+        extractionMethod: "structured",
+      };
+    }
+    return { content: raw, extractionMethod: "full" };
+  }
+
+  if (category === "PENDUKUNG") {
+    if (raw.length > PENDUKUNG_CHAR_CAP) {
+      return {
+        content:
+          raw.slice(0, PENDUKUNG_CHAR_CAP) +
+          `\n[Terpotong — ${PENDUKUNG_CHAR_CAP.toLocaleString("id-ID")} karakter pertama dari ${raw.length.toLocaleString("id-ID")}]`,
+        extractionMethod: "truncated_30k",
+      };
+    }
+    return { content: raw, extractionMethod: "full" };
+  }
+
+  // REFERENSI
+  return {
+    content: `[Ekstraksi Ringkas]\n${raw.slice(0, REFERENSI_CHAR_CAP)}`,
+    extractionMethod: "summary_5k",
+  };
 }
 
 export async function readMultipleFiles(

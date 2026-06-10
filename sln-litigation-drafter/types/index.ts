@@ -82,6 +82,7 @@ export interface ExtractReport {
   totalChars: number;
   processed: number;
   skipped: number;
+  cacheHits?: number;
 }
 
 export interface InterviewAnswer {
