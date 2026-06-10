@@ -472,12 +472,17 @@ async function extractPdfTextPaged(
 
 // Scanned PDF → Claude vision. Slices first pageCap pages into ≤20-page
 // sub-PDFs (pdf-lib) and OCRs each via the document block.
-async function extractScannedPdf(bytes: Buffer, pageCap: number): Promise<{ text: string; pagesRead: number }> {
+// Each vision chunk call is raced against a 60s timeout so a hung API call
+// marks the file gagal rather than freezing the batch indefinitely.
+async function extractScannedPdf(bytes: Buffer, pageCap: number, fileName: string): Promise<{ text: string; pagesRead: number }> {
   const { PDFDocument } = await import("pdf-lib");
   const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const totalPages = src.getPageCount();
   const pagesToRead = Math.min(totalPages, pageCap);
+  console.log(`[extractScannedPdf] ${fileName}: ${totalPages} total pages, reading first ${pagesToRead} via vision`);
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const CHUNK_TIMEOUT_MS = 60_000;
 
   const parts: string[] = [];
   for (let start = 0; start < pagesToRead; start += VISION_CHUNK_PAGES) {
@@ -487,9 +492,9 @@ async function extractScannedPdf(bytes: Buffer, pageCap: number): Promise<{ text
     const copied = await chunk.copyPages(src, indices);
     copied.forEach((pg) => chunk.addPage(pg));
     const chunkBytes = Buffer.from(await chunk.save());
+    console.log(`[extractScannedPdf] ${fileName}: chunk pages ${start + 1}–${end}, ${(chunkBytes.length / 1024).toFixed(0)} KB`);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const response = await (anthropic.messages.create as any)({
+    const visionCall = (anthropic.messages.create as (p: object) => Promise<{ content: { type: string; text?: string }[] }>)({
       model: MODELS.extraction,
       max_tokens: 8000,
       messages: [
@@ -502,8 +507,14 @@ async function extractScannedPdf(bytes: Buffer, pageCap: number): Promise<{ text
         },
       ],
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chunkText = (response.content as any[]).filter((b: any) => b.type === "text").map((b: any) => b.text as string).join("\n");
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Vision OCR timeout (${CHUNK_TIMEOUT_MS / 1000}s) pada halaman ${start + 1}–${end}`)), CHUNK_TIMEOUT_MS)
+    );
+
+    const response = await Promise.race([visionCall, timeoutPromise]);
+    const chunkText = response.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n");
+    console.log(`[extractScannedPdf] ${fileName}: chunk ${start + 1}–${end} → ${chunkText.length} chars`);
     parts.push(chunkText);
   }
 
@@ -511,11 +522,12 @@ async function extractScannedPdf(bytes: Buffer, pageCap: number): Promise<{ text
 }
 
 // Decide text vs scanned, extract accordingly, capped by category.
-async function extractPdfSmart(bytes: Buffer, charCap: number, pageCap: number): Promise<SmartPdfResult> {
+async function extractPdfSmart(bytes: Buffer, charCap: number, pageCap: number, fileName: string): Promise<SmartPdfResult> {
   const { text, pagesRead } = await extractPdfTextPaged(bytes, charCap);
   // Use raw (pre-cap) length for detection so a partially-capped text PDF isn't misclassified.
   const rawLen = text.length;
   const avgPerPage = pagesRead > 0 ? rawLen / pagesRead : 0;
+  console.log(`[extractPdfSmart] ${fileName}: ${pagesRead} pages, ${rawLen} chars, avg ${avgPerPage.toFixed(1)} chars/page → ${avgPerPage >= SCANNED_CHARS_PER_PAGE ? "TEXT" : "SCANNED"}`);
 
   if (avgPerPage >= SCANNED_CHARS_PER_PAGE) {
     const capped = text.length > charCap ? text.slice(0, charCap) : text;
@@ -523,7 +535,7 @@ async function extractPdfSmart(bytes: Buffer, charCap: number, pageCap: number):
   }
 
   // Scanned (image) PDF — OCR via vision, page-capped
-  const { text: visionText, pagesRead: visionPages } = await extractScannedPdf(bytes, pageCap);
+  const { text: visionText, pagesRead: visionPages } = await extractScannedPdf(bytes, pageCap, fileName);
   const capped = visionText.length > charCap ? visionText.slice(0, charCap) : visionText;
   return {
     text: `[PDF Pindaian — ${visionPages} halaman pertama dibaca via vision]\n${capped}`,
@@ -573,7 +585,7 @@ export async function extractWithTier(
   // PDFs: size-aware path — local text extraction, scanned detection, page-batched vision.
   // Any failure here is left to propagate to the per-file catch in the route (marks gagal).
   if (ext === "pdf") {
-    const smart = await extractPdfSmart(bytes, charCap, PAGE_CAP[category]);
+    const smart = await extractPdfSmart(bytes, charCap, PAGE_CAP[category], fileName);
     const raw = smart.text;
 
     if (category === "KRITIS") {

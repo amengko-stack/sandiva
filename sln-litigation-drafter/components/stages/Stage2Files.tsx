@@ -126,18 +126,31 @@ export default function Stage2Files() {
   const stopRequestedRef = useRef(false);
   const saveProgressRef = useRef(false);
 
-  // Fire-and-forget SharePoint save that surfaces failures as a non-blocking warning.
-  // A failed save never halts extraction — the extracted text is already in Vercel Blob.
+  // Fire-and-forget SharePoint save. A failed save surfaces as a dismissible warning —
+  // it can never halt extraction since the extracted text is already in Vercel Blob.
   function saveMatterFile(body: object, label: string) {
     fetch("/api/sharepoint/save-matter-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-    }).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[saveMatterFile] ${label} gagal:`, msg);
-      setSpWarning(`Gagal menyimpan ${label} ke SharePoint — ekstraksi tetap berjalan`);
-    });
+    })
+      .then((r) => {
+        if (!r.ok) {
+          r.json()
+            .then((data: { error?: string }) => {
+              console.warn(`[saveMatterFile] ${label} HTTP ${r.status}:`, data.error);
+              setSpWarning(`Gagal menyimpan ${label} ke SharePoint (${r.status}: ${data.error ?? "—"}) — data aman di sesi, ekstraksi lanjut`);
+            })
+            .catch(() => {
+              setSpWarning(`Gagal menyimpan ${label} ke SharePoint (HTTP ${r.status}) — data aman di sesi, ekstraksi lanjut`);
+            });
+        }
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[saveMatterFile] ${label} network error:`, msg);
+        setSpWarning(`Gagal menyimpan ${label} ke SharePoint — data aman di sesi, ekstraksi lanjut`);
+      });
   }
 
   // When arriving with folderPath already set (global resume), auto-check for
@@ -376,6 +389,7 @@ export default function Stage2Files() {
       const decoder = new TextDecoder();
       let buffer = "";
       let stopped = false;
+      let completedNormally = false; // set true only on ev.type === "complete"
 
       while (true) {
         if (stopped) break;
@@ -456,6 +470,7 @@ export default function Stage2Files() {
                 break;
               }
             } else if (ev.type === "complete") {
+              completedNormally = true;
               setExtractDone(true);
               setEtaSeconds(null);
               setSubstep("2D");
@@ -478,6 +493,13 @@ export default function Stage2Files() {
             if (inner instanceof Error && inner.message !== "Unexpected token") throw inner;
           }
         }
+      }
+      // Stream ended (done:true) without a complete event — server timed out or crashed.
+      // This path does NOT throw so the catch below is never reached; advance the UI manually.
+      if (!stopped && !completedNormally) {
+        setSubstep("2D");
+        setStoppedEarly(true);
+        setError("Koneksi terputus sebelum ekstraksi selesai — file yang sudah diproses tersimpan.");
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan saat ekstraksi");
