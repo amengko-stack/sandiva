@@ -64,11 +64,30 @@ export async function uploadFileToSharePoint(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Graph upload error ${res.status}: ${text}`);
+    console.error(`[uploadFileToSharePoint] Graph ${res.status} for ${path}${filename}:`, text);
+    throw new Error(`Graph upload error ${res.status}: ${text.slice(0, 500)}`);
   }
 
   const data = await res.json();
   return data.webUrl || "";
+}
+
+// Ensures the AI/ subfolder exists under matterFolderPath. Creates it if missing.
+async function ensureAiFolder(matterFolderPath: string): Promise<void> {
+  const cleanPath = matterFolderPath.replace(/\/$/, "");
+  const checkRes = await graphFetch(`/drive/root:/${cleanPath}/AI`);
+  if (checkRes.ok) return;
+  if (checkRes.status !== 404) return;
+
+  const createRes = await graphFetch(`/drive/root:/${cleanPath}:/children`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "AI", folder: {}, "@microsoft.graph.conflictBehavior": "replace" }),
+  });
+  if (!createRes.ok) {
+    const text = await createRes.text();
+    console.error(`[ensureAiFolder] Failed to create AI/ folder: ${createRes.status}`, text);
+  }
 }
 
 export async function writeMatterFile(
@@ -79,7 +98,16 @@ export async function writeMatterFile(
 ): Promise<string> {
   const buf = typeof content === "string" ? Buffer.from(content, "utf-8") : content;
   const path = matterFolderPath.endsWith("/") ? matterFolderPath : matterFolderPath + "/";
-  return uploadFileToSharePoint(path, filename, buf, mimeType);
+  try {
+    return await uploadFileToSharePoint(path, filename, buf, mimeType);
+  } catch (e) {
+    // If 404, AI/ folder likely doesn't exist yet — create it and retry once
+    if (e instanceof Error && e.message.includes("404")) {
+      await ensureAiFolder(matterFolderPath);
+      return uploadFileToSharePoint(path, filename, buf, mimeType);
+    }
+    throw e;
+  }
 }
 
 export async function listAiFolder(

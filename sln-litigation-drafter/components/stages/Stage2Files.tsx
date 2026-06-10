@@ -113,6 +113,8 @@ export default function Stage2Files() {
   const [inventoryExpanded, setInventoryExpanded] = useState(true);
   const [spSaveStatus, setSpSaveStatus] = useState<"idle" | "pending" | "saved" | "failed">("idle");
   const [spSaveUrl, setSpSaveUrl] = useState<string | null>(null);
+  // Non-blocking SharePoint save warning (save failures never halt extraction)
+  const [spWarning, setSpWarning] = useState<string | null>(null);
 
   // Session continuity banner
   const [priorSession, setPriorSession] = useState<PriorSession | null>(null);
@@ -122,6 +124,20 @@ export default function Stage2Files() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   const saveProgressRef = useRef(false);
+
+  // Fire-and-forget SharePoint save that surfaces failures as a non-blocking warning.
+  // A failed save never halts extraction — the extracted text is already in Vercel Blob.
+  function saveMatterFile(body: object, label: string) {
+    fetch("/api/sharepoint/save-matter-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[saveMatterFile] ${label} gagal:`, msg);
+      setSpWarning(`Gagal menyimpan ${label} ke SharePoint — ekstraksi tetap berjalan`);
+    });
+  }
 
   // When arriving with folderPath already set (global resume), auto-check for
   // prior Stage 2 artifacts so the detailed resume banner appears without
@@ -164,11 +180,11 @@ export default function Stage2Files() {
       setCheckedIds(new Set((result.files as FileEntry[]).map((f) => f.id)));
 
       // Save file list to SharePoint AI folder
-      fireAndForget("/api/sharepoint/save-matter-file", {
+      saveMatterFile({
         folderPath: link,
         filename: `AI/file_list_${ts()}.json`,
         content: JSON.stringify({ files: result.files, timestamp: new Date().toISOString() }),
-      });
+      }, "daftar file");
 
       // Background session continuity check
       fetch("/api/sharepoint/check-session", {
@@ -273,7 +289,7 @@ export default function Stage2Files() {
 
     // Save confirmed categorization to SharePoint before starting SSE
     if (state.folderPath) {
-      fireAndForget("/api/sharepoint/save-matter-file", {
+      saveMatterFile({
         folderPath: state.folderPath,
         filename: `AI/categorization_${ts()}.json`,
         content: JSON.stringify({
@@ -281,7 +297,7 @@ export default function Stage2Files() {
           selectedFileIds: sorted.map((f) => f.id),
           timestamp: new Date().toISOString(),
         }),
-      });
+      }, "kategorisasi");
     }
 
     setStoppedEarly(false);
@@ -420,7 +436,7 @@ export default function Stage2Files() {
                 stopped = true;
                 if (saveProgressRef.current && state.folderPath) {
                   const remaining = filesToExtract.slice(nextIndex);
-                  fireAndForget("/api/sharepoint/save-matter-file", {
+                  saveMatterFile({
                     folderPath: state.folderPath,
                     filename: `AI/extraction_progress_${ts()}.json`,
                     content: JSON.stringify({
@@ -432,7 +448,7 @@ export default function Stage2Files() {
                       totalChars: runTotalChars,
                       timestamp: new Date().toISOString(),
                     }),
-                  });
+                  }, "progres ekstraksi");
                 }
                 setStoppedEarly(true);
                 setSubstep("2D");
@@ -464,6 +480,8 @@ export default function Stage2Files() {
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan saat ekstraksi");
+      setSubstep("2D");
+      setStoppedEarly(true);
     }
   }
 
@@ -484,6 +502,13 @@ export default function Stage2Files() {
       {error && (
         <div style={{ padding: "10px 14px", background: "rgba(192,57,43,0.1)", border: "1px solid var(--error)", borderRadius: 4, color: "var(--error)", fontSize: 13, marginBottom: 16 }}>
           {error}
+        </div>
+      )}
+
+      {spWarning && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(230,126,34,0.1)", border: "1px solid #e67e22", borderRadius: 4, fontSize: 13, color: "#b7550a", marginBottom: 12 }}>
+          <span style={{ flex: 1 }}>⚠ {spWarning}</span>
+          <button onClick={() => setSpWarning(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b7550a", fontSize: 16, lineHeight: 1 }}>×</button>
         </div>
       )}
 
