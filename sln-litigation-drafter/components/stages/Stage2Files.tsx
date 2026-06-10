@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, CaseAnalysis, InterviewAnswer } from "@/types";
 
@@ -119,6 +119,27 @@ export default function Stage2Files() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   const saveProgressRef = useRef(false);
+
+  // When arriving with folderPath already set (global resume), auto-check for
+  // prior Stage 2 artifacts so the detailed resume banner appears without
+  // re-entering the folder link.
+  const hasAutoChecked = useRef(false);
+  useEffect(() => {
+    if (hasAutoChecked.current) return;
+    hasAutoChecked.current = true;
+    if (!state.folderPath || state.docMap.length > 0 || substep !== "2A") return;
+    fetch("/api/sharepoint/check-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folderPath: state.folderPath }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.found && data.stage2Resume) setPriorSession(data as PriorSession);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── 2A: Load filenames only ─────────────────────────────────────────────────
   async function discoverFiles() {

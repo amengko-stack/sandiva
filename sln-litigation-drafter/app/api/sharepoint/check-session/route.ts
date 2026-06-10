@@ -29,6 +29,7 @@ type CheckSessionResponse = {
   resumeAtStage?: 3 | 4;
   resumeAtSubstep?: "3A" | "3B" | "3C";
   stage2Resume?: Stage2Resume;
+  allFiles?: unknown[];
 };
 
 async function downloadJson(url: string): Promise<unknown> {
@@ -108,6 +109,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ── Always include the file list (needed to restore allFiles on resume) ──
+    let allFiles: unknown[] | undefined;
+    if (fileListFile) {
+      const flData = await downloadJson(fileListFile.downloadUrl) as { files?: unknown[] } | null;
+      if (flData?.files?.length) allFiles = flData.files;
+    }
+
     // ── If no Stage 3 analysis, return Stage 2 resume only ──────────────────
     if (!analysisFile) {
       const latestTimestamp = stage2Resume?.timestamp ?? "";
@@ -115,6 +123,7 @@ export async function POST(req: NextRequest) {
         found: true,
         latestTimestamp,
         stage2Resume,
+        allFiles,
       } satisfies CheckSessionResponse);
     }
 
@@ -128,12 +137,12 @@ export async function POST(req: NextRequest) {
     const hasInterview = !!interviewData?.answers;
     const hasAssessment = !!assessmentData?.assessment;
 
+    // Furthest-artifact order: interview → 3C, kronologi → 3B, analysis → 3A
     let resumeAtSubstep: "3A" | "3B" | "3C" = "3A";
-    if (hasKronologi && hasInterview && hasAssessment) resumeAtSubstep = "3C";
-    else if (hasKronologi && hasInterview) resumeAtSubstep = "3C";
+    if (hasInterview) resumeAtSubstep = "3C";
     else if (hasKronologi) resumeAtSubstep = "3B";
 
-    const resumeAtStage: 3 | 4 = (hasKronologi && hasInterview && hasAssessment) ? 4 : 3;
+    const resumeAtStage: 3 | 4 = hasAssessment ? 4 : 3;
 
     const latestTimestamp = [analysisFile, kronoFile, interviewFile, assessmentFile]
       .filter(Boolean)
@@ -150,6 +159,7 @@ export async function POST(req: NextRequest) {
       resumeAtStage,
       resumeAtSubstep,
       stage2Resume,
+      allFiles,
     } satisfies CheckSessionResponse);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Gagal memeriksa sesi sebelumnya";
