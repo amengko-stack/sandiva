@@ -455,32 +455,21 @@ const VISION_CHUNK_PAGES = 20;
 
 interface SmartPdfResult { text: string; method: string; scanned: boolean; pagesRead: number }
 
-// Local per-page text extraction via pdfjs. Stops early once charCap is hit so
-// huge text PDFs are never fully walked. Returns text + numPages for detection.
+// Local PDF text extraction via pdf-parse (pure Node, no DOM/canvas deps).
+// Extracts all text in one call; we slice to charCap afterwards.
+// Returns text, numpages for scanned detection.
 async function extractPdfTextPaged(
   bytes: Buffer,
   charCap: number
-): Promise<{ text: string; numPages: number; pagesRead: number }> {
-  // Legacy build works in Node without a DOM/canvas (getTextContent needs neither)
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const data = new Uint8Array(bytes);
-  const loadingTask = pdfjs.getDocument({ data, disableWorker: true } as Parameters<typeof pdfjs.getDocument>[0]);
-  const doc = await loadingTask.promise;
-  const numPages = doc.numPages;
-  let text = "";
-  let pagesRead = 0;
-  for (let p = 1; p <= numPages; p++) {
-    const page = await doc.getPage(p);
-    const content = await page.getTextContent();
-    const pageText = content.items
-      .map((it) => ("str" in it ? (it as { str: string }).str : ""))
-      .join(" ");
-    text += pageText + "\n";
-    pagesRead = p;
-    if (text.length >= charCap) break;
-  }
-  await loadingTask.destroy();
-  return { text, numPages, pagesRead };
+): Promise<{ text: string; pagesRead: number }> {
+  // pdf-parse v2 exports a named default; fall back to the module itself for CJS interop
+  const mod = await import("pdf-parse");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pdfParse: (buf: Buffer) => Promise<{ text: string; numpages: number }> = (mod as any).default ?? mod;
+  const data = await pdfParse(bytes);
+  const fullText = data.text ?? "";
+  const text = fullText.length > charCap ? fullText.slice(0, charCap) : fullText;
+  return { text, pagesRead: data.numpages ?? 1 };
 }
 
 // Scanned PDF → Claude vision. Slices first pageCap pages into ≤20-page
@@ -526,7 +515,9 @@ async function extractScannedPdf(bytes: Buffer, pageCap: number): Promise<{ text
 // Decide text vs scanned, extract accordingly, capped by category.
 async function extractPdfSmart(bytes: Buffer, charCap: number, pageCap: number): Promise<SmartPdfResult> {
   const { text, pagesRead } = await extractPdfTextPaged(bytes, charCap);
-  const avgPerPage = pagesRead > 0 ? text.trim().length / pagesRead : 0;
+  // Use raw (pre-cap) length for detection so a partially-capped text PDF isn't misclassified.
+  const rawLen = text.length;
+  const avgPerPage = pagesRead > 0 ? rawLen / pagesRead : 0;
 
   if (avgPerPage >= SCANNED_CHARS_PER_PAGE) {
     const capped = text.length > charCap ? text.slice(0, charCap) : text;

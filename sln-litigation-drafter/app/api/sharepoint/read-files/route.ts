@@ -149,9 +149,12 @@ export async function POST(req: NextRequest) {
           // allSettled: one failure must never cancel the others in the batch
           await Promise.allSettled(indices.map(processFile));
 
-          // Write combined Blob after every batch so partial progress survives
+          // Write combined Blob after every batch so partial progress survives.
+          // Guard: Vercel Blob rejects empty body — skip write if no text extracted yet.
           const combinedText = docBlocks.filter((bk): bk is string => bk !== null).join("");
-          await writeBlobText(`sessions/${sessionId}/extracted_text.json`, combinedText);
+          if (combinedText) {
+            await writeBlobText(`sessions/${sessionId}/extracted_text.json`, combinedText);
+          }
 
           enqueue({
             type: "batch_end",
