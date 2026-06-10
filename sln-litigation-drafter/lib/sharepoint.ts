@@ -455,21 +455,19 @@ const VISION_CHUNK_PAGES = 20;
 
 interface SmartPdfResult { text: string; method: string; scanned: boolean; pagesRead: number }
 
-// Local PDF text extraction via pdf-parse (pure Node, no DOM/canvas deps).
-// Extracts all text in one call; we slice to charCap afterwards.
-// Returns text, numpages for scanned detection.
+// Local PDF text extraction via unpdf — built for serverless Node, zero
+// browser/DOM dependencies (no DOMMatrix). Single extraction path for all
+// categories. Extracts all text in one call; we slice to charCap afterwards.
 async function extractPdfTextPaged(
   bytes: Buffer,
   charCap: number
 ): Promise<{ text: string; pagesRead: number }> {
-  // pdf-parse v2 exports a named default; fall back to the module itself for CJS interop
-  const mod = await import("pdf-parse");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pdfParse: (buf: Buffer) => Promise<{ text: string; numpages: number }> = (mod as any).default ?? mod;
-  const data = await pdfParse(bytes);
-  const fullText = data.text ?? "";
-  const text = fullText.length > charCap ? fullText.slice(0, charCap) : fullText;
-  return { text, pagesRead: data.numpages ?? 1 };
+  const { extractText: unpdfExtractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { text: fullText, totalPages } = await unpdfExtractText(pdf, { mergePages: true });
+  const merged = typeof fullText === "string" ? fullText : (fullText as string[]).join("\n");
+  const text = merged.length > charCap ? merged.slice(0, charCap) : merged;
+  return { text, pagesRead: totalPages ?? 1 };
 }
 
 // Scanned PDF → Claude vision. Slices first pageCap pages into ≤20-page
