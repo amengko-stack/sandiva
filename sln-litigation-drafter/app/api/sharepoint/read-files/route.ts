@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
 import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
 import { writeBlobText } from "@/lib/blob";
+import { formatDocBlock } from "@/lib/extract-format";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
 
 export const maxDuration = 300;
@@ -16,22 +17,11 @@ const METHOD_LABEL: Record<string, string> = {
   truncated_30k:  "Teks penuh (30 ribu karakter pertama)",
   summary_5k:     "Ringkas (5 ribu karakter pertama)",
   pdf_text:       "Teks penuh (PDF, per halaman)",
-  scanned_vision: "PDF pindaian (vision, sebagian halaman)",
+  perlu_ocr:      "Perlu OCR (dokumen pindaian)",
 };
 
 function sse(data: object): string {
   return `data: ${JSON.stringify(data)}\n\n`;
-}
-
-// Per-document block written to the combined Blob; the metadata header travels
-// to Stage 3 so analysis knows what was fully vs partially extracted.
-function formatDocBlock(meta: ExtractionMetadata, content: string): string {
-  return (
-    `=== ${meta.filename} ===\n` +
-    `[Metadata: kategori=${meta.category}; metode=${meta.extractionMethod}; karakter=${meta.characterCount}; ` +
-    `diekstrak=${meta.extractedAt}; path=${meta.sharePointPath}; dimodifikasi=${meta.fileModifiedAt}]\n` +
-    `${content}\n\n`
-  );
 }
 
 export async function POST(req: NextRequest) {
@@ -69,6 +59,7 @@ export async function POST(req: NextRequest) {
   let skipped = 0;
   let totalChars = 0;
   let cacheHits = 0;
+  let ocrRequired = 0;
 
   // Per-index document blocks, joined in order on every Blob write so parallel
   // completion never scrambles the combined text.
@@ -108,7 +99,20 @@ export async function POST(req: NextRequest) {
             return;
           }
 
-          const { content, extractionMethod } = await extractWithTier(file.path, file.name, category);
+          const { content, extractionMethod, needsOcr } = await extractWithTier(file.path, file.name, category);
+
+          // Scanned PDF with no text layer — flagged for external OCR. Not cached,
+          // not counted as processed/failed; the drafter re-checks after OCR.
+          if (needsOcr) {
+            ocrRequired++;
+            reportFiles[i] = {
+              name: file.name, category, documentType,
+              extractionMode: "Perlu OCR", status: "perlu_ocr",
+            };
+            enqueue({ type: "ocr_required", name: file.name, category, index: i, total });
+            return;
+          }
+
           const metadata: ExtractionMetadata = {
             filename: file.name,
             category,
@@ -179,10 +183,11 @@ export async function POST(req: NextRequest) {
           processed,
           skipped,
           cacheHits,
+          ocrRequired,
         };
         await writeBlobText(`sessions/${sessionId}/report.json`, JSON.stringify(report));
 
-        enqueue({ type: "complete", processed, skipped, totalChars, cacheHits });
+        enqueue({ type: "complete", processed, skipped, totalChars, cacheHits, ocrRequired });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Stream error";
         enqueue({ error: msg });

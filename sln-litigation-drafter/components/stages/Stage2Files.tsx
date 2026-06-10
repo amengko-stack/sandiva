@@ -30,7 +30,7 @@ const FILE_ICON: Record<string, string> = { docx: "📄", doc: "📄", pdf: "�
 interface ExtractLogEntry {
   name: string;
   category: DocCategory;
-  status: "antri" | "memproses" | "selesai" | "cache" | "gagal";
+  status: "antri" | "memproses" | "selesai" | "cache" | "gagal" | "perlu_ocr";
   charCount?: number;
   reason?: string;
   method?: string;
@@ -107,6 +107,10 @@ export default function Stage2Files() {
   const [skippedCount, setSkippedCount] = useState(0);
   const [stoppedEarly, setStoppedEarly] = useState(false);
   const [cacheCount, setCacheCount] = useState(0);
+  // Files flagged PERLU_OCR (scanned, no text layer) — listed in 2D for external OCR + re-check
+  const [perluOcrFiles, setPerluOcrFiles] = useState<FileEntry[]>([]);
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckMsg, setRecheckMsg] = useState<string | null>(null);
   const [batchInfo, setBatchInfo] = useState<{ batch: number; totalBatches: number } | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
 
@@ -361,6 +365,8 @@ export default function Stage2Files() {
     setCacheCount(0);
     setBatchInfo(null);
     setEtaSeconds(null);
+    setRecheckMsg(null);
+    const ocrCollected: FileEntry[] = [];
     const extractionStartedAt = Date.now();
     setError("");
     setSubstep("2C");
@@ -410,6 +416,14 @@ export default function Stage2Files() {
                 i === logIdx ? { ...entry, status: "memproses" } : entry
               );
               setExtractLog([...localLog]);
+            } else if (ev.type === "ocr_required") {
+              const logIdx = (ev.index as number) + prependLog.length;
+              localLog = localLog.map((entry, i) =>
+                i === logIdx ? { ...entry, status: "perlu_ocr" } : entry
+              );
+              setExtractLog([...localLog]);
+              const ocrFile = filesToExtract[ev.index as number];
+              if (ocrFile) ocrCollected.push(ocrFile);
             } else if (ev.type === "done" || ev.type === "error") {
               const fileIdx = ev.index as number;
               const logIdx = fileIdx + prependLog.length;
@@ -494,6 +508,9 @@ export default function Stage2Files() {
           }
         }
       }
+      // Surface any files that need external OCR (collected from ocr_required events).
+      setPerluOcrFiles(ocrCollected);
+
       // Stream ended (done:true) without a complete event — server timed out or crashed.
       // This path does NOT throw so the catch below is never reached; advance the UI manually.
       if (!stopped && !completedNormally) {
@@ -505,6 +522,62 @@ export default function Stage2Files() {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan saat ekstraksi");
       setSubstep("2D");
       setStoppedEarly(true);
+    }
+  }
+
+  // Re-check PERLU_OCR files after the drafter has OCR'd & re-uploaded them.
+  // Only those files are re-extracted; everything else is untouched.
+  async function recheckOcr() {
+    if (perluOcrFiles.length === 0 || rechecking) return;
+    setRechecking(true);
+    setRecheckMsg(null);
+    try {
+      const res = await fetch("/api/sharepoint/recheck-ocr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: state.sessionId,
+          folderPath: state.folderPath,
+          files: perluOcrFiles,
+          docMap: localMap,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal memeriksa ulang dokumen");
+
+      const results = (data.results ?? []) as { name: string; status: string; charCount?: number; method?: string }[];
+      const nowExtracted = new Map(
+        results.filter((r) => r.status === "selesai").map((r) => [r.name, r])
+      );
+
+      if (nowExtracted.size > 0) {
+        // Move extracted files from the OCR list into the inventory.
+        setExtractLog((log) =>
+          log.map((entry) => {
+            const r = nowExtracted.get(entry.name);
+            return r && entry.status === "perlu_ocr"
+              ? { ...entry, status: "selesai" as const, charCount: r.charCount, method: r.method }
+              : entry;
+          })
+        );
+        setPerluOcrFiles((files) => files.filter((f) => !nowExtracted.has(f.name)));
+        const addedChars = results.reduce((s, r) => s + (r.status === "selesai" ? (r.charCount ?? 0) : 0), 0);
+        setProcessedCount((c) => c + nowExtracted.size);
+        setTotalChars((c) => c + addedChars);
+      }
+
+      const stillOcr = results.filter((r) => r.status === "perlu_ocr").length;
+      if (nowExtracted.size === 0) {
+        setRecheckMsg(`Belum ada lapisan teks terdeteksi. ${stillOcr} dokumen masih perlu OCR.`);
+      } else {
+        setRecheckMsg(
+          `${nowExtracted.size} dokumen berhasil diekstrak${stillOcr > 0 ? `, ${stillOcr} masih perlu OCR` : ""}.`
+        );
+      }
+    } catch (e: unknown) {
+      setRecheckMsg(e instanceof Error ? e.message : "Terjadi kesalahan saat memeriksa ulang");
+    } finally {
+      setRechecking(false);
     }
   }
 
@@ -842,19 +915,23 @@ export default function Stage2Files() {
                 entry.status === "gagal" ? "rgba(192,57,43,0.04)"
                 : entry.status === "selesai" ? "rgba(39,174,96,0.04)"
                 : entry.status === "cache" ? "rgba(91,155,213,0.06)"
+                : entry.status === "perlu_ocr" ? "rgba(230,126,34,0.06)"
                 : "transparent";
               return (
                 <div
                   key={i}
                   style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: rowBg, opacity: entry.status === "antri" ? 0.55 : 1 }}
                 >
-                  <span style={{ fontSize: 13, width: 20, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "cache" ? "var(--accent-blue)" : entry.status === "gagal" ? "var(--error)" : "var(--text-muted)" }}>
-                    {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : entry.status === "antri" ? "·" : <SpinnerInline />}
+                  <span style={{ fontSize: 13, width: 20, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "cache" ? "var(--accent-blue)" : entry.status === "gagal" ? "var(--error)" : entry.status === "perlu_ocr" ? "#e67e22" : "var(--text-muted)" }}>
+                    {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : entry.status === "perlu_ocr" ? "⚠" : entry.status === "antri" ? "·" : <SpinnerInline />}
                   </span>
                   <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
                   <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
                   {entry.status === "antri" && (
                     <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>antri</span>
+                  )}
+                  {entry.status === "perlu_ocr" && (
+                    <span style={{ fontSize: 11, color: "#b7550a", flexShrink: 0 }}>perlu OCR</span>
                   )}
                   {entry.status === "cache" && (
                     <span style={{ fontSize: 11, color: "var(--accent-blue)", flexShrink: 0 }}>dari cache</span>
@@ -911,16 +988,37 @@ export default function Stage2Files() {
             </div>
           )}
 
-          {/* Scanned / partially-read files notice */}
-          {(() => {
-            const scanned = extractLog.filter((e) => e.method === "scanned_vision");
-            if (scanned.length === 0) return null;
-            return (
-              <div style={{ padding: "10px 14px", background: "rgba(230,126,34,0.08)", border: "1px solid var(--accent-gold)", borderRadius: 4, fontSize: 12, color: "#b7550a", marginBottom: 16 }}>
-                ⚠ {scanned.length} file dibaca sebagian via pemindaian (PDF pindaian): {scanned.map((e) => e.name).join(", ")}
+          {/* OCR-required section — scanned PDFs with no text layer */}
+          {perluOcrFiles.length > 0 && (
+            <div style={{ padding: "14px 16px", background: "rgba(230,126,34,0.06)", border: "1px solid var(--accent-gold)", borderRadius: 4, marginBottom: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#b7550a", marginBottom: 8 }}>
+                Dokumen pindaian — perlu OCR sebelum dapat diekstrak
               </div>
-            );
-          })()}
+              <ul style={{ margin: "0 0 10px", paddingLeft: 20, fontSize: 13, color: "var(--text-primary)" }}>
+                {perluOcrFiles.map((f) => (
+                  <li key={f.id} style={{ marginBottom: 2 }}>{f.name}</li>
+                ))}
+              </ul>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 12 }}>
+                Dokumen ini hasil scan tanpa lapisan teks. Jalankan OCR (Adobe Acrobat → Recognize Text,
+                atau simpan ulang via SharePoint), unggah versi OCR ke folder perkara, lalu klik
+                &ldquo;Periksa Ulang Dokumen&rdquo;.
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <button
+                  onClick={recheckOcr}
+                  disabled={rechecking}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: rechecking ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: rechecking ? "wait" : "pointer" }}
+                >
+                  {rechecking && <SpinnerInline />}
+                  {rechecking ? "Memeriksa ulang..." : "Periksa Ulang Dokumen"}
+                </button>
+                {recheckMsg && (
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{recheckMsg}</span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Inventory toggle + table */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
@@ -947,6 +1045,8 @@ export default function Stage2Files() {
           {inventoryExpanded && (
             <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
               {extractLog.map((entry, i) => {
+                // PERLU_OCR files live in the dedicated OCR section above, not the inventory.
+                if (entry.status === "perlu_ocr") return null;
                 const meta = CATEGORY_META[entry.category];
                 return (
                   <div
@@ -957,9 +1057,6 @@ export default function Stage2Files() {
                       {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : "·"}
                     </span>
                     <span style={{ flex: 1, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
-                    {entry.method === "scanned_vision" && (
-                      <span style={{ fontSize: 9, fontWeight: 700, color: "#b7550a", background: "rgba(230,126,34,0.12)", padding: "2px 6px", borderRadius: 3, letterSpacing: "0.05em", flexShrink: 0 }} title="Dibaca sebagian via vision (PDF pindaian)">PINDAIAN</span>
-                    )}
                     <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
                     {(entry.status === "selesai" || entry.status === "cache") && entry.charCount !== undefined && (
                       <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0, minWidth: 50, textAlign: "right" }}>{(entry.charCount / 1000).toFixed(1)}k</span>

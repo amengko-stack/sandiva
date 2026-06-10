@@ -442,18 +442,14 @@ const PDF_KRITIS_CHAR_CAP = 80_000;
 const PENDUKUNG_CHAR_CAP = 30_000;
 const REFERENSI_CHAR_CAP = 5_000;
 
-// Page caps for scanned-PDF vision reads (per category)
-const PAGE_CAP: Record<DocCategory, number> = { KRITIS: 60, PENDUKUNG: 25, REFERENSI: 10 };
-// Avg chars/page below this ⇒ treat as scanned (image) PDF
+// Avg chars/page below this ⇒ treat as scanned (image) PDF needing external OCR
 const SCANNED_CHARS_PER_PAGE = 100;
-// Pages per Claude vision document block (stays well under the API's 100-page limit)
-const VISION_CHUNK_PAGES = 20;
 
 // ---------------------------------------------------------------------------
-// PDF handling — local text extraction + scanned detection + page-batched vision
+// PDF handling — local text extraction + scanned detection (no in-app OCR)
 // ---------------------------------------------------------------------------
 
-interface SmartPdfResult { text: string; method: string; scanned: boolean; pagesRead: number }
+interface SmartPdfResult { text: string; method: string; needsOcr: boolean; pagesRead: number }
 
 // Local PDF text extraction via unpdf — built for serverless Node, zero
 // browser/DOM dependencies (no DOMMatrix). Single extraction path for all
@@ -470,79 +466,23 @@ async function extractPdfTextPaged(
   return { text, pagesRead: totalPages ?? 1 };
 }
 
-// Scanned PDF → Claude vision. Slices first pageCap pages into ≤20-page
-// sub-PDFs (pdf-lib) and OCRs each via the document block.
-// Each vision chunk call is raced against a 60s timeout so a hung API call
-// marks the file gagal rather than freezing the batch indefinitely.
-async function extractScannedPdf(bytes: Buffer, pageCap: number, fileName: string): Promise<{ text: string; pagesRead: number }> {
-  const { PDFDocument } = await import("pdf-lib");
-  const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
-  const totalPages = src.getPageCount();
-  const pagesToRead = Math.min(totalPages, pageCap);
-  console.log(`[extractScannedPdf] ${fileName}: ${totalPages} total pages, reading first ${pagesToRead} via vision`);
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-  const CHUNK_TIMEOUT_MS = 60_000;
-
-  const parts: string[] = [];
-  for (let start = 0; start < pagesToRead; start += VISION_CHUNK_PAGES) {
-    const end = Math.min(start + VISION_CHUNK_PAGES, pagesToRead);
-    const chunk = await PDFDocument.create();
-    const indices = Array.from({ length: end - start }, (_, k) => start + k);
-    const copied = await chunk.copyPages(src, indices);
-    copied.forEach((pg) => chunk.addPage(pg));
-    const chunkBytes = Buffer.from(await chunk.save());
-    console.log(`[extractScannedPdf] ${fileName}: chunk pages ${start + 1}–${end}, ${(chunkBytes.length / 1024).toFixed(0)} KB`);
-
-    const visionCall = (anthropic.messages.create as (p: object) => Promise<{ content: { type: string; text?: string }[] }>)({
-      model: MODELS.extraction,
-      max_tokens: 8000,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "document", source: { type: "base64", media_type: "application/pdf", data: chunkBytes.toString("base64") } },
-            { type: "text", text: "Bacalah dokumen hasil pindaian ini dan kembalikan seluruh teksnya secara verbatim. Jangan meringkas atau memotong." },
-          ],
-        },
-      ],
-    });
-
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Vision OCR timeout (${CHUNK_TIMEOUT_MS / 1000}s) pada halaman ${start + 1}–${end}`)), CHUNK_TIMEOUT_MS)
-    );
-
-    const response = await Promise.race([visionCall, timeoutPromise]);
-    const chunkText = response.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n");
-    console.log(`[extractScannedPdf] ${fileName}: chunk ${start + 1}–${end} → ${chunkText.length} chars`);
-    parts.push(chunkText);
-  }
-
-  return { text: parts.join("\n").trim(), pagesRead: pagesToRead };
-}
-
-// Decide text vs scanned, extract accordingly, capped by category.
-async function extractPdfSmart(bytes: Buffer, charCap: number, pageCap: number, fileName: string): Promise<SmartPdfResult> {
+// Decide text vs scanned. A scanned (image) PDF with no text layer is NOT
+// OCR'd in-app — it is flagged needsOcr so the drafter can OCR it externally
+// (Acrobat / SharePoint re-save) and re-check. Detection is instant.
+async function extractPdfSmart(bytes: Buffer, charCap: number, fileName: string): Promise<SmartPdfResult> {
   const { text, pagesRead } = await extractPdfTextPaged(bytes, charCap);
   // Use raw (pre-cap) length for detection so a partially-capped text PDF isn't misclassified.
   const rawLen = text.length;
   const avgPerPage = pagesRead > 0 ? rawLen / pagesRead : 0;
-  console.log(`[extractPdfSmart] ${fileName}: ${pagesRead} pages, ${rawLen} chars, avg ${avgPerPage.toFixed(1)} chars/page → ${avgPerPage >= SCANNED_CHARS_PER_PAGE ? "TEXT" : "SCANNED"}`);
+  console.log(`[extractPdfSmart] ${fileName}: ${pagesRead} pages, ${rawLen} chars, avg ${avgPerPage.toFixed(1)} chars/page → ${avgPerPage >= SCANNED_CHARS_PER_PAGE ? "TEXT" : "PERLU_OCR"}`);
 
   if (avgPerPage >= SCANNED_CHARS_PER_PAGE) {
     const capped = text.length > charCap ? text.slice(0, charCap) : text;
-    return { text: capped, method: "pdf_text", scanned: false, pagesRead };
+    return { text: capped, method: "pdf_text", needsOcr: false, pagesRead };
   }
 
-  // Scanned (image) PDF — OCR via vision, page-capped
-  const { text: visionText, pagesRead: visionPages } = await extractScannedPdf(bytes, pageCap, fileName);
-  const capped = visionText.length > charCap ? visionText.slice(0, charCap) : visionText;
-  return {
-    text: `[PDF Pindaian — ${visionPages} halaman pertama dibaca via vision]\n${capped}`,
-    method: "scanned_vision",
-    scanned: true,
-    pagesRead: visionPages,
-  };
+  // Scanned (image) PDF — no text layer. Flag for external OCR; do not extract.
+  return { text: "", method: "perlu_ocr", needsOcr: true, pagesRead };
 }
 
 async function structuredContractExtract(rawText: string): Promise<string> {
@@ -576,21 +516,25 @@ export async function extractWithTier(
   filePath: string,
   fileName: string,
   category: DocCategory
-): Promise<{ content: string; extractionMethod: string }> {
+): Promise<{ content: string; extractionMethod: string; needsOcr?: boolean }> {
   const { bytes, ext } = await downloadBytes(filePath);
 
   const charCap =
     category === "KRITIS" ? PDF_KRITIS_CHAR_CAP : category === "PENDUKUNG" ? PENDUKUNG_CHAR_CAP : REFERENSI_CHAR_CAP;
 
-  // PDFs: size-aware path — local text extraction, scanned detection, page-batched vision.
-  // Any failure here is left to propagate to the per-file catch in the route (marks gagal).
+  // PDFs: local text extraction + scanned detection. A scanned PDF with no text
+  // layer is flagged needsOcr (external OCR required) and short-circuits here.
+  // Any failure is left to propagate to the per-file catch in the route (marks gagal).
   if (ext === "pdf") {
-    const smart = await extractPdfSmart(bytes, charCap, PAGE_CAP[category], fileName);
+    const smart = await extractPdfSmart(bytes, charCap, fileName);
+    if (smart.needsOcr) {
+      return { content: "", extractionMethod: "perlu_ocr", needsOcr: true };
+    }
     const raw = smart.text;
 
     if (category === "KRITIS") {
-      // Contracts: structured extraction over text PDFs; scanned stays as OCR text.
-      if (!smart.scanned && CONTRACT_FILENAME_RE.test(fileName)) {
+      // Contracts: structured extraction over text PDFs.
+      if (CONTRACT_FILENAME_RE.test(fileName)) {
         const structured = await structuredContractExtract(raw);
         return { content: `[Ekstraksi Terstruktur]\n${structured}`, extractionMethod: "structured" };
       }
@@ -599,11 +543,11 @@ export async function extractWithTier(
 
     if (category === "PENDUKUNG") {
       // raw is already capped at PENDUKUNG_CHAR_CAP by extractPdfSmart
-      return { content: raw, extractionMethod: smart.scanned ? "scanned_vision" : "pdf_text" };
+      return { content: raw, extractionMethod: "pdf_text" };
     }
 
     // REFERENSI — already capped at 5k
-    return { content: smart.scanned ? raw : `[Ekstraksi Ringkas]\n${raw}`, extractionMethod: smart.method };
+    return { content: `[Ekstraksi Ringkas]\n${raw}`, extractionMethod: smart.method };
   }
 
   // DOCX / DOC / TXT — text-only via mammoth/utf-8; never gated by size

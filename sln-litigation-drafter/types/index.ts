@@ -65,7 +65,7 @@ export interface ExtractReportFile {
   category: DocCategory;
   documentType: DocDocumentType;
   extractionMode: string;
-  status: "selesai" | "gagal";
+  status: "selesai" | "gagal" | "perlu_ocr";
   charCount?: number;
   reason?: string;
 }
@@ -83,6 +83,7 @@ export interface ExtractReport {
   processed: number;
   skipped: number;
   cacheHits?: number;
+  ocrRequired?: number;
 }
 
 export interface InterviewAnswer {

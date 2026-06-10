@@ -6,7 +6,6 @@ const nextConfig = {
       "@anthropic-ai/sdk",
       "mammoth",
       "unpdf",
-      "pdf-lib",
     ],
   },
 };
