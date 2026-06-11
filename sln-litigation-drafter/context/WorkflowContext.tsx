@@ -141,6 +141,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "APPEND_DRAFT":
       return { ...state, draftText: state.draftText + action.chunk };
 
+    case "RESET_DRAFT":
+      return { ...state, draftText: "", draftComplete: false, critiqueText: "" };
+
     case "SET_DRAFT_STREAMING":
       return { ...state, isDraftStreaming: action.value };
 
