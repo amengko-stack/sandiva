@@ -49,6 +49,9 @@ export default function Stage4Draft() {
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      // Accumulate locally: state.draftText in this closure is stale (captured
+      // before streaming), so the critique must receive this local copy.
+      let fullDraft = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -65,9 +68,10 @@ export default function Stage4Draft() {
           try {
             const event = JSON.parse(jsonStr);
             if (event.chunk) {
+              fullDraft += event.chunk;
               dispatch({ type: "APPEND_DRAFT", chunk: event.chunk });
             } else if (event.done) {
-              console.log(`[stage4] draft done stopReason=${event.stopReason ?? "(not sent)"}`);
+              console.log(`[stage4] draft done stopReason=${event.stopReason ?? "(not sent)"} draftChars=${fullDraft.length}`);
               dispatch({ type: "SET_DRAFT_STREAMING", value: false });
               // Critique must never run on a truncated draft. end_turn = complete;
               // max_tokens after all continuation calls = still incomplete.
@@ -77,7 +81,7 @@ export default function Stage4Draft() {
                 );
               } else {
                 dispatch({ type: "SET_DRAFT_COMPLETE", value: true });
-                runCritique();
+                runCritique(fullDraft);
               }
             } else if (event.error) {
               throw new Error(event.error);
@@ -91,14 +95,18 @@ export default function Stage4Draft() {
     }
   }
 
-  async function runCritique() {
+  async function runCritique(draftText: string) {
+    if (!draftText.trim()) {
+      console.warn("[stage4] critique skipped: empty draft text");
+      return;
+    }
     dispatch({ type: "SET_CRITIQUE_LOADING", value: true });
     try {
       const res = await fetch("/api/critique", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          draftText: state.draftText,
+          draftText,
           docTypeId: state.docTypeId,
           caseAnalysis: state.caseAnalysis,
         }),
