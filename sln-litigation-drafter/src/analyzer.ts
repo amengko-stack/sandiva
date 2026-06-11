@@ -236,19 +236,40 @@ Panduan per field:
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await client.messages.create({
     model: MODELS.kronologi,
-    max_tokens: 4000,
+    max_tokens: 8192,
     system: ANALYSIS_SYSTEM,
     messages: [{ role: "user", content: prompt }],
   });
 
+  const stopReason = response.stop_reason;
   const raw =
     response.content.find((b) => b.type === "text")?.text || "{}";
+
+  console.log(
+    `[analyze] stop_reason=${stopReason} rawLen=${raw.length} ` +
+    `raw_head=${JSON.stringify(raw.slice(0, 200))} ` +
+    `raw_tail=${JSON.stringify(raw.slice(-200))}`
+  );
 
   try {
     const clean = raw.replace(/```json|```/g, "").trim();
     const match = clean.match(/\{[\s\S]*\}/);
     if (match) {
-      const parsed = JSON.parse(match[0]);
+      let jsonStr = match[0];
+      // If the model was cut off mid-JSON (stop_reason=max_tokens), close every
+      // unclosed string/object so JSON.parse can still recover the completed fields.
+      if (stopReason === "max_tokens") {
+        // Close any uncapped string: count unescaped quotes
+        const quoteCount = (jsonStr.match(/(?<!\\)"/g) || []).length;
+        if (quoteCount % 2 !== 0) jsonStr += '"';
+        // Close any open objects/arrays
+        const opens = jsonStr.split("").reduce((d, c) =>
+          c === "{" || c === "[" ? d + 1 : c === "}" || c === "]" ? d - 1 : d, 0);
+        jsonStr += "}" .repeat(Math.max(0, opens));
+        console.log(`[analyze] truncation repair applied, repairedLen=${jsonStr.length}`);
+      }
+      const parsed = JSON.parse(jsonStr);
+      console.log(`[analyze] parse OK kronologi_len=${(parsed.kronologi || "").length}`);
       return {
         identitasPihak: parsed.identitasPihak || "",
         hubunganHukum: parsed.hubunganHukum || "",
@@ -260,7 +281,10 @@ Panduan per field:
         posisiHukum: parsed.posisiHukum || "",
       };
     }
-  } catch {}
+    console.log(`[analyze] no JSON object matched in raw response`);
+  } catch (e) {
+    console.log(`[analyze] JSON parse error: ${e instanceof Error ? e.message : String(e)}`);
+  }
 
   return {
     identitasPihak: "[Tidak dapat diparsing]",
