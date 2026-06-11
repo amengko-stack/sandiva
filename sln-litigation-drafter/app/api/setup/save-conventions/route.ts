@@ -90,10 +90,18 @@ Dokumen harus mencakup:
 
     await writeBlobText("firm_conventions.md", conventions);
 
-    // Only initialise pattern/style stores on first run
+    // Initialise pattern/style stores only when they don't exist yet — the
+    // style index may already hold setup samples persisted by analyze-sample
+    // earlier in this same first run; overwriting it with [] would wipe them.
     if (!isRerun) {
-      await writeBlobText("case_patterns.json", JSON.stringify({ totalDrafts: 0, patterns: [] }));
-      await writeBlobText("style_examples/index.json", JSON.stringify([]));
+      const existingPatterns = await readBlobText("case_patterns.json");
+      if (!existingPatterns) {
+        await writeBlobText("case_patterns.json", JSON.stringify({ totalDrafts: 0, patterns: [] }));
+      }
+      const existingIndex = await readBlobText("style_examples/index.json");
+      if (!existingIndex) {
+        await writeBlobText("style_examples/index.json", JSON.stringify([]));
+      }
     }
 
     return NextResponse.json({ ok: true, conventions, isRerun });
