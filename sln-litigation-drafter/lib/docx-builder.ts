@@ -20,11 +20,25 @@ interface DocxMeta {
   claimType: string;
 }
 
+// The docx library writes text verbatim into document.xml WITHOUT escaping
+// control characters — a single \x0B or \x07 in the draft (LLM output can
+// contain them) produces not-well-formed XML that Word rejects as "corrupt",
+// both for the downloaded file and the SharePoint copy. Strip everything
+// XML 1.0 forbids; keep \t \n \r.
+function sanitizeForXml(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+}
+
 export async function buildLitigationDocx(
   text: string,
   meta: DocxMeta
 ): Promise<Buffer> {
-  const children = buildChildren(text);
+  const clean = sanitizeForXml(text);
+  if (clean.length !== text.length) {
+    console.warn(`[docx-builder] stripped ${text.length - clean.length} XML-invalid control chars from draft`);
+  }
+  const children = buildChildren(clean);
 
   const doc = new Document({
     styles: {
