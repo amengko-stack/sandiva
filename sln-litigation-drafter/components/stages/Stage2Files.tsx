@@ -55,7 +55,7 @@ function fireAndForget(url: string, body: object) {
 type Stage2Resume =
   | { type: "file_list"; files: FileEntry[]; timestamp: string }
   | { type: "categorization"; docMap: DocMapEntry[]; selectedFileIds: string[]; timestamp: string }
-  | { type: "extraction_progress"; docMap: DocMapEntry[]; completedFiles: ExtractLogEntry[]; remainingFiles: FileEntry[]; perluOcrFiles?: FileEntry[]; processed: number; totalChars: number; timestamp: string };
+  | { type: "extraction_progress"; docMap: DocMapEntry[]; completedFiles: ExtractLogEntry[]; remainingFiles: FileEntry[]; perluOcrFiles?: FileEntry[]; ocrFolderLink?: string; processed: number; totalChars: number; timestamp: string };
 
 type PriorSession = {
   latestTimestamp: string;
@@ -109,6 +109,7 @@ export default function Stage2Files() {
   const [cacheCount, setCacheCount] = useState(0);
   // Files flagged PERLU_OCR (scanned, no text layer) — listed in 2D for external OCR + re-check
   const [perluOcrFiles, setPerluOcrFiles] = useState<FileEntry[]>([]);
+  const [ocrFolderLink, setOcrFolderLink] = useState("");
   const [rechecking, setRechecking] = useState(false);
   const [recheckMsg, setRecheckMsg] = useState<string | null>(null);
   const [batchInfo, setBatchInfo] = useState<{ batch: number; totalBatches: number } | null>(null);
@@ -477,6 +478,7 @@ export default function Stage2Files() {
                       completedFiles: localLog.filter((e) => e.status !== "memproses" && e.status !== "antri"),
                       remainingFiles: remaining,
                       perluOcrFiles: ocrCollected,
+                      ocrFolderLink,
                       processed: runProcessed,
                       totalChars: runTotalChars,
                       timestamp: new Date().toISOString(),
@@ -506,6 +508,7 @@ export default function Stage2Files() {
                     completedFiles: localLog.filter((e) => e.status !== "memproses" && e.status !== "antri"),
                     remainingFiles: [],
                     perluOcrFiles: ocrCollected,
+                    ocrFolderLink,
                     processed: runProcessed,
                     totalChars: runTotalChars,
                     timestamp: new Date().toISOString(),
@@ -553,7 +556,7 @@ export default function Stage2Files() {
   // Re-check PERLU_OCR files after the drafter has OCR'd & re-uploaded them.
   // Only those files are re-extracted; everything else is untouched.
   async function recheckOcr() {
-    if (perluOcrFiles.length === 0 || rechecking) return;
+    if (perluOcrFiles.length === 0 || rechecking || !ocrFolderLink.trim()) return;
     setRechecking(true);
     setRecheckMsg(null);
     try {
@@ -562,7 +565,7 @@ export default function Stage2Files() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId: state.sessionId,
-          folderPath: state.folderPath,
+          ocrFolderPath: ocrFolderLink.trim(),
           files: perluOcrFiles,
           docMap: localMap,
         }),
@@ -591,14 +594,13 @@ export default function Stage2Files() {
         setTotalChars((c) => c + addedChars);
       }
 
-      const stillOcr = results.filter((r) => r.status === "perlu_ocr").length;
-      if (nowExtracted.size === 0) {
-        setRecheckMsg(`Belum ada lapisan teks terdeteksi. ${stillOcr} dokumen masih perlu OCR.`);
-      } else {
-        setRecheckMsg(
-          `${nowExtracted.size} dokumen berhasil diekstrak${stillOcr > 0 ? `, ${stillOcr} masih perlu OCR` : ""}.`
-        );
-      }
+      const notFound = results.filter((r) => r.status === "tidak_ditemukan").length;
+      const ocrFailed = results.filter((r) => r.status === "ocr_gagal").length;
+      const parts: string[] = [];
+      if (nowExtracted.size > 0) parts.push(`${nowExtracted.size} dokumen berhasil diekstrak`);
+      if (notFound > 0) parts.push(`${notFound} belum ditemukan di folder OCR`);
+      if (ocrFailed > 0) parts.push(`${ocrFailed} belum menghasilkan lapisan teks`);
+      setRecheckMsg(parts.length > 0 ? parts.join(", ") + "." : "Tidak ada hasil.");
     } catch (e: unknown) {
       setRecheckMsg(e instanceof Error ? e.message : "Terjadi kesalahan saat memeriksa ulang");
     } finally {
@@ -719,6 +721,7 @@ export default function Stage2Files() {
                 setTotalChars(resume.totalChars);
                 setSkippedCount(completedLog.filter((e) => e.status === "gagal").length);
                 setPerluOcrFiles(resume.perluOcrFiles ?? []);
+                setOcrFolderLink(resume.ocrFolderLink ?? "");
                 setStoppedEarly(true);
                 setSubstep("2D");
                 setPriorSessionDismissed(true);
@@ -726,6 +729,7 @@ export default function Stage2Files() {
               onContinueExtraction={(resume) => {
                 setPriorSessionDismissed(true);
                 setPerluOcrFiles(resume.perluOcrFiles ?? []);
+                setOcrFolderLink(resume.ocrFolderLink ?? "");
                 startExtractionFromResume(
                   resume.remainingFiles,
                   resume.docMap,
@@ -1028,15 +1032,29 @@ export default function Stage2Files() {
                 ))}
               </ul>
               <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 12 }}>
-                Dokumen ini hasil scan tanpa lapisan teks. Jalankan OCR (Adobe Acrobat → Recognize Text,
-                atau simpan ulang via SharePoint), unggah versi OCR ke folder perkara, lalu klik
-                &ldquo;Periksa Ulang Dokumen&rdquo;.
+                Jalankan OCR pada file di atas (Adobe Acrobat → Recognize Text, atau simpan ulang via SharePoint),
+                tempatkan versi OCR di folder terpisah (boleh subfolder <strong>OCR</strong> di dalam folder perkara,
+                atau folder lain), lalu paste sharing link folder tersebut di bawah dan klik &ldquo;Periksa Ulang Dokumen&rdquo;.
+                Nama file boleh sama persis atau dengan sufiks <em>_OCR</em>.
               </p>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                  Sharing link folder OCR
+                </label>
+                <input
+                  type="text"
+                  value={ocrFolderLink}
+                  onChange={(e) => setOcrFolderLink(e.target.value)}
+                  placeholder="https://sandiva.sharepoint.com/:f:/s/SiteName/… (folder berisi versi OCR)"
+                  style={{ width: "100%", fontFamily: "monospace", fontSize: 12, padding: "7px 10px", borderRadius: 4, border: "1px solid var(--border-color)", background: "var(--bg-surface)", color: "var(--text-primary)", boxSizing: "border-box" }}
+                  disabled={rechecking}
+                />
+              </div>
               <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <button
                   onClick={recheckOcr}
-                  disabled={rechecking}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: rechecking ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: rechecking ? "wait" : "pointer" }}
+                  disabled={rechecking || !ocrFolderLink.trim()}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: rechecking || !ocrFolderLink.trim() ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: rechecking || !ocrFolderLink.trim() ? "not-allowed" : "pointer" }}
                 >
                   {rechecking && <SpinnerInline />}
                   {rechecking ? "Memeriksa ulang..." : "Periksa Ulang Dokumen"}
@@ -1145,6 +1163,7 @@ type ExtractionProgressResume = {
   completedFiles: ExtractLogEntry[];
   remainingFiles: FileEntry[];
   perluOcrFiles?: FileEntry[];
+  ocrFolderLink?: string;
   processed: number;
   totalChars: number;
   timestamp: string;
