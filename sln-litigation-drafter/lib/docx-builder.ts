@@ -8,7 +8,7 @@ import {
   BorderStyle,
   Header,
   Footer,
-  PageNumberElement,
+  PageNumber,
   TabStopType,
   TabStopPosition,
 } from "docx";
@@ -134,7 +134,17 @@ export async function buildLitigationDocx(
                     font: "Arial",
                     color: "888888",
                   }),
-                  new PageNumberElement(),
+                  // Page number must be run content: PageNumber.CURRENT inside
+                  // a TextRun emits a PAGE field within <w:r>. The previous
+                  // PageNumberElement as a direct Paragraph child emitted
+                  // <w:pgNum/> directly under <w:p> — schema-invalid OOXML
+                  // that made Word reject every generated file as corrupt.
+                  new TextRun({
+                    children: [PageNumber.CURRENT],
+                    size: 16,
+                    font: "Arial",
+                    color: "888888",
+                  }),
                 ],
               }),
             ],
