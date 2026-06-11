@@ -69,7 +69,12 @@ export default function Stage5Output() {
     });
 
     if (!res.ok) {
-      alert("Gagal mengunduh file.");
+      // Surface the server's actual error instead of a generic alert
+      const bodyText = await res.text().catch(() => "");
+      console.error(`[stage5] /api/docx status=${res.status} draftChars=${state.draftText.length} body=${bodyText.slice(0, 1000)}`);
+      let detail = bodyText.slice(0, 300);
+      try { detail = (JSON.parse(bodyText) as { error?: string }).error ?? detail; } catch {}
+      alert(`Gagal mengunduh file (${res.status}): ${detail}`);
       return;
     }
 

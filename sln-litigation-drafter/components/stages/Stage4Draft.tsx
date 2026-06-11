@@ -65,6 +65,7 @@ export default function Stage4Draft() {
             if (event.chunk) {
               dispatch({ type: "APPEND_DRAFT", chunk: event.chunk });
             } else if (event.done) {
+              console.log(`[stage4] draft done stopReason=${event.stopReason ?? "(not sent)"}`);
               dispatch({ type: "SET_DRAFT_STREAMING", value: false });
               dispatch({ type: "SET_DRAFT_COMPLETE", value: true });
               runCritique();

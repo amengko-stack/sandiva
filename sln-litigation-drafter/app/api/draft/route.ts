@@ -30,6 +30,15 @@ export async function POST(req: NextRequest) {
     const memory = await loadMemoryLibrary();
     const memoryContext = buildMemoryContext(memory);
 
+    // Issue 3 diagnostics: confirm firm samples actually reach the prompt
+    console.log(
+      `[draft] memory: conventions=${memory.conventions ? `${memory.conventions.length} chars` : "NOT LOADED"} ` +
+      `styleExamples=${memory.styleExamples.length} ` +
+      `labels=[${memory.styleExamples.map((e) => e.label).join(" | ")}] ` +
+      `styleChars=${memory.styleExamples.reduce((s, e) => s + e.content.length, 0)} ` +
+      `patterns=${memory.patterns.totalDrafts}`
+    );
+
     const analysisText = formatCaseAnalysis(caseAnalysis, userCorrections);
 
     const systemPrompt = getSystemPrompt(docTypeId, {
@@ -40,11 +49,18 @@ export async function POST(req: NextRequest) {
       pihak,
     });
 
+    // Issue 1 diagnostics: input size estimate (chars/4 ≈ tokens)
+    console.log(
+      `[draft] input: systemPrompt=${systemPrompt.length} chars (~${Math.round(systemPrompt.length / 4)} tokens est) ` +
+      `analysisText=${analysisText.length} memoryContext=${memoryContext.length}`
+    );
+
+    const DRAFT_MAX_TOKENS = 8192;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const stream = await client.messages.stream({
       model: MODELS.drafting,
-      max_tokens: 8192,
+      max_tokens: DRAFT_MAX_TOKENS,
       system: systemPrompt,
       messages: [
         {
@@ -59,19 +75,28 @@ export async function POST(req: NextRequest) {
     const readable = new ReadableStream({
       async start(controller) {
         try {
+          let outputChars = 0;
           for await (const event of stream) {
             if (
               event.type === "content_block_delta" &&
               event.delta.type === "text_delta"
             ) {
               const chunk = event.delta.text;
+              outputChars += chunk.length;
               controller.enqueue(
                 encoder.encode(`data: ${JSON.stringify({ chunk })}\n\n`)
               );
             }
           }
+          // Issue 1 diagnostics: was the draft cut off by the output limit?
+          const finalMessage = await stream.finalMessage();
+          console.log(
+            `[draft] DONE stop_reason=${finalMessage.stop_reason} max_tokens=${DRAFT_MAX_TOKENS} ` +
+            `input_tokens=${finalMessage.usage.input_tokens} output_tokens=${finalMessage.usage.output_tokens} ` +
+            `outputChars=${outputChars}`
+          );
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ done: true, stopReason: finalMessage.stop_reason })}\n\n`)
           );
           controller.close();
         } catch (e: unknown) {
