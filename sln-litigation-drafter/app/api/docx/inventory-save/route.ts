@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, webUrl });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Gagal menyimpan ke SharePoint";
+    console.error("[inventory-save] Error:", message, e instanceof Error ? e.stack : "");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
