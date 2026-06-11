@@ -12,7 +12,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "sessionId wajib diisi" }, { status: 400 });
     }
 
-    const combinedText = await readBlobText(`sessions/${sessionId}/extracted_text.json`);
+    const blobKey = `sessions/${sessionId}/extracted_text.json`;
+    console.log(`[analyze] READ blob: sessionId=${sessionId} key=${blobKey}`);
+    const combinedText = await readBlobText(blobKey);
     if (!combinedText || combinedText.length < 50) {
       return NextResponse.json(
         { error: "Dokumen belum diproses atau sesi tidak ditemukan. Kembali ke tahap sebelumnya." },

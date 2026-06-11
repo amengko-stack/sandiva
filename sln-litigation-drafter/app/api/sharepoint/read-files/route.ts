@@ -157,7 +157,9 @@ export async function POST(req: NextRequest) {
           // Guard: Vercel Blob rejects empty body — skip write if no text extracted yet.
           const combinedText = docBlocks.filter((bk): bk is string => bk !== null).join("");
           if (combinedText) {
-            await writeBlobText(`sessions/${sessionId}/extracted_text.json`, combinedText);
+            const blobKey = `sessions/${sessionId}/extracted_text.json`;
+            console.log(`[read-files] WROTE blob: sessionId=${sessionId} key=${blobKey} chars=${combinedText.length}`);
+            await writeBlobText(blobKey, combinedText);
           }
 
           enqueue({
