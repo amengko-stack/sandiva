@@ -19,16 +19,25 @@ export async function POST(req: NextRequest) {
   try {
     const { draftText, docTypeId, caseAnalysis } = await req.json();
 
+    if (!draftText?.trim() || draftText.trim().length < 200) {
+      console.error(`[critique] rejected: draftText ${draftText?.length ?? 0} chars`);
+      return NextResponse.json(
+        { error: "Teks draf kosong atau terlalu pendek untuk dikritisi" },
+        { status: 400 }
+      );
+    }
+    console.log(`[critique] draftChars=${draftText.length} docTypeId=${docTypeId}`);
+
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const response = await client.messages.create({
       model: MODELS.critique,
-      max_tokens: 1500,
+      max_tokens: 2048,
       system: CRITIQUE_SYSTEM,
       messages: [
         {
           role: "user",
-          content: `Kritisi draf ${(docTypeId || "").replace(/_/g, " ")} berikut ini:\n\n${draftText.slice(0, 6000)}`,
+          content: `Kritisi draf ${(docTypeId || "").replace(/_/g, " ")} berikut ini:\n\n${draftText.slice(0, 60000)}`,
         },
       ],
     });
