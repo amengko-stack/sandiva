@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { analyzeCase } from "@/src/analyzer";
 import { loadMemoryLibrary, buildMemoryContext, readBlobText } from "@/lib/blob";
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   try {
