@@ -1,15 +1,23 @@
-import { put } from "@vercel/blob";
+import { put, get } from "@vercel/blob";
 import type { MemoryLibrary, PatternEntry, StyleExample } from "@/types";
 
 const PREFIX = "litigation-memory";
 
 export async function readBlobText(path: string): Promise<string | null> {
   try {
-    const baseUrl = process.env.BLOB_BASE_URL;
-    if (!baseUrl) return null;
-    const res = await fetch(`${baseUrl}/${PREFIX}/${path}`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return res.text();
+    // Blobs are written with access:"private", so they cannot be read by a
+    // plain fetch against a constructed public URL — that returns 403/404.
+    // get() authenticates with the token and resolves the private pathname
+    // (deterministic, matches the put() pathname since allowOverwrite avoids
+    // random suffixes). useCache:false avoids serving a stale/empty object
+    // right after a write.
+    const result = await get(`${PREFIX}/${path}`, {
+      access: "private",
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+      useCache: false,
+    });
+    if (!result || result.statusCode !== 200 || !result.stream) return null;
+    return await new Response(result.stream).text();
   } catch {
     return null;
   }
