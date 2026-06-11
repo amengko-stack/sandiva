@@ -39,6 +39,24 @@ export async function POST(req: NextRequest) {
       `patterns=${memory.patterns.totalDrafts}`
     );
 
+    // Per-component prompt budget breakdown (chars; tokens ≈ chars/4)
+    const comp = (label: string, n: number) => `${label}=${n} (~${Math.round(n / 4)}t)`;
+    console.log(
+      `[draft] budget: ` +
+      comp("conventions", memory.conventions.length) + " " +
+      memory.styleExamples.map((e, i) => comp(`style${i + 1}[${e.label}]`, e.content.length)).join(" ") + " " +
+      comp("identitasPihak", caseAnalysis.identitasPihak?.length ?? 0) + " " +
+      comp("hubunganHukum", caseAnalysis.hubunganHukum?.length ?? 0) + " " +
+      comp("kronologi", caseAnalysis.kronologi?.length ?? 0) + " " +
+      comp("elemenHukum", caseAnalysis.elemenHukum?.length ?? 0) + " " +
+      comp("analisisElemen", caseAnalysis.analisisElemen?.length ?? 0) + " " +
+      comp("buktiKunci", caseAnalysis.buktiKunci?.length ?? 0) + " " +
+      comp("kelemahanGaps", caseAnalysis.kelemahanGaps?.length ?? 0) + " " +
+      comp("posisiHukum", caseAnalysis.posisiHukum?.length ?? 0) + " " +
+      comp("userCorrections", userCorrections?.length ?? 0) +
+      ` | NOTE: documentText=0 (Stage 4 drafts from caseAnalysis, not raw text); interview=0 assessment=0 (NOT sent to /api/draft)`
+    );
+
     const analysisText = formatCaseAnalysis(caseAnalysis, userCorrections);
 
     const systemPrompt = getSystemPrompt(docTypeId, {
