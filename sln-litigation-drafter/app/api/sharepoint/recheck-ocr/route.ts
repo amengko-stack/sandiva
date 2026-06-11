@@ -45,7 +45,8 @@ export async function POST(req: NextRequest) {
   try {
     const raw = await readBlobText(`sessions/${sessionId}/report.json`);
     if (raw) report = JSON.parse(raw) as ExtractReport;
-  } catch {
+  } catch (e) {
+    console.error("[recheck-ocr] report.json parse failed, OCR results won't update the report:", e instanceof Error ? e.message : e);
     report = null;
   }
 

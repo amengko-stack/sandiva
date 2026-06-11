@@ -286,14 +286,9 @@ Panduan per field:
     console.log(`[analyze] JSON parse error: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  return {
-    identitasPihak: "[Tidak dapat diparsing]",
-    hubunganHukum: raw.slice(0, 500),
-    kronologi: "",
-    elemenHukum: "",
-    analisisElemen: "",
-    buktiKunci: "",
-    kelemahanGaps: "",
-    posisiHukum: "",
-  };
+  // Surface the failure instead of returning an empty analysis — a silent
+  // empty fallback previously masked truncation as "no kronologi".
+  throw new Error(
+    "Hasil analisis AI tidak dapat diparsing. Coba lagi — jika berulang, periksa log fungsi ([analyze])."
+  );
 }

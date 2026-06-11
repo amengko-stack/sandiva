@@ -40,7 +40,8 @@ export async function readExtractionCache(
     if (Date.now() - new Date(cached.metadata.extractedAt).getTime() > CACHE_TTL_MS) return null;
     if (cached.metadata.category !== category) return null;
     return cached;
-  } catch {
+  } catch (e) {
+    console.error("[cache] cached entry parse failed, treating as miss:", e instanceof Error ? e.message : e);
     return null;
   }
 }
@@ -51,7 +52,8 @@ export async function writeExtractionCache(
 ): Promise<void> {
   try {
     await writeBlobText(cacheKey(sharePointFileUrl), JSON.stringify(entry));
-  } catch {
+  } catch (e) {
     // cache write failures must never break extraction
+    console.error("[cache] cache write failed (extraction continues):", e instanceof Error ? e.message : e);
   }
 }

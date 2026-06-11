@@ -18,7 +18,8 @@ export async function readBlobText(path: string): Promise<string | null> {
     });
     if (!result || result.statusCode !== 200 || !result.stream) return null;
     return await new Response(result.stream).text();
-  } catch {
+  } catch (e) {
+    console.error(`[blob] readBlobText failed for ${PREFIX}/${path}:`, e instanceof Error ? e.message : e);
     return null;
   }
 }
@@ -53,7 +54,9 @@ export async function loadMemoryLibrary(): Promise<MemoryLibrary> {
   if (patternsRaw) {
     try {
       patterns = JSON.parse(patternsRaw);
-    } catch {}
+    } catch (e) {
+      console.error("[blob] case_patterns.json parse failed, using empty patterns:", e instanceof Error ? e.message : e);
+    }
   }
 
   let styleExamples: StyleExample[] = [];
@@ -77,7 +80,9 @@ export async function loadMemoryLibrary(): Promise<MemoryLibrary> {
         })
       );
       styleExamples = loaded.filter(Boolean) as StyleExample[];
-    } catch {}
+    } catch (e) {
+      console.error("[blob] style_examples/index.json load failed, skipping style examples:", e instanceof Error ? e.message : e);
+    }
   }
 
   return { conventions, patterns, styleExamples };
@@ -123,7 +128,9 @@ export async function saveApprovedDraft(
   if (indexRaw) {
     try {
       index = JSON.parse(indexRaw);
-    } catch {}
+    } catch (e) {
+      console.error("[blob] style_examples/index.json parse failed, rebuilding index:", e instanceof Error ? e.message : e);
+    }
   }
   index.push({
     path: `style_examples/${filename}`,
@@ -142,7 +149,9 @@ export async function saveApprovedDraft(
   if (patternsRaw) {
     try {
       patterns = JSON.parse(patternsRaw);
-    } catch {}
+    } catch (e) {
+      console.error("[blob] case_patterns.json parse failed, resetting patterns:", e instanceof Error ? e.message : e);
+    }
   }
   patterns.totalDrafts = (patterns.totalDrafts || 0) + 1;
   patterns.patterns = patterns.patterns || [];

@@ -425,7 +425,8 @@ export async function getFileLastModified(filePath: string): Promise<string | nu
     if (!res.ok) return null;
     const meta = await res.json();
     return meta.lastModifiedDateTime ?? null;
-  } catch {
+  } catch (e) {
+    console.error("[sharepoint] getFileLastModified failed (cache will be bypassed):", e instanceof Error ? e.message : e);
     return null;
   }
 }
