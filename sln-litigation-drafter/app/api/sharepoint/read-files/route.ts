@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
 import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
-import { writeBlobText } from "@/lib/blob";
+import { readBlobText, writeBlobText } from "@/lib/blob";
 import { formatDocBlock } from "@/lib/extract-format";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
 
@@ -25,7 +25,7 @@ function sse(data: object): string {
 }
 
 export async function POST(req: NextRequest) {
-  const { files, docMap, sessionId, folderPath, docTypeId, practiceAreaId, claimType, ref } =
+  const { files, docMap, sessionId, folderPath, docTypeId, practiceAreaId, claimType, ref, appendToExisting } =
     (await req.json()) as {
       files: FileEntry[];
       docMap: DocMapEntry[];
@@ -35,6 +35,9 @@ export async function POST(req: NextRequest) {
       practiceAreaId?: string | null;
       claimType?: string | null;
       ref?: string;
+      // true on resume: this run only re-extracts the remaining files, so the
+      // already-extracted text must be preserved as a prefix, not overwritten.
+      appendToExisting?: boolean;
     };
 
   if (!files?.length || !sessionId) {
@@ -65,6 +68,13 @@ export async function POST(req: NextRequest) {
   // completion never scrambles the combined text.
   const docBlocks: (string | null)[] = new Array(total).fill(null);
   const reportFiles: ExtractReport["files"] = new Array(total);
+
+  // On resume, only the remaining files are re-extracted; preserve the text
+  // already written for previously-completed files so we never overwrite-and-lose.
+  let existingPrefix = "";
+  if (appendToExisting) {
+    existingPrefix = (await readBlobText(`sessions/${sessionId}/extracted_text.json`)) ?? "";
+  }
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -155,11 +165,9 @@ export async function POST(req: NextRequest) {
 
           // Write combined Blob after every batch so partial progress survives.
           // Guard: Vercel Blob rejects empty body — skip write if no text extracted yet.
-          const combinedText = docBlocks.filter((bk): bk is string => bk !== null).join("");
+          const combinedText = existingPrefix + docBlocks.filter((bk): bk is string => bk !== null).join("");
           if (combinedText) {
-            const blobKey = `sessions/${sessionId}/extracted_text.json`;
-            console.log(`[read-files] WROTE blob: sessionId=${sessionId} key=${blobKey} chars=${combinedText.length}`);
-            await writeBlobText(blobKey, combinedText);
+            await writeBlobText(`sessions/${sessionId}/extracted_text.json`, combinedText);
           }
 
           enqueue({
@@ -169,6 +177,18 @@ export async function POST(req: NextRequest) {
             nextIndex: startIdx + indices.length,
             cacheHits,
           });
+        }
+
+        // Final assembly: write the complete combined document exactly once more
+        // after every batch finishes, so the blob analyze reads is guaranteed to
+        // reflect all successfully-extracted files (not just the last batch's).
+        const finalCombined = existingPrefix + docBlocks.filter((bk): bk is string => bk !== null).join("");
+        const blobKey = `sessions/${sessionId}/extracted_text.json`;
+        if (finalCombined) {
+          console.log(`[read-files] WROTE blob: sessionId=${sessionId} key=${blobKey} chars=${finalCombined.length}`);
+          await writeBlobText(blobKey, finalCombined);
+        } else {
+          console.log(`[read-files] NO WRITE: sessionId=${sessionId} key=${blobKey} — no extracted text (all PERLU_OCR / failed)`);
         }
 
         // Audit report JSON for inventory PDF generation

@@ -395,6 +395,8 @@ export default function Stage2Files() {
           practiceAreaId: state.practiceAreaId,
           claimType: state.claimType,
           ref: state.ref,
+          // Resume: prior files already produced combined text — preserve it.
+          appendToExisting: prependLog.length > 0,
         }),
       });
       if (!res.ok) {

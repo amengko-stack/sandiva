@@ -110,7 +110,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (appended) {
-    await writeBlobText(`sessions/${sessionId}/extracted_text.json`, existingText + appended);
+    // Re-assemble the full combined document: previously-extracted text + the
+    // newly-OCR'd files. Append, never overwrite-and-lose the originals.
+    const blobKey = `sessions/${sessionId}/extracted_text.json`;
+    const combined = existingText + appended;
+    console.log(`[read-files] WROTE blob (ocr-recheck): sessionId=${sessionId} key=${blobKey} chars=${combined.length}`);
+    await writeBlobText(blobKey, combined);
     if (report) {
       report.totalChars += addedChars;
       report.processed += addedProcessed;

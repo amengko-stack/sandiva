@@ -15,9 +15,10 @@ export async function POST(req: NextRequest) {
     const blobKey = `sessions/${sessionId}/extracted_text.json`;
     console.log(`[analyze] READ blob: sessionId=${sessionId} key=${blobKey}`);
     const combinedText = await readBlobText(blobKey);
+    console.log(`[analyze] READ result: sessionId=${sessionId} found=${combinedText !== null} chars=${combinedText?.length ?? 0}`);
     if (!combinedText || combinedText.length < 50) {
       return NextResponse.json(
-        { error: "Dokumen belum diproses atau sesi tidak ditemukan. Kembali ke tahap sebelumnya." },
+        { error: "Belum ada dokumen dengan teks yang dapat dianalisis — selesaikan ekstraksi atau OCR terlebih dahulu." },
         { status: 400 }
       );
     }
