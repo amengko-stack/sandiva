@@ -88,6 +88,55 @@ export async function loadMemoryLibrary(): Promise<MemoryLibrary> {
   return { conventions, patterns, styleExamples };
 }
 
+// Stage 4 drafting memory: unlike loadMemoryLibrary (3 most-recent examples
+// truncated to 3K chars — fine for analysis context), the drafting prompt
+// needs ONE COMPLETE best-match style example the model can learn document
+// structure from, plus up to 2 secondary examples at 8K chars.
+// Match priority: exact docType+claimType → docType → most recent.
+const PRIMARY_EXAMPLE_CAP = 120_000; // ~30K tokens safety rail
+const SECONDARY_EXAMPLE_CAP = 8_000;
+
+export async function loadDraftMemory(
+  docTypeId: string,
+  claimType: string | null
+): Promise<MemoryLibrary> {
+  const base = await loadMemoryLibrary(); // conventions + patterns (cheap, reused)
+
+  const styleIndexRaw = await readBlobText("style_examples/index.json");
+  if (!styleIndexRaw) return base;
+
+  let index: { path: string; type: string; claimType: string; label: string }[] = [];
+  try {
+    index = JSON.parse(styleIndexRaw);
+  } catch (e) {
+    console.error("[blob] style_examples/index.json parse failed in loadDraftMemory:", e instanceof Error ? e.message : e);
+    return base;
+  }
+
+  // Rank: exact docType+claimType match first, then docType-only, then the
+  // rest — newest first within each tier (index is append-ordered).
+  const tier = (e: { type: string; claimType: string }) =>
+    e.type === docTypeId && (claimType == null || e.claimType === claimType) ? 0 :
+    e.type === docTypeId ? 1 : 2;
+  const ranked = [...index].reverse().sort((a, b) => tier(a) - tier(b)).slice(0, 3);
+
+  const loaded = await Promise.all(
+    ranked.map(async (entry, i) => {
+      const content = await readBlobText(`style_examples/${entry.path.split("/").pop()}`);
+      if (!content || content.length < 200) return null;
+      const cap = i === 0 ? PRIMARY_EXAMPLE_CAP : SECONDARY_EXAMPLE_CAP;
+      return {
+        type: entry.type,
+        claimType: entry.claimType,
+        label: entry.label,
+        content: content.slice(0, cap),
+      } as StyleExample;
+    })
+  );
+
+  return { ...base, styleExamples: loaded.filter(Boolean) as StyleExample[] };
+}
+
 export function buildMemoryContext(memory: MemoryLibrary): string {
   let ctx = "";
 
