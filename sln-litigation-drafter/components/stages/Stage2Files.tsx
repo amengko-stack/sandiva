@@ -149,9 +149,14 @@ export default function Stage2Files() {
       .then((r) => {
         if (!r.ok) {
           r.json()
-            .then((data: { error?: string }) => {
-              console.warn(`[saveMatterFile] ${label} HTTP ${r.status}:`, data.error);
-              setSpWarning(`Gagal menyimpan ${label} ke SharePoint (${r.status}: ${data.error ?? "—"}) — data aman di sesi, ekstraksi lanjut`);
+            .then((data: { error?: unknown }) => {
+              // error may be a non-string (or a JSON-ish body) — stringify so the
+              // warning never shows "[object Object]"
+              const errText =
+                typeof data.error === "string" ? data.error :
+                data.error != null ? JSON.stringify(data.error).slice(0, 300) : "—";
+              console.warn(`[saveMatterFile] ${label} HTTP ${r.status}:`, errText);
+              setSpWarning(`Gagal menyimpan ${label} ke SharePoint (${r.status}: ${errText}) — data aman di sesi, ekstraksi lanjut`);
             })
             .catch(() => {
               setSpWarning(`Gagal menyimpan ${label} ke SharePoint (HTTP ${r.status}) — data aman di sesi, ekstraksi lanjut`);
