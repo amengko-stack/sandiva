@@ -112,6 +112,13 @@ export default function Stage2Files() {
   const [ocrFolderLink, setOcrFolderLink] = useState("");
   const [rechecking, setRechecking] = useState(false);
   const [recheckMsg, setRecheckMsg] = useState<string | null>(null);
+  // OCR folder selection step (mirrors Stage 2A): null = not open
+  const [ocrListing, setOcrListing] = useState<FileEntry[] | null>(null);
+  const [ocrListLoading, setOcrListLoading] = useState(false);
+  const [ocrChecked, setOcrChecked] = useState<Set<string>>(new Set());
+  const [ocrCategories, setOcrCategories] = useState<Record<string, DocCategory>>({});
+  // Listing file id → matched scanned original's filename (for replacesName + tag)
+  const [ocrMatches, setOcrMatches] = useState<Record<string, string>>({});
   const [batchInfo, setBatchInfo] = useState<{ batch: number; totalBatches: number } | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
 
@@ -553,56 +560,146 @@ export default function Stage2Files() {
     }
   }
 
-  // Re-check PERLU_OCR files after the drafter has OCR'd & re-uploaded them.
-  // Only those files are re-extracted; everything else is untouched.
-  async function recheckOcr() {
-    if (perluOcrFiles.length === 0 || rechecking || !ocrFolderLink.trim()) return;
+  // Normalize a filename for matching: strip extension, lowercase, strip trailing _ocr.
+  function normalizeOcrName(name: string): string {
+    return name.replace(/\.[^.]+$/, "").toLowerCase().replace(/_ocr$/, "");
+  }
+
+  // Step 1 — list the OCR folder (recursively) and open the selection checklist.
+  async function loadOcrFolder() {
+    if (rechecking || ocrListLoading || !ocrFolderLink.trim()) return;
+    setOcrListLoading(true);
+    setRecheckMsg(null);
+    try {
+      const res = await fetch("/api/sharepoint/list-files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderPath: ocrFolderLink.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal membaca folder OCR");
+      const listing = (data.files ?? []) as FileEntry[];
+      if (listing.length === 0) {
+        setRecheckMsg("Tidak ada dokumen (docx/pdf/doc/txt) ditemukan di folder OCR ini.");
+        return;
+      }
+
+      // Build normalized PERLU_OCR name → { original, category } map.
+      const origByNorm = new Map<string, { original: FileEntry; category: DocCategory }>();
+      for (const original of perluOcrFiles) {
+        const category = localMap.find((e) => e.fileId === original.id)?.category ?? "REFERENSI";
+        origByNorm.set(normalizeOcrName(original.name), { original, category });
+      }
+
+      const checked = new Set<string>();
+      const categories: Record<string, DocCategory> = {};
+      const matches: Record<string, string> = {};
+      for (const f of listing) {
+        const m = origByNorm.get(normalizeOcrName(f.name));
+        if (m) {
+          checked.add(f.id);
+          categories[f.id] = m.category;
+          matches[f.id] = m.original.name;
+        } else {
+          categories[f.id] = "REFERENSI";
+        }
+      }
+
+      setOcrChecked(checked);
+      setOcrCategories(categories);
+      setOcrMatches(matches);
+      setOcrListing(listing);
+    } catch (e: unknown) {
+      setRecheckMsg(e instanceof Error ? e.message : "Terjadi kesalahan saat membaca folder OCR");
+    } finally {
+      setOcrListLoading(false);
+    }
+  }
+
+  function toggleOcrCheck(id: string) {
+    setOcrChecked((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // Step 2 — extract only the confirmed-selected OCR files.
+  async function extractSelectedOcr() {
+    if (!ocrListing || rechecking) return;
+    const selected = ocrListing.filter((f) => ocrChecked.has(f.id));
+    if (selected.length === 0) return;
     setRechecking(true);
     setRecheckMsg(null);
     try {
+      const payload = selected.map((f) => ({
+        name: f.name,
+        path: f.path,
+        category: ocrCategories[f.id] ?? "REFERENSI",
+        replacesName: ocrMatches[f.id], // undefined when newly added
+      }));
       const res = await fetch("/api/sharepoint/recheck-ocr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: state.sessionId,
-          ocrFolderPath: ocrFolderLink.trim(),
-          files: perluOcrFiles,
-          docMap: localMap,
-        }),
+        body: JSON.stringify({ sessionId: state.sessionId, files: payload }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Gagal memeriksa ulang dokumen");
+      if (!res.ok) throw new Error(data.error ?? "Gagal mengekstrak dokumen OCR");
 
-      const results = (data.results ?? []) as { name: string; status: string; charCount?: number; method?: string }[];
-      const nowExtracted = new Map(
-        results.filter((r) => r.status === "selesai").map((r) => [r.name, r])
-      );
+      const results = (data.results ?? []) as {
+        name: string; replacesName?: string; status: string; charCount?: number; method?: string;
+      }[];
 
-      if (nowExtracted.size > 0) {
-        // Move extracted files from the OCR list into the inventory.
+      const succeeded = results.filter((r) => r.status === "selesai");
+      const clearedNames = new Set(succeeded.filter((r) => r.replacesName).map((r) => r.replacesName!));
+      const addedNew = succeeded.filter((r) => !r.replacesName);
+
+      // Clear matched PERLU_OCR slots and flip their inventory rows to selesai.
+      if (clearedNames.size > 0) {
         setExtractLog((log) =>
           log.map((entry) => {
-            const r = nowExtracted.get(entry.name);
-            return r && entry.status === "perlu_ocr"
-              ? { ...entry, status: "selesai" as const, charCount: r.charCount, method: r.method }
-              : entry;
+            if (entry.status === "perlu_ocr" && clearedNames.has(entry.name)) {
+              const r = succeeded.find((s) => s.replacesName === entry.name);
+              return { ...entry, status: "selesai" as const, charCount: r?.charCount, method: r?.method };
+            }
+            return entry;
           })
         );
-        setPerluOcrFiles((files) => files.filter((f) => !nowExtracted.has(f.name)));
-        const addedChars = results.reduce((s, r) => s + (r.status === "selesai" ? (r.charCount ?? 0) : 0), 0);
-        setProcessedCount((c) => c + nowExtracted.size);
+        setPerluOcrFiles((files) => files.filter((f) => !clearedNames.has(f.name)));
+      }
+
+      // Append newly-added (unmatched) documents to the inventory log.
+      if (addedNew.length > 0) {
+        const newEntries: ExtractLogEntry[] = addedNew.map((r) => {
+          const listed = selected.find((f) => f.name === r.name);
+          return {
+            name: r.name,
+            category: (listed && ocrCategories[listed.id]) ?? "REFERENSI",
+            status: "selesai",
+            charCount: r.charCount,
+            method: r.method,
+          };
+        });
+        setExtractLog((log) => [...log, ...newEntries]);
+      }
+
+      const addedChars = succeeded.reduce((s, r) => s + (r.charCount ?? 0), 0);
+      if (succeeded.length > 0) {
+        setProcessedCount((c) => c + succeeded.length);
         setTotalChars((c) => c + addedChars);
       }
 
-      const notFound = results.filter((r) => r.status === "tidak_ditemukan").length;
       const ocrFailed = results.filter((r) => r.status === "ocr_gagal").length;
+      const failed = results.filter((r) => r.status === "gagal").length;
       const parts: string[] = [];
-      if (nowExtracted.size > 0) parts.push(`${nowExtracted.size} dokumen berhasil diekstrak`);
-      if (notFound > 0) parts.push(`${notFound} belum ditemukan di folder OCR`);
-      if (ocrFailed > 0) parts.push(`${ocrFailed} belum menghasilkan lapisan teks`);
+      if (clearedNames.size > 0) parts.push(`${clearedNames.size} dokumen pindaian berhasil diganti`);
+      if (addedNew.length > 0) parts.push(`${addedNew.length} dokumen baru ditambahkan`);
+      if (ocrFailed > 0) parts.push(`${ocrFailed} masih tanpa lapisan teks (OCR gagal)`);
+      if (failed > 0) parts.push(`${failed} gagal diekstrak`);
       setRecheckMsg(parts.length > 0 ? parts.join(", ") + "." : "Tidak ada hasil.");
+      setOcrListing(null);
     } catch (e: unknown) {
-      setRecheckMsg(e instanceof Error ? e.message : "Terjadi kesalahan saat memeriksa ulang");
+      setRecheckMsg(e instanceof Error ? e.message : "Terjadi kesalahan saat mengekstrak dokumen OCR");
     } finally {
       setRechecking(false);
     }
@@ -1050,19 +1147,94 @@ export default function Stage2Files() {
                   disabled={rechecking}
                 />
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <button
-                  onClick={recheckOcr}
-                  disabled={rechecking || !ocrFolderLink.trim()}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: rechecking || !ocrFolderLink.trim() ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: rechecking || !ocrFolderLink.trim() ? "not-allowed" : "pointer" }}
-                >
-                  {rechecking && <SpinnerInline />}
-                  {rechecking ? "Memeriksa ulang..." : "Periksa Ulang Dokumen"}
-                </button>
-                {recheckMsg && (
-                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{recheckMsg}</span>
-                )}
-              </div>
+              {ocrListing === null ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <button
+                    onClick={loadOcrFolder}
+                    disabled={ocrListLoading || !ocrFolderLink.trim()}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: ocrListLoading || !ocrFolderLink.trim() ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: ocrListLoading || !ocrFolderLink.trim() ? "not-allowed" : "pointer" }}
+                  >
+                    {ocrListLoading && <SpinnerInline />}
+                    {ocrListLoading ? "Membaca folder..." : "Periksa Ulang Dokumen"}
+                  </button>
+                  {recheckMsg && (
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{recheckMsg}</span>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, color: ocrChecked.size === 0 ? "var(--error)" : "var(--text-muted)" }}>
+                      {ocrChecked.size} dari {ocrListing.length} file dipilih
+                    </span>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setOcrChecked(new Set(ocrListing!.map((f) => f.id)))} style={{ fontSize: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer" }}>Pilih Semua</button>
+                      <button onClick={() => setOcrChecked(new Set())} style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>Batalkan Semua</button>
+                    </div>
+                  </div>
+                  <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 300, overflowY: "auto", marginBottom: 12, background: "var(--bg-surface)" }}>
+                    {ocrListing.map((f, i) => {
+                      const checked = ocrChecked.has(f.id);
+                      const matchedName = ocrMatches[f.id];
+                      const cat = ocrCategories[f.id] ?? "REFERENSI";
+                      const catMeta = CATEGORY_META[cat];
+                      return (
+                        <div
+                          key={f.id}
+                          onClick={() => toggleOcrCheck(f.id)}
+                          style={{
+                            display: "flex", gap: 10, padding: "9px 12px",
+                            borderBottom: i < ocrListing!.length - 1 ? "1px solid var(--border-color)" : "none",
+                            alignItems: "center", cursor: "pointer",
+                            background: checked ? "rgba(91,155,213,0.05)" : "transparent",
+                            opacity: checked ? 1 : 0.5,
+                            userSelect: "none",
+                          }}
+                        >
+                          <input type="checkbox" checked={checked} onChange={() => {}} style={{ flexShrink: 0, pointerEvents: "none" }} />
+                          <span style={{ fontSize: 14, flexShrink: 0 }}>{FILE_ICON[f.type] || "📎"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, color: checked ? "var(--text-primary)" : "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: checked ? "none" : "line-through" }}>
+                              {f.name}
+                            </div>
+                            {matchedName && (
+                              <div style={{ fontSize: 10, color: "#1d7d4d", marginTop: 1 }}>✓ cocok dengan dokumen pindaian</div>
+                            )}
+                          </div>
+                          <select
+                            value={cat}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setOcrCategories((prev) => ({ ...prev, [f.id]: e.target.value as DocCategory }))}
+                            style={{ fontSize: 11, fontWeight: 700, color: catMeta.color, background: catMeta.bg, border: `1px solid ${catMeta.color}55`, borderRadius: 3, padding: "2px 6px", cursor: "pointer", flexShrink: 0, appearance: "none", WebkitAppearance: "none" }}
+                          >
+                            {CATEGORY_CYCLE.map((c) => (
+                              <option key={c} value={c} style={{ color: CATEGORY_META[c].color, background: "var(--bg-surface, #1e2a3a)", fontWeight: 700 }}>{c}</option>
+                            ))}
+                          </select>
+                          <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{f.size}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <button
+                      onClick={extractSelectedOcr}
+                      disabled={rechecking || ocrChecked.size === 0}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: rechecking || ocrChecked.size === 0 ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: rechecking || ocrChecked.size === 0 ? "not-allowed" : "pointer" }}
+                    >
+                      {rechecking && <SpinnerInline />}
+                      {rechecking ? "Mengekstrak..." : `Ekstrak Terpilih (${ocrChecked.size})`}
+                    </button>
+                    <button
+                      onClick={() => { setOcrListing(null); setRecheckMsg(null); }}
+                      disabled={rechecking}
+                      style={{ padding: "8px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: rechecking ? "not-allowed" : "pointer" }}
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
