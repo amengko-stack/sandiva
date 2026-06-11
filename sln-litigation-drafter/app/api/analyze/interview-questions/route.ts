@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { CaseAnalysis } from "@/types";
 import { MODELS } from "@/config/models";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const client = new Anthropic();
 
