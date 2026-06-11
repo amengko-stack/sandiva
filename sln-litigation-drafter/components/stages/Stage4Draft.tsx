@@ -36,6 +36,8 @@ export default function Stage4Draft() {
           ref: state.ref,
           caseAnalysis: state.caseAnalysis,
           userCorrections: state.userCorrections,
+          interviewAnswers: state.interviewAnswers,
+          strategicAssessment: state.strategicAssessment,
         }),
       });
 
@@ -67,8 +69,16 @@ export default function Stage4Draft() {
             } else if (event.done) {
               console.log(`[stage4] draft done stopReason=${event.stopReason ?? "(not sent)"}`);
               dispatch({ type: "SET_DRAFT_STREAMING", value: false });
-              dispatch({ type: "SET_DRAFT_COMPLETE", value: true });
-              runCritique();
+              // Critique must never run on a truncated draft. end_turn = complete;
+              // max_tokens after all continuation calls = still incomplete.
+              if (event.stopReason === "max_tokens") {
+                setStreamError(
+                  "Draf belum lengkap — batas keluaran model tercapai meski sudah dilanjutkan beberapa kali. Coba buat ulang draf."
+                );
+              } else {
+                dispatch({ type: "SET_DRAFT_COMPLETE", value: true });
+                runCritique();
+              }
             } else if (event.error) {
               throw new Error(event.error);
             }
