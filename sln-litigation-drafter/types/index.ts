@@ -150,6 +150,7 @@ export type WorkflowAction =
   | { type: "SET_STRATEGIC_ASSESSMENT"; text: string }
   | { type: "SET_USER_CORRECTIONS"; text: string }
   | { type: "APPEND_DRAFT"; chunk: string }
+  | { type: "RESET_DRAFT" }
   | { type: "SET_DRAFT_STREAMING"; value: boolean }
   | { type: "SET_DRAFT_COMPLETE"; value: boolean }
   | { type: "SET_CRITIQUE"; text: string }

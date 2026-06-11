@@ -142,21 +142,56 @@ export default function Stage4Draft() {
           </p>
         </div>
         {state.draftComplete && (
-          <button
-            onClick={() => goToStage(5)}
-            style={{
-              padding: "10px 24px",
-              background: "var(--accent-blue)",
-              color: "white",
-              border: "none",
-              borderRadius: 4,
-              fontSize: 14,
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
-            Lanjut ke Output →
-          </button>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={() => {
+                dispatch({ type: "RESET_DRAFT" });
+                startStreaming();
+              }}
+              disabled={state.isDraftStreaming}
+              style={{
+                padding: "10px 16px",
+                background: "transparent",
+                border: "1px solid var(--border-color)",
+                borderRadius: 4,
+                color: "var(--text-muted)",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              ↻ Buat Ulang Draf
+            </button>
+            <button
+              onClick={() => runCritique(state.draftText)}
+              disabled={state.isCritiqueLoading || !state.draftText.trim()}
+              style={{
+                padding: "10px 16px",
+                background: "transparent",
+                border: "1px solid var(--border-color)",
+                borderRadius: 4,
+                color: "var(--text-muted)",
+                fontSize: 13,
+                cursor: state.isCritiqueLoading ? "wait" : "pointer",
+              }}
+            >
+              {state.isCritiqueLoading ? "Mengkritisi..." : "⚖ Kritisi Ulang"}
+            </button>
+            <button
+              onClick={() => goToStage(5)}
+              style={{
+                padding: "10px 24px",
+                background: "var(--accent-blue)",
+                color: "white",
+                border: "none",
+                borderRadius: 4,
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              Lanjut ke Output →
+            </button>
+          </div>
         )}
       </div>
 
