@@ -23,7 +23,8 @@ export function isValidSession(token: string | undefined): boolean {
     const b = Buffer.from(expected);
     if (a.length !== b.length) return false;
     return crypto.timingSafeEqual(a, b);
-  } catch {
+  } catch (e) {
+    console.error("[auth] session token comparison failed:", e instanceof Error ? e.message : e);
     return false;
   }
 }

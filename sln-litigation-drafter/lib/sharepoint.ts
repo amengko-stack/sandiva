@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
-import type { FileEntry, DocDocumentType } from "@/types";
+import type { FileEntry, DocDocumentType, DocCategory } from "@/types";
+import { MODELS } from "@/config/models";
 
 // ---------------------------------------------------------------------------
 // Token — plain fetch, no Azure SDK
@@ -183,7 +184,7 @@ async function extractText(bytes: Buffer, ext: string): Promise<string> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await (anthropic.messages.create as any)({
-    model: "claude-sonnet-4-6",
+    model: MODELS.extraction,
     max_tokens: 8000,
     messages: [
       {
@@ -371,7 +372,7 @@ export async function readFileContentWithMode(
 
   if (documentType === "perjanjian_kontrak") {
     const res = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 2000,
       messages: [
         {
@@ -389,7 +390,7 @@ export async function readFileContentWithMode(
         ? `Dari dokumen bukti transaksi berikut, buat ringkasan singkat yang mencakup: jumlah/nilai, tanggal transaksi, para pihak, dan deskripsi transaksi.\n\nDokumen:\n${rawText}`
         : `Dari dokumen korporasi berikut, buat ringkasan singkat yang mencakup: nama entitas, struktur kepemilikan, direktur/komisaris, dan data relevan lainnya.\n\nDokumen:\n${rawText}`;
     const res = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.extraction,
       max_tokens: 2000,
       messages: [{ role: "user", content: prompt }],
     });
@@ -398,6 +399,186 @@ export async function readFileContentWithMode(
 
   // linear: putusan_penetapan, surat_menyurat, tidak_dikenali — return full text
   return rawText;
+}
+
+// ---------------------------------------------------------------------------
+// Lightweight metadata lookup (for cache validation) — single $select call
+// ---------------------------------------------------------------------------
+export async function getFileLastModified(filePath: string): Promise<string | null> {
+  try {
+    if (filePath.startsWith("drive:")) {
+      const [, driveId, itemId] = filePath.split(":");
+      const res = await graphFetch(`/drives/${driveId}/items/${itemId}?$select=lastModifiedDateTime`);
+      if (!res.ok) return null;
+      const meta = await res.json();
+      return meta.lastModifiedDateTime ?? null;
+    }
+    const parsed = await parseInput(filePath);
+    if (parsed.kind === "sharing-link") {
+      const res = await graphFetch(`/shares/${parsed.shareId}/driveItem?$select=lastModifiedDateTime`);
+      if (!res.ok) return null;
+      const meta = await res.json();
+      return meta.lastModifiedDateTime ?? null;
+    }
+    const encoded = encodedSegments(normalizePath(parsed.folderPath));
+    const res = await graphFetch(`/sites/${parsed.siteAddr}/drive/root:/${encoded}?$select=lastModifiedDateTime`);
+    if (!res.ok) return null;
+    const meta = await res.json();
+    return meta.lastModifiedDateTime ?? null;
+  } catch (e) {
+    console.error("[sharepoint] getFileLastModified failed (cache will be bypassed):", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tiered extraction — depth determined by 2B category
+//   KRITIS:    full (PDF capped at 80k chars); contracts by filename get
+//              structured extraction labeled [Ekstraksi Terstruktur]
+//   PENDUKUNG: first 30.000 chars, labeled if truncated
+//   REFERENSI: first 5.000 chars, labeled [Ekstraksi Ringkas]
+// ---------------------------------------------------------------------------
+const CONTRACT_FILENAME_RE = /perjanjian|pks|nda|akta|kontrak/i;
+const PDF_KRITIS_CHAR_CAP = 80_000;
+const PENDUKUNG_CHAR_CAP = 30_000;
+const REFERENSI_CHAR_CAP = 5_000;
+
+// Avg chars/page below this ⇒ treat as scanned (image) PDF needing external OCR
+const SCANNED_CHARS_PER_PAGE = 100;
+
+// ---------------------------------------------------------------------------
+// PDF handling — local text extraction + scanned detection (no in-app OCR)
+// ---------------------------------------------------------------------------
+
+interface SmartPdfResult { text: string; method: string; needsOcr: boolean; pagesRead: number }
+
+// Local PDF text extraction via unpdf — built for serverless Node, zero
+// browser/DOM dependencies (no DOMMatrix). Single extraction path for all
+// categories. Extracts all text in one call; we slice to charCap afterwards.
+async function extractPdfTextPaged(
+  bytes: Buffer,
+  charCap: number
+): Promise<{ text: string; pagesRead: number }> {
+  const { extractText: unpdfExtractText, getDocumentProxy } = await import("unpdf");
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const { text: fullText, totalPages } = await unpdfExtractText(pdf, { mergePages: true });
+  const merged = typeof fullText === "string" ? fullText : (fullText as string[]).join("\n");
+  const text = merged.length > charCap ? merged.slice(0, charCap) : merged;
+  return { text, pagesRead: totalPages ?? 1 };
+}
+
+// Decide text vs scanned. A scanned (image) PDF with no text layer is NOT
+// OCR'd in-app — it is flagged needsOcr so the drafter can OCR it externally
+// (Acrobat / SharePoint re-save) and re-check. Detection is instant.
+async function extractPdfSmart(bytes: Buffer, charCap: number, fileName: string): Promise<SmartPdfResult> {
+  const { text, pagesRead } = await extractPdfTextPaged(bytes, charCap);
+  // Use raw (pre-cap) length for detection so a partially-capped text PDF isn't misclassified.
+  const rawLen = text.length;
+  const avgPerPage = pagesRead > 0 ? rawLen / pagesRead : 0;
+  console.log(`[extractPdfSmart] ${fileName}: ${pagesRead} pages, ${rawLen} chars, avg ${avgPerPage.toFixed(1)} chars/page → ${avgPerPage >= SCANNED_CHARS_PER_PAGE ? "TEXT" : "PERLU_OCR"}`);
+
+  if (avgPerPage >= SCANNED_CHARS_PER_PAGE) {
+    const capped = text.length > charCap ? text.slice(0, charCap) : text;
+    return { text: capped, method: "pdf_text", needsOcr: false, pagesRead };
+  }
+
+  // Scanned (image) PDF — no text layer. Flag for external OCR; do not extract.
+  return { text: "", method: "perlu_ocr", needsOcr: true, pagesRead };
+}
+
+async function structuredContractExtract(rawText: string): Promise<string> {
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const res = await anthropic.messages.create({
+    model: MODELS.extraction,
+    max_tokens: 4000,
+    messages: [
+      {
+        role: "user",
+        content: `Dari dokumen perjanjian/kontrak berikut, ekstrak secara terstruktur:
+- Para pihak (nama lengkap dan perannya)
+- Kewajiban masing-masing pihak (kutip verbatim klausul kewajiban)
+- Ketentuan pembayaran (nilai, jadwal, metode)
+- Ketentuan pengakhiran perjanjian
+- Penyelesaian sengketa (forum, hukum yang berlaku)
+- Klausul penalti / denda (kutip verbatim)
+
+Dokumen:
+${rawText}`,
+      },
+    ],
+  });
+  return res.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b as { type: "text"; text: string }).text)
+    .join("\n");
+}
+
+export async function extractWithTier(
+  filePath: string,
+  fileName: string,
+  category: DocCategory
+): Promise<{ content: string; extractionMethod: string; needsOcr?: boolean }> {
+  const { bytes, ext } = await downloadBytes(filePath);
+
+  const charCap =
+    category === "KRITIS" ? PDF_KRITIS_CHAR_CAP : category === "PENDUKUNG" ? PENDUKUNG_CHAR_CAP : REFERENSI_CHAR_CAP;
+
+  // PDFs: local text extraction + scanned detection. A scanned PDF with no text
+  // layer is flagged needsOcr (external OCR required) and short-circuits here.
+  // Any failure is left to propagate to the per-file catch in the route (marks gagal).
+  if (ext === "pdf") {
+    const smart = await extractPdfSmart(bytes, charCap, fileName);
+    if (smart.needsOcr) {
+      return { content: "", extractionMethod: "perlu_ocr", needsOcr: true };
+    }
+    const raw = smart.text;
+
+    if (category === "KRITIS") {
+      // Contracts: structured extraction over text PDFs.
+      if (CONTRACT_FILENAME_RE.test(fileName)) {
+        const structured = await structuredContractExtract(raw);
+        return { content: `[Ekstraksi Terstruktur]\n${structured}`, extractionMethod: "structured" };
+      }
+      return { content: raw, extractionMethod: smart.method };
+    }
+
+    if (category === "PENDUKUNG") {
+      // raw is already capped at PENDUKUNG_CHAR_CAP by extractPdfSmart
+      return { content: raw, extractionMethod: "pdf_text" };
+    }
+
+    // REFERENSI — already capped at 5k
+    return { content: `[Ekstraksi Ringkas]\n${raw}`, extractionMethod: smart.method };
+  }
+
+  // DOCX / DOC / TXT — text-only via mammoth/utf-8; never gated by size
+  const raw = await extractText(bytes, ext);
+
+  if (category === "KRITIS") {
+    if (CONTRACT_FILENAME_RE.test(fileName)) {
+      const structured = await structuredContractExtract(raw);
+      return { content: `[Ekstraksi Terstruktur]\n${structured}`, extractionMethod: "structured" };
+    }
+    return { content: raw, extractionMethod: "full" };
+  }
+
+  if (category === "PENDUKUNG") {
+    if (raw.length > PENDUKUNG_CHAR_CAP) {
+      return {
+        content:
+          raw.slice(0, PENDUKUNG_CHAR_CAP) +
+          `\n[Terpotong — ${PENDUKUNG_CHAR_CAP.toLocaleString("id-ID")} karakter pertama dari ${raw.length.toLocaleString("id-ID")}]`,
+        extractionMethod: "truncated_30k",
+      };
+    }
+    return { content: raw, extractionMethod: "full" };
+  }
+
+  // REFERENSI
+  return {
+    content: `[Ekstraksi Ringkas]\n${raw.slice(0, REFERENSI_CHAR_CAP)}`,
+    extractionMethod: "summary_5k",
+  };
 }
 
 export async function readMultipleFiles(

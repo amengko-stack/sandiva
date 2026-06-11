@@ -10,6 +10,44 @@ import {
 import type { WorkflowState, WorkflowAction, Stage } from "@/types";
 
 const SESSION_KEY = "sln_workflow_state";
+const LAST_MATTER_KEY = "sln_last_matter";
+const MATTER_PREFIX = "sln_matter_";
+
+export interface LastSessionRecord {
+  sessionId: string;
+  folderPath: string;
+  timestamp: string;
+}
+
+// localStorage entries are keyed by matterFolderPath so two matters open in
+// two tabs never collide; LAST_MATTER_KEY points at the most recent one.
+function matterKey(folderPath: string): string {
+  return MATTER_PREFIX + encodeURIComponent(folderPath);
+}
+
+export function loadLastSession(): LastSessionRecord | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const lastFolder = localStorage.getItem(LAST_MATTER_KEY);
+    if (!lastFolder) return null;
+    const raw = localStorage.getItem(matterKey(lastFolder));
+    if (!raw) return null;
+    return JSON.parse(raw) as LastSessionRecord;
+  } catch {
+    return null;
+  }
+}
+
+export function clearLastSession(folderPath?: string) {
+  if (typeof window === "undefined") return;
+  try {
+    const target = folderPath ?? localStorage.getItem(LAST_MATTER_KEY);
+    if (target) localStorage.removeItem(matterKey(target));
+    if (!folderPath || localStorage.getItem(LAST_MATTER_KEY) === folderPath) {
+      localStorage.removeItem(LAST_MATTER_KEY);
+    }
+  } catch {}
+}
 
 function newSessionId(): string {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -59,6 +97,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
 
     case "SET_FOLDER":
       return { ...state, folderPath: action.folderPath };
+
+    case "SET_SESSION_ID":
+      return { ...state, sessionId: action.id };
 
     case "SET_ALL_FILES":
       return { ...state, allFiles: action.files };
@@ -154,6 +195,18 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
     } catch {}
+    // Persist sessionId + folderPath to localStorage (survives browser close)
+    if (state.folderPath) {
+      try {
+        const record: LastSessionRecord = {
+          sessionId: state.sessionId,
+          folderPath: state.folderPath,
+          timestamp: new Date().toISOString(),
+        };
+        localStorage.setItem(matterKey(state.folderPath), JSON.stringify(record));
+        localStorage.setItem(LAST_MATTER_KEY, state.folderPath);
+      } catch {}
+    }
   }, [state]);
 
   function goToStage(stage: Stage) {

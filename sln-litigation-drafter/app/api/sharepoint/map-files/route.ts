@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType } from "@/types";
+import { MODELS } from "@/config/models";
 
 export const maxDuration = 60;
 
@@ -68,7 +69,7 @@ Kategorikan setiap file. Kembalikan array JSON.`;
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: MODELS.categorization,
       max_tokens: 4000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }],

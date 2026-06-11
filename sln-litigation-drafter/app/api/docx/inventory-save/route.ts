@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readBlobText } from "@/lib/blob";
 import { generateInventoryPdf } from "@/lib/inventory-pdf";
-import { uploadFileToSharePoint } from "@/lib/graph-client";
+import { writeMatterFile } from "@/lib/graph-client";
 import type { ExtractReport } from "@/types";
 
 export const maxDuration = 30;
@@ -32,10 +32,9 @@ export async function POST(req: NextRequest) {
     const pdfBuffer = await generateInventoryPdf(report);
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const filename = `document_inventory_${timestamp}.pdf`;
-    const remotePath = `${folderPath.replace(/\/$/, "")}/AI/`;
-
-    const webUrl = await uploadFileToSharePoint(remotePath, filename, pdfBuffer, "application/pdf");
+    // writeMatterFile resolves folderPath (a sharing link) to the matter's own
+    // drive and auto-creates the AI/ folder. The subfolder is part of the filename.
+    const webUrl = await writeMatterFile(folderPath, `AI/document_inventory_${timestamp}.pdf`, pdfBuffer, "application/pdf");
 
     return NextResponse.json({ ok: true, webUrl });
   } catch (e: unknown) {

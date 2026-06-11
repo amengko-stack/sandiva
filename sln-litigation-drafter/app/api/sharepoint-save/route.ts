@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildLitigationDocx } from "@/lib/docx-builder";
-import { uploadFileToSharePoint } from "@/lib/graph-client";
+import { writeMatterFile } from "@/lib/graph-client";
 
 export const maxDuration = 60;
 
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
 export async function POST(req: NextRequest) {
   try {
-    const { draftText, ref, docType, claimType, remotePath, filename } =
+    const { draftText, ref, docType, claimType, folderPath, filename } =
       await req.json();
 
-    if (!draftText || !remotePath || !filename) {
+    if (!draftText || !folderPath || !filename) {
       return NextResponse.json(
         { error: "Parameter tidak lengkap" },
         { status: 400 }
@@ -22,7 +24,9 @@ export async function POST(req: NextRequest) {
       claimType: claimType || "",
     });
 
-    const webUrl = await uploadFileToSharePoint(remotePath, filename, buffer);
+    // filename includes the "Drafts/" subfolder; writeMatterFile resolves the
+    // matter's drive from the sharing link and auto-creates Drafts/ if missing.
+    const webUrl = await writeMatterFile(folderPath, filename, buffer, DOCX_MIME);
 
     return NextResponse.json({ ok: true, webUrl });
   } catch (e: unknown) {

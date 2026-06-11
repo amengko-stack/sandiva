@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, CaseAnalysis, InterviewAnswer } from "@/types";
 
@@ -30,9 +30,10 @@ const FILE_ICON: Record<string, string> = { docx: "📄", doc: "📄", pdf: "�
 interface ExtractLogEntry {
   name: string;
   category: DocCategory;
-  status: "memproses" | "selesai" | "gagal";
+  status: "antri" | "memproses" | "selesai" | "cache" | "gagal" | "perlu_ocr";
   charCount?: number;
   reason?: string;
+  method?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -54,7 +55,7 @@ function fireAndForget(url: string, body: object) {
 type Stage2Resume =
   | { type: "file_list"; files: FileEntry[]; timestamp: string }
   | { type: "categorization"; docMap: DocMapEntry[]; selectedFileIds: string[]; timestamp: string }
-  | { type: "extraction_progress"; docMap: DocMapEntry[]; completedFiles: ExtractLogEntry[]; remainingFiles: FileEntry[]; processed: number; totalChars: number; timestamp: string };
+  | { type: "extraction_progress"; docMap: DocMapEntry[]; completedFiles: ExtractLogEntry[]; remainingFiles: FileEntry[]; perluOcrFiles?: FileEntry[]; ocrFolderLink?: string; processed: number; totalChars: number; timestamp: string };
 
 type PriorSession = {
   latestTimestamp: string;
@@ -105,11 +106,28 @@ export default function Stage2Files() {
   const [processedCount, setProcessedCount] = useState(0);
   const [skippedCount, setSkippedCount] = useState(0);
   const [stoppedEarly, setStoppedEarly] = useState(false);
+  const [cacheCount, setCacheCount] = useState(0);
+  // Files flagged PERLU_OCR (scanned, no text layer) — listed in 2D for external OCR + re-check
+  const [perluOcrFiles, setPerluOcrFiles] = useState<FileEntry[]>([]);
+  const [ocrFolderLink, setOcrFolderLink] = useState("");
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckMsg, setRecheckMsg] = useState<string | null>(null);
+  // OCR folder selection step (mirrors Stage 2A): null = not open
+  const [ocrListing, setOcrListing] = useState<FileEntry[] | null>(null);
+  const [ocrListLoading, setOcrListLoading] = useState(false);
+  const [ocrChecked, setOcrChecked] = useState<Set<string>>(new Set());
+  const [ocrCategories, setOcrCategories] = useState<Record<string, DocCategory>>({});
+  // Listing file id → matched scanned original's filename (for replacesName + tag)
+  const [ocrMatches, setOcrMatches] = useState<Record<string, string>>({});
+  const [batchInfo, setBatchInfo] = useState<{ batch: number; totalBatches: number } | null>(null);
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
 
   // 2D: inventory collapse/expand + SharePoint save status
   const [inventoryExpanded, setInventoryExpanded] = useState(true);
   const [spSaveStatus, setSpSaveStatus] = useState<"idle" | "pending" | "saved" | "failed">("idle");
   const [spSaveUrl, setSpSaveUrl] = useState<string | null>(null);
+  // Non-blocking SharePoint save warning (save failures never halt extraction)
+  const [spWarning, setSpWarning] = useState<string | null>(null);
 
   // Session continuity banner
   const [priorSession, setPriorSession] = useState<PriorSession | null>(null);
@@ -119,6 +137,54 @@ export default function Stage2Files() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   const saveProgressRef = useRef(false);
+
+  // Fire-and-forget SharePoint save. A failed save surfaces as a dismissible warning —
+  // it can never halt extraction since the extracted text is already in Vercel Blob.
+  function saveMatterFile(body: object, label: string) {
+    fetch("/api/sharepoint/save-matter-file", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((r) => {
+        if (!r.ok) {
+          r.json()
+            .then((data: { error?: string }) => {
+              console.warn(`[saveMatterFile] ${label} HTTP ${r.status}:`, data.error);
+              setSpWarning(`Gagal menyimpan ${label} ke SharePoint (${r.status}: ${data.error ?? "—"}) — data aman di sesi, ekstraksi lanjut`);
+            })
+            .catch(() => {
+              setSpWarning(`Gagal menyimpan ${label} ke SharePoint (HTTP ${r.status}) — data aman di sesi, ekstraksi lanjut`);
+            });
+        }
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[saveMatterFile] ${label} network error:`, msg);
+        setSpWarning(`Gagal menyimpan ${label} ke SharePoint — data aman di sesi, ekstraksi lanjut`);
+      });
+  }
+
+  // When arriving with folderPath already set (global resume), auto-check for
+  // prior Stage 2 artifacts so the detailed resume banner appears without
+  // re-entering the folder link.
+  const hasAutoChecked = useRef(false);
+  useEffect(() => {
+    if (hasAutoChecked.current) return;
+    hasAutoChecked.current = true;
+    if (!state.folderPath || state.docMap.length > 0 || substep !== "2A") return;
+    fetch("/api/sharepoint/check-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folderPath: state.folderPath }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.found && data.stage2Resume) setPriorSession(data as PriorSession);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── 2A: Load filenames only ─────────────────────────────────────────────────
   async function discoverFiles() {
@@ -140,11 +206,11 @@ export default function Stage2Files() {
       setCheckedIds(new Set((result.files as FileEntry[]).map((f) => f.id)));
 
       // Save file list to SharePoint AI folder
-      fireAndForget("/api/sharepoint/save-matter-file", {
+      saveMatterFile({
         folderPath: link,
         filename: `AI/file_list_${ts()}.json`,
         content: JSON.stringify({ files: result.files, timestamp: new Date().toISOString() }),
-      });
+      }, "daftar file");
 
       // Background session continuity check
       fetch("/api/sharepoint/check-session", {
@@ -249,7 +315,7 @@ export default function Stage2Files() {
 
     // Save confirmed categorization to SharePoint before starting SSE
     if (state.folderPath) {
-      fireAndForget("/api/sharepoint/save-matter-file", {
+      saveMatterFile({
         folderPath: state.folderPath,
         filename: `AI/categorization_${ts()}.json`,
         content: JSON.stringify({
@@ -257,7 +323,7 @@ export default function Stage2Files() {
           selectedFileIds: sorted.map((f) => f.id),
           timestamp: new Date().toISOString(),
         }),
-      });
+      }, "kategorisasi");
     }
 
     setStoppedEarly(false);
@@ -272,11 +338,12 @@ export default function Stage2Files() {
     priorProcessed: number,
     priorSkipped: number,
     priorTotalChars: number,
+    priorOcrFiles: FileEntry[] = [],
   ) {
     setLocalMap(savedDocMap);
     dispatch({ type: "SET_DOC_MAP", map: savedDocMap });
     setStoppedEarly(false);
-    await runExtraction(remainingFiles, savedDocMap, priorLog, priorProcessed, priorSkipped, priorTotalChars);
+    await runExtraction(remainingFiles, savedDocMap, priorLog, priorProcessed, priorSkipped, priorTotalChars, priorOcrFiles);
   }
 
   // Core SSE extraction loop
@@ -287,13 +354,14 @@ export default function Stage2Files() {
     priorProcessed: number,
     priorSkipped: number,
     priorTotalChars: number,
+    priorOcrFiles: FileEntry[] = [],
   ) {
     stopRequestedRef.current = false;
     saveProgressRef.current = false;
 
     const newEntries: ExtractLogEntry[] = filesToExtract.map((f) => {
       const entry = mapEntries.find((e) => e.fileId === f.id);
-      return { name: f.name, category: entry?.category ?? "REFERENSI", status: "memproses" };
+      return { name: f.name, category: entry?.category ?? "REFERENSI", status: "antri" };
     });
     let localLog: ExtractLogEntry[] = [...prependLog, ...newEntries];
     setExtractLog(localLog);
@@ -304,6 +372,13 @@ export default function Stage2Files() {
     setTotalChars(priorTotalChars);
     setProcessedCount(priorProcessed);
     setSkippedCount(priorSkipped);
+    setCacheCount(0);
+    setBatchInfo(null);
+    setEtaSeconds(null);
+    setRecheckMsg(null);
+    // Seed with OCR files already known from a prior (resumed) run; dedup by path below.
+    const ocrCollected: FileEntry[] = [...priorOcrFiles];
+    const extractionStartedAt = Date.now();
     setError("");
     setSubstep("2C");
 
@@ -320,6 +395,8 @@ export default function Stage2Files() {
           practiceAreaId: state.practiceAreaId,
           claimType: state.claimType,
           ref: state.ref,
+          // Resume: prior files already produced combined text — preserve it.
+          appendToExisting: prependLog.length > 0,
         }),
       });
       if (!res.ok) {
@@ -331,6 +408,7 @@ export default function Stage2Files() {
       const decoder = new TextDecoder();
       let buffer = "";
       let stopped = false;
+      let completedNormally = false; // set true only on ev.type === "complete"
 
       while (true) {
         if (stopped) break;
@@ -345,17 +423,35 @@ export default function Stage2Files() {
           if (!jsonStr) continue;
           try {
             const ev = JSON.parse(jsonStr) as Record<string, unknown>;
-            if (ev.type === "done" || ev.type === "error") {
+            if (ev.type === "start") {
+              const logIdx = (ev.index as number) + prependLog.length;
+              localLog = localLog.map((entry, i) =>
+                i === logIdx ? { ...entry, status: "memproses" } : entry
+              );
+              setExtractLog([...localLog]);
+            } else if (ev.type === "ocr_required") {
+              const logIdx = (ev.index as number) + prependLog.length;
+              localLog = localLog.map((entry, i) =>
+                i === logIdx ? { ...entry, status: "perlu_ocr" } : entry
+              );
+              setExtractLog([...localLog]);
+              const ocrFile = filesToExtract[ev.index as number];
+              if (ocrFile && !ocrCollected.some((f) => f.path === ocrFile.path)) ocrCollected.push(ocrFile);
+            } else if (ev.type === "done" || ev.type === "error") {
               const fileIdx = ev.index as number;
               const logIdx = fileIdx + prependLog.length;
               if (ev.type === "done") {
+                const fromCache = ev.fromCache === true;
                 localLog = localLog.map((entry, i) =>
-                  i === logIdx ? { ...entry, status: "selesai", charCount: ev.charCount as number } : entry
+                  i === logIdx
+                    ? { ...entry, status: fromCache ? "cache" : "selesai", charCount: ev.charCount as number, method: ev.method as string | undefined }
+                    : entry
                 );
                 runTotalChars += ev.charCount as number;
                 runProcessed += 1;
                 setTotalChars(runTotalChars);
                 setProcessedCount(runProcessed);
+                if (fromCache) setCacheCount((c) => c + 1);
               } else {
                 localLog = localLog.map((entry, i) =>
                   i === logIdx ? { ...entry, status: "gagal", reason: ev.reason as string } : entry
@@ -364,33 +460,71 @@ export default function Stage2Files() {
                 setSkippedCount(runSkipped);
               }
               setExtractLog([...localLog]);
+            } else if (ev.type === "batch_end") {
+              const nextIndex = ev.nextIndex as number;
+              setBatchInfo({ batch: ev.batch as number, totalBatches: ev.totalBatches as number });
+              // ETA from average completion time of files so far
+              const elapsed = Date.now() - extractionStartedAt;
+              const remainingFiles = filesToExtract.length - nextIndex;
+              if (nextIndex > 0 && remainingFiles > 0) {
+                setEtaSeconds(Math.round((elapsed / nextIndex) * remainingFiles / 1000));
+              } else {
+                setEtaSeconds(null);
+              }
 
+              // Stop is honored between batches — the current batch always completes
               if (stopRequestedRef.current) {
                 reader.cancel();
                 stopped = true;
                 if (saveProgressRef.current && state.folderPath) {
-                  const remaining = filesToExtract.slice(fileIdx + 1);
-                  fireAndForget("/api/sharepoint/save-matter-file", {
+                  const remaining = filesToExtract.slice(nextIndex);
+                  saveMatterFile({
                     folderPath: state.folderPath,
                     filename: `AI/extraction_progress_${ts()}.json`,
                     content: JSON.stringify({
                       sessionId: state.sessionId,
                       docMap: mapEntries,
-                      completedFiles: localLog.filter((e) => e.status !== "memproses"),
+                      completedFiles: localLog.filter((e) => e.status !== "memproses" && e.status !== "antri"),
                       remainingFiles: remaining,
+                      perluOcrFiles: ocrCollected,
+                      ocrFolderLink,
                       processed: runProcessed,
                       totalChars: runTotalChars,
                       timestamp: new Date().toISOString(),
                     }),
-                  });
+                  }, "progres ekstraksi");
                 }
                 setStoppedEarly(true);
                 setSubstep("2D");
                 break;
               }
             } else if (ev.type === "complete") {
+              completedNormally = true;
               setExtractDone(true);
+              setEtaSeconds(null);
               setSubstep("2D");
+
+              // When scanned files need OCR, persist a progress artifact (even on
+              // normal completion) so the PERLU_OCR list survives resume and
+              // "Periksa Ulang Dokumen" works across sessions.
+              if (ocrCollected.length > 0 && state.folderPath) {
+                saveMatterFile({
+                  folderPath: state.folderPath,
+                  filename: `AI/extraction_progress_${ts()}.json`,
+                  content: JSON.stringify({
+                    sessionId: state.sessionId,
+                    docMap: mapEntries,
+                    completedFiles: localLog.filter((e) => e.status !== "memproses" && e.status !== "antri"),
+                    remainingFiles: [],
+                    perluOcrFiles: ocrCollected,
+                    ocrFolderLink,
+                    processed: runProcessed,
+                    totalChars: runTotalChars,
+                    timestamp: new Date().toISOString(),
+                  }),
+                }, "progres ekstraksi");
+              }
+
               setSpSaveStatus("pending");
               fetch("/api/docx/inventory-save", {
                 method: "POST",
@@ -411,8 +545,165 @@ export default function Stage2Files() {
           }
         }
       }
+      // Surface any files that need external OCR (collected from ocr_required events).
+      setPerluOcrFiles(ocrCollected);
+
+      // Stream ended (done:true) without a complete event — server timed out or crashed.
+      // This path does NOT throw so the catch below is never reached; advance the UI manually.
+      if (!stopped && !completedNormally) {
+        setSubstep("2D");
+        setStoppedEarly(true);
+        setError("Koneksi terputus sebelum ekstraksi selesai — file yang sudah diproses tersimpan.");
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Terjadi kesalahan saat ekstraksi");
+      setSubstep("2D");
+      setStoppedEarly(true);
+    }
+  }
+
+  // Normalize a filename for matching: strip extension, lowercase, strip trailing _ocr.
+  function normalizeOcrName(name: string): string {
+    return name.replace(/\.[^.]+$/, "").toLowerCase().replace(/_ocr$/, "");
+  }
+
+  // Step 1 — list the OCR folder (recursively) and open the selection checklist.
+  async function loadOcrFolder() {
+    if (rechecking || ocrListLoading || !ocrFolderLink.trim()) return;
+    setOcrListLoading(true);
+    setRecheckMsg(null);
+    try {
+      const res = await fetch("/api/sharepoint/list-files", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderPath: ocrFolderLink.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal membaca folder OCR");
+      const listing = (data.files ?? []) as FileEntry[];
+      if (listing.length === 0) {
+        setRecheckMsg("Tidak ada dokumen (docx/pdf/doc/txt) ditemukan di folder OCR ini.");
+        return;
+      }
+
+      // Build normalized PERLU_OCR name → { original, category } map.
+      const origByNorm = new Map<string, { original: FileEntry; category: DocCategory }>();
+      for (const original of perluOcrFiles) {
+        const category = localMap.find((e) => e.fileId === original.id)?.category ?? "REFERENSI";
+        origByNorm.set(normalizeOcrName(original.name), { original, category });
+      }
+
+      const checked = new Set<string>();
+      const categories: Record<string, DocCategory> = {};
+      const matches: Record<string, string> = {};
+      for (const f of listing) {
+        const m = origByNorm.get(normalizeOcrName(f.name));
+        if (m) {
+          checked.add(f.id);
+          categories[f.id] = m.category;
+          matches[f.id] = m.original.name;
+        } else {
+          categories[f.id] = "REFERENSI";
+        }
+      }
+
+      setOcrChecked(checked);
+      setOcrCategories(categories);
+      setOcrMatches(matches);
+      setOcrListing(listing);
+    } catch (e: unknown) {
+      setRecheckMsg(e instanceof Error ? e.message : "Terjadi kesalahan saat membaca folder OCR");
+    } finally {
+      setOcrListLoading(false);
+    }
+  }
+
+  function toggleOcrCheck(id: string) {
+    setOcrChecked((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // Step 2 — extract only the confirmed-selected OCR files.
+  async function extractSelectedOcr() {
+    if (!ocrListing || rechecking) return;
+    const selected = ocrListing.filter((f) => ocrChecked.has(f.id));
+    if (selected.length === 0) return;
+    setRechecking(true);
+    setRecheckMsg(null);
+    try {
+      const payload = selected.map((f) => ({
+        name: f.name,
+        path: f.path,
+        category: ocrCategories[f.id] ?? "REFERENSI",
+        replacesName: ocrMatches[f.id], // undefined when newly added
+      }));
+      const res = await fetch("/api/sharepoint/recheck-ocr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: state.sessionId, files: payload }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Gagal mengekstrak dokumen OCR");
+
+      const results = (data.results ?? []) as {
+        name: string; replacesName?: string; status: string; charCount?: number; method?: string;
+      }[];
+
+      const succeeded = results.filter((r) => r.status === "selesai");
+      const clearedNames = new Set(succeeded.filter((r) => r.replacesName).map((r) => r.replacesName!));
+      const addedNew = succeeded.filter((r) => !r.replacesName);
+
+      // Clear matched PERLU_OCR slots and flip their inventory rows to selesai.
+      if (clearedNames.size > 0) {
+        setExtractLog((log) =>
+          log.map((entry) => {
+            if (entry.status === "perlu_ocr" && clearedNames.has(entry.name)) {
+              const r = succeeded.find((s) => s.replacesName === entry.name);
+              return { ...entry, status: "selesai" as const, charCount: r?.charCount, method: r?.method };
+            }
+            return entry;
+          })
+        );
+        setPerluOcrFiles((files) => files.filter((f) => !clearedNames.has(f.name)));
+      }
+
+      // Append newly-added (unmatched) documents to the inventory log.
+      if (addedNew.length > 0) {
+        const newEntries: ExtractLogEntry[] = addedNew.map((r) => {
+          const listed = selected.find((f) => f.name === r.name);
+          return {
+            name: r.name,
+            category: (listed && ocrCategories[listed.id]) ?? "REFERENSI",
+            status: "selesai",
+            charCount: r.charCount,
+            method: r.method,
+          };
+        });
+        setExtractLog((log) => [...log, ...newEntries]);
+      }
+
+      const addedChars = succeeded.reduce((s, r) => s + (r.charCount ?? 0), 0);
+      if (succeeded.length > 0) {
+        setProcessedCount((c) => c + succeeded.length);
+        setTotalChars((c) => c + addedChars);
+      }
+
+      const ocrFailed = results.filter((r) => r.status === "ocr_gagal").length;
+      const failed = results.filter((r) => r.status === "gagal").length;
+      const parts: string[] = [];
+      if (clearedNames.size > 0) parts.push(`${clearedNames.size} dokumen pindaian berhasil diganti`);
+      if (addedNew.length > 0) parts.push(`${addedNew.length} dokumen baru ditambahkan`);
+      if (ocrFailed > 0) parts.push(`${ocrFailed} masih tanpa lapisan teks (OCR gagal)`);
+      if (failed > 0) parts.push(`${failed} gagal diekstrak`);
+      setRecheckMsg(parts.length > 0 ? parts.join(", ") + "." : "Tidak ada hasil.");
+      setOcrListing(null);
+    } catch (e: unknown) {
+      setRecheckMsg(e instanceof Error ? e.message : "Terjadi kesalahan saat mengekstrak dokumen OCR");
+    } finally {
+      setRechecking(false);
     }
   }
 
@@ -433,6 +724,13 @@ export default function Stage2Files() {
       {error && (
         <div style={{ padding: "10px 14px", background: "rgba(192,57,43,0.1)", border: "1px solid var(--error)", borderRadius: 4, color: "var(--error)", fontSize: 13, marginBottom: 16 }}>
           {error}
+        </div>
+      )}
+
+      {spWarning && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "rgba(230,126,34,0.1)", border: "1px solid #e67e22", borderRadius: 4, fontSize: 13, color: "#b7550a", marginBottom: 12 }}>
+          <span style={{ flex: 1 }}>⚠ {spWarning}</span>
+          <button onClick={() => setSpWarning(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#b7550a", fontSize: 16, lineHeight: 1 }}>×</button>
         </div>
       )}
 
@@ -521,12 +819,16 @@ export default function Stage2Files() {
                 setProcessedCount(resume.processed);
                 setTotalChars(resume.totalChars);
                 setSkippedCount(completedLog.filter((e) => e.status === "gagal").length);
+                setPerluOcrFiles(resume.perluOcrFiles ?? []);
+                setOcrFolderLink(resume.ocrFolderLink ?? "");
                 setStoppedEarly(true);
                 setSubstep("2D");
                 setPriorSessionDismissed(true);
               }}
               onContinueExtraction={(resume) => {
                 setPriorSessionDismissed(true);
+                setPerluOcrFiles(resume.perluOcrFiles ?? []);
+                setOcrFolderLink(resume.ocrFolderLink ?? "");
                 startExtractionFromResume(
                   resume.remainingFiles,
                   resume.docMap,
@@ -534,6 +836,7 @@ export default function Stage2Files() {
                   resume.processed,
                   resume.completedFiles.filter((e) => e.status === "gagal").length,
                   resume.totalChars,
+                  resume.perluOcrFiles ?? [],
                 );
               }}
             />
@@ -700,15 +1003,16 @@ export default function Stage2Files() {
       {/* ── 2C: Extraction Progress ───────────────────────────────────────────── */}
       {substep === "2C" && (
         <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
             <p style={{ color: "var(--text-muted)", fontSize: 14, margin: 0 }}>
-              Mengekstrak konten dokumen. File KRITIS diproses terlebih dahulu.
+              Mengekstrak konten dokumen (3 file paralel). File KRITIS diproses terlebih dahulu.
             </p>
             {!extractDone && (
               <div style={{ display: "flex", gap: 8 }}>
                 <button
                   onClick={() => { stopRequestedRef.current = true; }}
                   style={{ padding: "6px 14px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 3, color: "var(--text-muted)", fontSize: 12, cursor: "pointer" }}
+                  title="Batch yang sedang berjalan akan diselesaikan dahulu"
                 >
                   Hentikan Ekstraksi
                 </button>
@@ -721,20 +1025,49 @@ export default function Stage2Files() {
               </div>
             )}
           </div>
+
+          {/* Progress meta: batch, ETA, cache hits */}
+          <div style={{ display: "flex", gap: 16, marginBottom: 12, fontSize: 12, color: "var(--text-muted)", flexWrap: "wrap" }}>
+            {batchInfo && (
+              <span>Batch <strong style={{ color: "var(--text-primary)" }}>{batchInfo.batch}</strong> dari {batchInfo.totalBatches}</span>
+            )}
+            {etaSeconds !== null && (
+              <span>≈ {etaSeconds >= 60 ? `${Math.floor(etaSeconds / 60)}m ${etaSeconds % 60}s` : `${etaSeconds}s`} tersisa</span>
+            )}
+            {cacheCount > 0 && (
+              <span style={{ color: "var(--accent-blue)" }}>{cacheCount} dari {extractLog.length} file dari cache</span>
+            )}
+          </div>
+
           <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
             {extractLog.map((entry, i) => {
               const meta = CATEGORY_META[entry.category];
+              const rowBg =
+                entry.status === "gagal" ? "rgba(192,57,43,0.04)"
+                : entry.status === "selesai" ? "rgba(39,174,96,0.04)"
+                : entry.status === "cache" ? "rgba(91,155,213,0.06)"
+                : entry.status === "perlu_ocr" ? "rgba(230,126,34,0.06)"
+                : "transparent";
               return (
                 <div
                   key={i}
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.04)" : "transparent" }}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: rowBg, opacity: entry.status === "antri" ? 0.55 : 1 }}
                 >
-                  <span style={{ fontSize: 13, width: 20, textAlign: "center", flexShrink: 0 }}>
-                    {entry.status === "selesai" ? "✓" : entry.status === "gagal" ? "✗" : <SpinnerInline />}
+                  <span style={{ fontSize: 13, width: 20, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "cache" ? "var(--accent-blue)" : entry.status === "gagal" ? "var(--error)" : entry.status === "perlu_ocr" ? "#e67e22" : "var(--text-muted)" }}>
+                    {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : entry.status === "perlu_ocr" ? "⚠" : entry.status === "antri" ? "·" : <SpinnerInline />}
                   </span>
                   <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
                   <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
-                  {entry.status === "selesai" && entry.charCount !== undefined && (
+                  {entry.status === "antri" && (
+                    <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>antri</span>
+                  )}
+                  {entry.status === "perlu_ocr" && (
+                    <span style={{ fontSize: 11, color: "#b7550a", flexShrink: 0 }}>perlu OCR</span>
+                  )}
+                  {entry.status === "cache" && (
+                    <span style={{ fontSize: 11, color: "var(--accent-blue)", flexShrink: 0 }}>dari cache</span>
+                  )}
+                  {(entry.status === "selesai" || entry.status === "cache") && entry.charCount !== undefined && (
                     <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{(entry.charCount / 1000).toFixed(1)}k chars</span>
                   )}
                   {entry.status === "gagal" && entry.reason && (
@@ -767,6 +1100,7 @@ export default function Stage2Files() {
 
           <div style={{ display: "flex", gap: 24, marginBottom: 20, flexWrap: "wrap" }}>
             <Stat label="File diproses" value={processedCount} />
+            {cacheCount > 0 && <Stat label="Dari cache" value={cacheCount} />}
             <Stat label="File gagal" value={skippedCount} />
             <Stat label="Total karakter" value={`${(totalChars / 1000).toFixed(1)}k`} />
           </div>
@@ -785,11 +1119,132 @@ export default function Stage2Files() {
             </div>
           )}
 
+          {/* OCR-required section — scanned PDFs with no text layer */}
+          {perluOcrFiles.length > 0 && (
+            <div style={{ padding: "14px 16px", background: "rgba(230,126,34,0.06)", border: "1px solid var(--accent-gold)", borderRadius: 4, marginBottom: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#b7550a", marginBottom: 8 }}>
+                Dokumen pindaian — perlu OCR sebelum dapat diekstrak
+              </div>
+              <ul style={{ margin: "0 0 10px", paddingLeft: 20, fontSize: 13, color: "var(--text-primary)" }}>
+                {perluOcrFiles.map((f) => (
+                  <li key={f.id} style={{ marginBottom: 2 }}>{f.name}</li>
+                ))}
+              </ul>
+              <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 12 }}>
+                Jalankan OCR pada file di atas (Adobe Acrobat → Recognize Text, atau simpan ulang via SharePoint),
+                tempatkan versi OCR di folder terpisah (boleh subfolder <strong>OCR</strong> di dalam folder perkara,
+                atau folder lain), lalu paste sharing link folder tersebut di bawah dan klik &ldquo;Periksa Ulang Dokumen&rdquo;.
+                Nama file boleh sama persis atau dengan sufiks <em>_OCR</em>.
+              </p>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+                  Sharing link folder OCR
+                </label>
+                <input
+                  type="text"
+                  value={ocrFolderLink}
+                  onChange={(e) => setOcrFolderLink(e.target.value)}
+                  placeholder="https://sandiva.sharepoint.com/:f:/s/SiteName/… (folder berisi versi OCR)"
+                  style={{ width: "100%", fontFamily: "monospace", fontSize: 12, padding: "7px 10px", borderRadius: 4, border: "1px solid var(--border-color)", background: "var(--bg-surface)", color: "var(--text-primary)", boxSizing: "border-box" }}
+                  disabled={rechecking}
+                />
+              </div>
+              {ocrListing === null ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <button
+                    onClick={loadOcrFolder}
+                    disabled={ocrListLoading || !ocrFolderLink.trim()}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: ocrListLoading || !ocrFolderLink.trim() ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: ocrListLoading || !ocrFolderLink.trim() ? "not-allowed" : "pointer" }}
+                  >
+                    {ocrListLoading && <SpinnerInline />}
+                    {ocrListLoading ? "Membaca folder..." : "Periksa Ulang Dokumen"}
+                  </button>
+                  {recheckMsg && (
+                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{recheckMsg}</span>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, color: ocrChecked.size === 0 ? "var(--error)" : "var(--text-muted)" }}>
+                      {ocrChecked.size} dari {ocrListing.length} file dipilih
+                    </span>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setOcrChecked(new Set(ocrListing!.map((f) => f.id)))} style={{ fontSize: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer" }}>Pilih Semua</button>
+                      <button onClick={() => setOcrChecked(new Set())} style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>Batalkan Semua</button>
+                    </div>
+                  </div>
+                  <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 300, overflowY: "auto", marginBottom: 12, background: "var(--bg-surface)" }}>
+                    {ocrListing.map((f, i) => {
+                      const checked = ocrChecked.has(f.id);
+                      const matchedName = ocrMatches[f.id];
+                      const cat = ocrCategories[f.id] ?? "REFERENSI";
+                      const catMeta = CATEGORY_META[cat];
+                      return (
+                        <div
+                          key={f.id}
+                          onClick={() => toggleOcrCheck(f.id)}
+                          style={{
+                            display: "flex", gap: 10, padding: "9px 12px",
+                            borderBottom: i < ocrListing!.length - 1 ? "1px solid var(--border-color)" : "none",
+                            alignItems: "center", cursor: "pointer",
+                            background: checked ? "rgba(91,155,213,0.05)" : "transparent",
+                            opacity: checked ? 1 : 0.5,
+                            userSelect: "none",
+                          }}
+                        >
+                          <input type="checkbox" checked={checked} onChange={() => {}} style={{ flexShrink: 0, pointerEvents: "none" }} />
+                          <span style={{ fontSize: 14, flexShrink: 0 }}>{FILE_ICON[f.type] || "📎"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, color: checked ? "var(--text-primary)" : "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: checked ? "none" : "line-through" }}>
+                              {f.name}
+                            </div>
+                            {matchedName && (
+                              <div style={{ fontSize: 10, color: "#1d7d4d", marginTop: 1 }}>✓ cocok dengan dokumen pindaian</div>
+                            )}
+                          </div>
+                          <select
+                            value={cat}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setOcrCategories((prev) => ({ ...prev, [f.id]: e.target.value as DocCategory }))}
+                            style={{ fontSize: 11, fontWeight: 700, color: catMeta.color, background: catMeta.bg, border: `1px solid ${catMeta.color}55`, borderRadius: 3, padding: "2px 6px", cursor: "pointer", flexShrink: 0, appearance: "none", WebkitAppearance: "none" }}
+                          >
+                            {CATEGORY_CYCLE.map((c) => (
+                              <option key={c} value={c} style={{ color: CATEGORY_META[c].color, background: "var(--bg-surface, #1e2a3a)", fontWeight: 700 }}>{c}</option>
+                            ))}
+                          </select>
+                          <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{f.size}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <button
+                      onClick={extractSelectedOcr}
+                      disabled={rechecking || ocrChecked.size === 0}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 16px", background: rechecking || ocrChecked.size === 0 ? "var(--border-color)" : "var(--accent-gold)", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: rechecking || ocrChecked.size === 0 ? "not-allowed" : "pointer" }}
+                    >
+                      {rechecking && <SpinnerInline />}
+                      {rechecking ? "Mengekstrak..." : `Ekstrak Terpilih (${ocrChecked.size})`}
+                    </button>
+                    <button
+                      onClick={() => { setOcrListing(null); setRecheckMsg(null); }}
+                      disabled={rechecking}
+                      style={{ padding: "8px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: rechecking ? "not-allowed" : "pointer" }}
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Inventory toggle + table */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               {CATEGORY_CYCLE.map((cat) => {
-                const count = extractLog.filter((e) => e.category === cat && e.status === "selesai").length;
+                const count = extractLog.filter((e) => e.category === cat && (e.status === "selesai" || e.status === "cache")).length;
                 if (count === 0) return null;
                 const meta = CATEGORY_META[cat];
                 return (
@@ -810,18 +1265,20 @@ export default function Stage2Files() {
           {inventoryExpanded && (
             <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
               {extractLog.map((entry, i) => {
+                // PERLU_OCR files live in the dedicated OCR section above, not the inventory.
+                if (entry.status === "perlu_ocr") return null;
                 const meta = CATEGORY_META[entry.category];
                 return (
                   <div
                     key={i}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.02)" : "transparent" }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < extractLog.length - 1 ? "1px solid var(--border-color)" : "none", background: entry.status === "gagal" ? "rgba(192,57,43,0.04)" : entry.status === "selesai" ? "rgba(39,174,96,0.02)" : entry.status === "cache" ? "rgba(91,155,213,0.04)" : "transparent" }}
                   >
-                    <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "gagal" ? "var(--error)" : "var(--text-muted)" }}>
-                      {entry.status === "selesai" ? "✓" : entry.status === "gagal" ? "✗" : "·"}
+                    <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0, color: entry.status === "selesai" ? "var(--success)" : entry.status === "cache" ? "var(--accent-blue)" : entry.status === "gagal" ? "var(--error)" : "var(--text-muted)" }}>
+                      {entry.status === "selesai" ? "✓" : entry.status === "cache" ? "⚡" : entry.status === "gagal" ? "✗" : "·"}
                     </span>
                     <span style={{ flex: 1, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
                     <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
-                    {entry.status === "selesai" && entry.charCount !== undefined && (
+                    {(entry.status === "selesai" || entry.status === "cache") && entry.charCount !== undefined && (
                       <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0, minWidth: 50, textAlign: "right" }}>{(entry.charCount / 1000).toFixed(1)}k</span>
                     )}
                     {entry.status === "gagal" && entry.reason && (
@@ -879,6 +1336,8 @@ type ExtractionProgressResume = {
   docMap: DocMapEntry[];
   completedFiles: ExtractLogEntry[];
   remainingFiles: FileEntry[];
+  perluOcrFiles?: FileEntry[];
+  ocrFolderLink?: string;
   processed: number;
   totalChars: number;
   timestamp: string;
@@ -952,7 +1411,7 @@ function Stage2ResumeBanner({
 
   // extraction_progress
   const ep = resume as ExtractionProgressResume;
-  const completedCount = ep.completedFiles.filter((e) => e.status === "selesai").length;
+  const completedCount = ep.completedFiles.filter((e) => e.status === "selesai" || e.status === "cache").length;
   const totalCount = completedCount + ep.remainingFiles.length;
   return (
     <div style={bannerStyle}>

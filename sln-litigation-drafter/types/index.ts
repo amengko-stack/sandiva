@@ -65,7 +65,7 @@ export interface ExtractReportFile {
   category: DocCategory;
   documentType: DocDocumentType;
   extractionMode: string;
-  status: "selesai" | "gagal";
+  status: "selesai" | "gagal" | "perlu_ocr";
   charCount?: number;
   reason?: string;
 }
@@ -82,6 +82,8 @@ export interface ExtractReport {
   totalChars: number;
   processed: number;
   skipped: number;
+  cacheHits?: number;
+  ocrRequired?: number;
 }
 
 export interface InterviewAnswer {
@@ -134,6 +136,7 @@ export type WorkflowAction =
       pihak: string | null;
     }
   | { type: "SET_FOLDER"; folderPath: string }
+  | { type: "SET_SESSION_ID"; id: string }
   | { type: "SET_ALL_FILES"; files: FileEntry[] }
   | { type: "SET_DOC_MAP"; map: DocMapEntry[] }
   | { type: "TOGGLE_FILE"; id: string }

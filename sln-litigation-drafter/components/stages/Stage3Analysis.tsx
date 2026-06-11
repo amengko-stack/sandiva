@@ -48,11 +48,21 @@ export default function Stage3Analysis() {
 
     if (state.caseAnalysis) {
       setKronoText(state.caseAnalysis.kronologi || "");
-      // Resume at the furthest completed substep
+      // One-shot substep hint from the global resume banner takes priority
+      let hint: string | null = null;
+      try {
+        hint = sessionStorage.getItem("sln_resume_substep_3");
+        if (hint) sessionStorage.removeItem("sln_resume_substep_3");
+      } catch {}
+      // Resume at the furthest completed substep:
+      // interview answered → 3C, kronologi confirmed → 3B, analysis only → 3A
       if (state.strategicAssessment) {
         setAssessmentText(state.strategicAssessment);
         setSubstep("3C");
-      } else if (state.interviewAnswers.length > 0) {
+      } else if (state.interviewAnswers.length > 0 || hint === "3C") {
+        setSubstep("3C");
+        loadStrategicAssessment(state.interviewAnswers);
+      } else if (hint === "3B") {
         setSubstep("3B");
         loadInterviewQuestions();
       } else {
