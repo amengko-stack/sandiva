@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     console.log(
       `[draft] budget: ` +
       comp("conventions", memory.conventions.length) + " " +
-      memory.styleExamples.map((e, i) => comp(`style${i + 1}[${e.label}|${e.type}/${e.claimType}]`, e.content.length)).join(" ") + " " +
+      memory.styleExamples.map((e, i) => comp(`style${i + 1}[${e.label}|${e.type}/${e.claimType}|source=${e.source ?? "approved"}]`, e.content.length)).join(" ") + " " +
       comp("kronologi", caseAnalysis.kronologi?.length ?? 0) + " " +
       comp("analysisOther", analysisText.length - (caseAnalysis.kronologi?.length ?? 0)) + " " +
       comp("interview", interviewChars) + " " +

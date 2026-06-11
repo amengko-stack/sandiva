@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { CLAIM_TYPES } from "@/config/documentTypes";
 
 type SetupStep = 1 | 2 | 3 | 4;
 
 interface DocSample {
   path: string;
+  claimType: string;
   analysis: string;
   refinements: string;
+  storedChars: number;
   loading: boolean;
 }
 
@@ -28,7 +31,7 @@ const DOC_TYPES: { key: string; label: string; group: string; placeholder?: stri
 type Samples = Record<string, DocSample>;
 
 function emptySample(): DocSample {
-  return { path: "", analysis: "", refinements: "", loading: false };
+  return { path: "", claimType: "", analysis: "", refinements: "", storedChars: 0, loading: false };
 }
 
 export default function SetupPage() {
@@ -56,11 +59,11 @@ export default function SetupPage() {
       const res = await fetch("/api/setup/analyze-sample", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sharePointPath: path, docType: key }),
+        body: JSON.stringify({ sharePointPath: path, docType: key, claimType: samples[key].claimType }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
-      setSample(key, { analysis: result.analysis, loading: false });
+      setSample(key, { analysis: result.analysis, storedChars: result.storedChars ?? 0, loading: false });
     } catch (e: unknown) {
       setSample(key, { loading: false });
       setGlobalError(e instanceof Error ? e.message : "Terjadi kesalahan");
@@ -175,7 +178,9 @@ export default function SetupPage() {
                       <div style={{ padding: "10px 16px", background: "var(--bg-sidebar)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{docType.label}</span>
                         {s.analysis && (
-                          <span style={{ fontSize: 11, color: "var(--success)", fontWeight: 600 }}>✓ Teranalisis</span>
+                          <span style={{ fontSize: 11, color: "var(--success)", fontWeight: 600 }}>
+                            ✓ Tersimpan sebagai sampel firma{s.storedChars > 0 ? ` (${s.storedChars.toLocaleString("id-ID")} karakter)` : ""}
+                          </span>
                         )}
                       </div>
                       <div style={{ padding: "12px 16px", background: "var(--bg-primary)" }}>
@@ -187,6 +192,21 @@ export default function SetupPage() {
                             placeholder="https://sandiva.sharepoint.com/:w:/s/..."
                             style={{ flex: 1, fontSize: 12 }}
                           />
+                          <select
+                            value={s.claimType}
+                            onChange={(e) => setSample(docType.key, { claimType: e.target.value })}
+                            title="Jenis gugatan/klaim sampel ini — dipakai untuk pencocokan saat drafting"
+                            style={{ fontSize: 12, maxWidth: 200, background: "var(--bg-surface)", color: "var(--text-primary)", border: "1px solid var(--border-color)", borderRadius: 4 }}
+                          >
+                            <option value="">Jenis klaim: umum</option>
+                            {CLAIM_TYPES.map((forum) => (
+                              <optgroup key={forum.id} label={forum.label}>
+                                {forum.types.map((t) => (
+                                  <option key={t.id} value={t.id}>{t.label}</option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
                           <button
                             onClick={() => analyzeSample(docType.key)}
                             disabled={s.loading || !s.path.trim()}

@@ -105,7 +105,7 @@ export async function loadDraftMemory(
   const styleIndexRaw = await readBlobText("style_examples/index.json");
   if (!styleIndexRaw) return base;
 
-  let index: { path: string; type: string; claimType: string; label: string }[] = [];
+  let index: { path: string; type: string; claimType: string; label: string; source?: "setup" | "approved" }[] = [];
   try {
     index = JSON.parse(styleIndexRaw);
   } catch (e) {
@@ -114,11 +114,16 @@ export async function loadDraftMemory(
   }
 
   // Rank: exact docType+claimType match first, then docType-only, then the
-  // rest — newest first within each tier (index is append-ordered).
-  const tier = (e: { type: string; claimType: string }) =>
-    e.type === docTypeId && (claimType == null || e.claimType === claimType) ? 0 :
-    e.type === docTypeId ? 1 : 2;
-  const ranked = [...index].reverse().sort((a, b) => tier(a) - tier(b)).slice(0, 3);
+  // rest — within each match tier, SETUP samples (real firm documents)
+  // outrank Stage-5-approved AI drafts; newest first within each rank.
+  const rank = (e: { type: string; claimType: string; source?: string }) => {
+    const matchTier =
+      e.type === docTypeId && (claimType == null || e.claimType === claimType) ? 0 :
+      e.type === docTypeId ? 1 : 2;
+    const sourceTier = e.source === "setup" ? 0 : 1;
+    return matchTier * 2 + sourceTier;
+  };
+  const ranked = [...index].reverse().sort((a, b) => rank(a) - rank(b)).slice(0, 3);
 
   const loaded = await Promise.all(
     ranked.map(async (entry, i) => {
@@ -130,6 +135,7 @@ export async function loadDraftMemory(
         claimType: entry.claimType,
         label: entry.label,
         content: content.slice(0, cap),
+        source: entry.source ?? "approved",
       } as StyleExample;
     })
   );
@@ -173,7 +179,7 @@ export async function saveApprovedDraft(
   await writeBlobText(`style_examples/${filename}`, draftText);
 
   const indexRaw = await readBlobText("style_examples/index.json");
-  let index: { path: string; type: string; claimType: string; label: string }[] = [];
+  let index: { path: string; type: string; claimType: string; label: string; source?: "setup" | "approved" }[] = [];
   if (indexRaw) {
     try {
       index = JSON.parse(indexRaw);
@@ -186,8 +192,14 @@ export async function saveApprovedDraft(
     type: meta.docType,
     claimType: meta.claimType,
     label: `${meta.ref} — ${timestamp}`,
+    source: "approved",
   });
-  if (index.length > 20) index = index.slice(-20);
+  // Rolling cap applies to approved AI drafts only — setup samples are the
+  // firm's real documents and must never be evicted by draft approvals.
+  const setupEntries = index.filter((e) => e.source === "setup");
+  let approvedEntries = index.filter((e) => e.source !== "setup");
+  if (approvedEntries.length > 20) approvedEntries = approvedEntries.slice(-20);
+  index = [...setupEntries, ...approvedEntries];
   await writeBlobText("style_examples/index.json", JSON.stringify(index, null, 2));
 
   const patternsRaw = await readBlobText("case_patterns.json");

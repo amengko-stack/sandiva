@@ -58,6 +58,9 @@ export interface StyleExample {
   claimType: string;
   label: string;
   content: string;
+  // "setup" = real firm document provided during setup; "approved" =
+  // AI draft approved in Stage 5. Setup samples outrank approved drafts.
+  source?: "setup" | "approved";
 }
 
 export interface ExtractReportFile {
