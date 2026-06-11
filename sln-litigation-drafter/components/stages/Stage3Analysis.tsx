@@ -88,8 +88,17 @@ export default function Stage3Analysis() {
           claimType: state.claimType,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal menganalisis perkara");
+      // Read as text first: a platform error (timeout/crash) returns a plain-text
+      // body that res.json() would obscure as "Unexpected token". Log it whole.
+      const bodyText = await res.text();
+      console.log(`[stage3] /api/analyze status=${res.status} bodyLen=${bodyText.length} body=${bodyText.slice(0, 2000)}`);
+      let data: { analysis?: CaseAnalysis; error?: string };
+      try {
+        data = JSON.parse(bodyText);
+      } catch {
+        throw new Error(`Server mengembalikan respons non-JSON (status ${res.status}): ${bodyText.slice(0, 300)}`);
+      }
+      if (!res.ok || !data.analysis) throw new Error(data.error || "Gagal menganalisis perkara");
       dispatch({ type: "SET_CASE_ANALYSIS", analysis: data.analysis });
       setKronoText(data.analysis.kronologi || "");
 
