@@ -112,6 +112,14 @@ export interface DraftMeta {
   folderPath: string;
 }
 
+export interface DraftVersion {
+  version: number;
+  text: string;
+  critiqueItems: string[];
+  instructions: string;
+  timestamp: string;
+}
+
 export interface WorkflowState {
   stage: Stage;
   sessionId: string;
@@ -130,8 +138,10 @@ export interface WorkflowState {
   draftText: string;
   isDraftStreaming: boolean;
   draftComplete: boolean;
-  critiqueText: string;
+  critiqueItems: string[];
   isCritiqueLoading: boolean;
+  draftVersions: DraftVersion[];
+  draftVersion: number;
   ref: string;
   savedToSharePoint: boolean;
   approvedForMemory: boolean;
@@ -163,8 +173,10 @@ export type WorkflowAction =
   | { type: "RESET_DRAFT" }
   | { type: "SET_DRAFT_STREAMING"; value: boolean }
   | { type: "SET_DRAFT_COMPLETE"; value: boolean }
-  | { type: "SET_CRITIQUE"; text: string }
+  | { type: "SET_CRITIQUE"; items: string[] }
   | { type: "SET_CRITIQUE_LOADING"; value: boolean }
+  | { type: "ADD_DRAFT_VERSION"; version: DraftVersion }
+  | { type: "SET_DRAFT_VERSION"; version: number }
   | { type: "SET_REF"; ref: string }
   | { type: "SET_SAVED_SHAREPOINT"; value: boolean }
   | { type: "SET_APPROVED_MEMORY"; value: boolean }

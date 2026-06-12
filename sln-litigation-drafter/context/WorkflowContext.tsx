@@ -73,8 +73,10 @@ const initialState: WorkflowState = {
   draftText: "",
   isDraftStreaming: false,
   draftComplete: false,
-  critiqueText: "",
+  critiqueItems: [],
   isCritiqueLoading: false,
+  draftVersions: [],
+  draftVersion: 0,
   ref: "",
   savedToSharePoint: false,
   approvedForMemory: false,
@@ -145,7 +147,7 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       return { ...state, draftText: state.draftText + action.chunk };
 
     case "RESET_DRAFT":
-      return { ...state, draftText: "", draftComplete: false, critiqueText: "" };
+      return { ...state, draftText: "", draftComplete: false, critiqueItems: [], draftVersions: [], draftVersion: 0 };
 
     case "SET_DRAFT_STREAMING":
       return { ...state, isDraftStreaming: action.value };
@@ -154,10 +156,16 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       return { ...state, draftComplete: action.value };
 
     case "SET_CRITIQUE":
-      return { ...state, critiqueText: action.text };
+      return { ...state, critiqueItems: action.items };
 
     case "SET_CRITIQUE_LOADING":
       return { ...state, isCritiqueLoading: action.value };
+
+    case "ADD_DRAFT_VERSION":
+      return { ...state, draftVersions: [...state.draftVersions, action.version] };
+
+    case "SET_DRAFT_VERSION":
+      return { ...state, draftVersion: action.version };
 
     case "SET_REF":
       return { ...state, ref: action.ref };
