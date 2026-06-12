@@ -236,7 +236,7 @@ Panduan per field:
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await client.messages.create({
     model: MODELS.kronologi,
-    max_tokens: 8192,
+    max_tokens: 32000,
     system: ANALYSIS_SYSTEM,
     messages: [{ role: "user", content: prompt }],
   });
