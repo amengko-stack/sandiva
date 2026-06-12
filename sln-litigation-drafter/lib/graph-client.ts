@@ -18,7 +18,7 @@ async function graphFetchAbsolute(url: string, init?: RequestInit): Promise<Resp
   });
 }
 
-async function getGraphToken(): Promise<string> {
+export async function getGraphToken(): Promise<string> {
   const now = Date.now();
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
     return _cachedToken.token;

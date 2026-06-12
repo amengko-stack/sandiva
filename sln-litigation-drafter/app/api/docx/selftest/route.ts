@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { list } from "@vercel/blob";
 import { buildLitigationDocx } from "@/lib/docx-builder";
 import { verifyDocx, type EntryCheck } from "@/lib/docx-verify";
-import { writeMatterFile, listAiFolder } from "@/lib/graph-client";
+import { writeMatterFile, listAiFolder, getGraphToken } from "@/lib/graph-client";
 
 export const maxDuration = 120;
 
@@ -83,8 +83,43 @@ export async function GET(req: NextRequest) {
       transport = { error: te instanceof Error ? te.message : String(te) };
     }
 
-    // Phase C: SharePoint upload round-trip
+    // Phase C: SharePoint upload round-trip.
+    // Fallback when session blobs were cleared: ?ref=drive:<driveId>:<itemId>
+    // uploads directly into that folder via Graph and fetches the bytes back.
     let upload: Record<string, unknown>;
+    const driveRef = req.nextUrl.searchParams.get("ref");
+    if (driveRef?.startsWith("drive:")) {
+      try {
+        const [, driveId, itemId] = driveRef.split(":");
+        const token = await getGraphToken();
+        const putUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}:/docx_selftest.docx:/content`;
+        const putRes = await fetch(putUrl, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": DOCX_MIME },
+          body: buf as unknown as BodyInit,
+        });
+        if (!putRes.ok) throw new Error(`PUT ${putRes.status}: ${(await putRes.text()).slice(0, 200)}`);
+        const item = (await putRes.json()) as { id: string };
+        const getRes = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${item.id}/content`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!getRes.ok) throw new Error(`GET content ${getRes.status}`);
+        const rt = Buffer.from(await getRes.arrayBuffer());
+        upload = {
+          via: "drive-ref",
+          uploadedSize: buf.length,
+          uploadedSha256: built.sha256,
+          roundtrip: summarize(rt),
+          identicalToUploaded: rt.equals(buf),
+        };
+      } catch (ue) {
+        upload = { via: "drive-ref", error: ue instanceof Error ? ue.message : String(ue) };
+      }
+      const info = { node: process.version, built, transport, upload };
+      console.log(`[docx-selftest] ${JSON.stringify(info)}`);
+      return NextResponse.json(info);
+    }
     try {
       const folderPath = await findRecentFolderPath();
       if (!folderPath) {
