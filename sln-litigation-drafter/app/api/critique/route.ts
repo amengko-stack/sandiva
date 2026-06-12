@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     console.log(`[model] stage=kritik-draf model=${MODELS.critique}`);
     const response = await client.messages.create({
       model: MODELS.critique,
-      max_tokens: 2048,
+      max_tokens: 8192,
       system: CRITIQUE_SYSTEM,
       messages: [
         {
@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
 
     const critiqueText =
       response.content.find((b) => b.type === "text")?.text || "";
+    console.log(`[critique] stop_reason=${response.stop_reason} critiqueChars=${critiqueText.length}`);
     return NextResponse.json({ critiqueText });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Terjadi kesalahan";
