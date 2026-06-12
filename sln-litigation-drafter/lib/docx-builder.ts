@@ -32,13 +32,35 @@ function sanitizeForXml(text: string): string {
 
 export async function buildLitigationDocx(
   text: string,
-  meta: DocxMeta
+  meta: DocxMeta,
+  appendix?: string
 ): Promise<Buffer> {
   const clean = sanitizeForXml(text);
   if (clean.length !== text.length) {
     console.warn(`[docx-builder] stripped ${text.length - clean.length} XML-invalid control chars from draft`);
   }
   const children = buildChildren(clean);
+
+  // Append internal citation checklist on a new page when provided
+  if (appendix) {
+    const cleanAppendix = sanitizeForXml(appendix);
+    children.push(
+      new Paragraph({
+        pageBreakBefore: true,
+        spacing: { before: 0, after: 120 },
+        children: [
+          new TextRun({
+            text: "LAMPIRAN INTERNAL — DAFTAR SITASI UNTUK VERIFIKASI — JANGAN DISERTAKAN DALAM BERKAS YANG DIFILING",
+            bold: true,
+            color: "C0392B",
+            font: "Arial",
+            size: 20,
+          }),
+        ],
+      })
+    );
+    buildChildren(cleanAppendix).forEach((p) => children.push(p));
+  }
 
   const doc = new Document({
     styles: {

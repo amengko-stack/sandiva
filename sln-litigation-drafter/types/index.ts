@@ -112,6 +112,13 @@ export interface DraftMeta {
   folderPath: string;
 }
 
+export interface CitationItem {
+  text: string;
+  type: "pasal_uu" | "yurisprudensi";
+  source: "konvensi firma" | "dokumen perkara" | "perlu verifikasi";
+  note?: string;
+}
+
 export interface DraftVersion {
   version: number;
   text: string;
