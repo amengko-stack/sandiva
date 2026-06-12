@@ -68,6 +68,7 @@ ${fileList}
 Kategorikan setiap file. Kembalikan array JSON.`;
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    console.log(`[model] stage=kategorisasi-file model=${MODELS.categorization}`);
     const response = await client.messages.create({
       model: MODELS.categorization,
       max_tokens: 4000,

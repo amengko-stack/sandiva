@@ -182,6 +182,7 @@ async function extractText(bytes: Buffer, ext: string): Promise<string> {
 
   // PDF — Claude document API
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  console.log(`[model] stage=ekstraksi-pdf model=${MODELS.extraction}`);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const response = await (anthropic.messages.create as any)({
     model: MODELS.extraction,
@@ -371,6 +372,7 @@ export async function readFileContentWithMode(
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   if (documentType === "perjanjian_kontrak") {
+    console.log(`[model] stage=ekstraksi-terstruktur type=${documentType} model=${MODELS.extraction}`);
     const res = await anthropic.messages.create({
       model: MODELS.extraction,
       max_tokens: 2000,
@@ -389,6 +391,7 @@ export async function readFileContentWithMode(
       documentType === "bukti_transaksi"
         ? `Dari dokumen bukti transaksi berikut, buat ringkasan singkat yang mencakup: jumlah/nilai, tanggal transaksi, para pihak, dan deskripsi transaksi.\n\nDokumen:\n${rawText}`
         : `Dari dokumen korporasi berikut, buat ringkasan singkat yang mencakup: nama entitas, struktur kepemilikan, direktur/komisaris, dan data relevan lainnya.\n\nDokumen:\n${rawText}`;
+    console.log(`[model] stage=ekstraksi-terstruktur type=${documentType} model=${MODELS.extraction}`);
     const res = await anthropic.messages.create({
       model: MODELS.extraction,
       max_tokens: 2000,
@@ -488,6 +491,7 @@ async function extractPdfSmart(bytes: Buffer, charCap: number, fileName: string)
 
 async function structuredContractExtract(rawText: string): Promise<string> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  console.log(`[model] stage=ekstraksi-kontrak model=${MODELS.extraction}`);
   const res = await anthropic.messages.create({
     model: MODELS.extraction,
     max_tokens: 4000,
