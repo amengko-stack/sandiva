@@ -139,6 +139,7 @@ export type WorkflowAction =
       pihak: string | null;
     }
   | { type: "SET_FOLDER"; folderPath: string }
+  | { type: "SET_PIHAK"; pihak: string }
   | { type: "SET_SESSION_ID"; id: string }
   | { type: "SET_ALL_FILES"; files: FileEntry[] }
   | { type: "SET_DOC_MAP"; map: DocMapEntry[] }

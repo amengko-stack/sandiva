@@ -25,10 +25,13 @@ export default function Stage3Analysis() {
   // 3A state
   const [kronoText, setKronoText] = useState("");
 
-  // 3B state
+  // 3B state — sub-step machine: pihak selection → loading → one-question
+  // wizard → editable review
+  type B3Step = "pihak" | "loading" | "wizard" | "review";
+  const [b3Step, setB3Step] = useState<B3Step>("pihak");
+  const [currentQ, setCurrentQ] = useState(0);
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
-  const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [questionsError, setQuestionsError] = useState("");
 
   // 3C state
@@ -63,8 +66,7 @@ export default function Stage3Analysis() {
         setSubstep("3C");
         loadStrategicAssessment(state.interviewAnswers);
       } else if (hint === "3B") {
-        setSubstep("3B");
-        loadInterviewQuestions();
+        enter3B();
       } else {
         setSubstep("3A");
       }
@@ -119,23 +121,47 @@ export default function Stage3Analysis() {
     }
   }
 
-  async function loadInterviewQuestions() {
-    setLoadingQuestions(true);
+  // Enter 3B: pihak must be chosen before anything else renders. If it's
+  // already known (resume, or a hasPihak docType chosen in Stage 1), skip
+  // straight to question generation.
+  function enter3B() {
+    setSubstep("3B");
+    if (state.pihak) {
+      setB3Step("loading");
+      loadInterviewQuestions(state.pihak);
+    } else {
+      setB3Step("pihak");
+    }
+  }
+
+  function choosePihak(p: string) {
+    dispatch({ type: "SET_PIHAK", pihak: p });
+    setB3Step("loading");
+    loadInterviewQuestions(p);
+  }
+
+  async function loadInterviewQuestions(pihakValue: string) {
     setQuestionsError("");
     try {
       const res = await fetch("/api/analyze/interview-questions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caseAnalysis: state.caseAnalysis }),
+        body: JSON.stringify({
+          caseAnalysis: state.caseAnalysis,
+          docTypeId: state.docTypeId,
+          claimType: state.claimType,
+          pihak: pihakValue,
+          kronologi: state.caseAnalysis?.kronologi ?? "",
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menghasilkan pertanyaan");
       setQuestions(data.questions);
       setAnswers(data.questions.map(() => ""));
+      setCurrentQ(0);
+      setB3Step("wizard");
     } catch (e: unknown) {
       setQuestionsError(e instanceof Error ? e.message : "Terjadi kesalahan");
-    } finally {
-      setLoadingQuestions(false);
     }
   }
 
@@ -168,18 +194,23 @@ export default function Stage3Analysis() {
         content: JSON.stringify({ ref: state.ref, kronologi: kronoText, timestamp: new Date().toISOString() }),
       });
     }
-    setSubstep("3B");
-    loadInterviewQuestions();
+    enter3B();
   }
 
   function confirm3B() {
     const ia: InterviewAnswer[] = questions.map((q, i) => ({ question: q, answer: answers[i] || "" }));
     dispatch({ type: "SET_INTERVIEW_ANSWERS", answers: ia });
+    // Durable saves: Vercel Blob (session) + SharePoint (matter audit trail)
+    fireAndForget("/api/analyze/save-interview", {
+      sessionId: state.sessionId,
+      answers: ia,
+      pihak: state.pihak,
+    });
     if (state.folderPath) {
       fireAndForget("/api/sharepoint/save-matter-file", {
         folderPath: state.folderPath,
         filename: `AI/interview_${ts()}.json`,
-        content: JSON.stringify({ ref: state.ref, answers: ia, timestamp: new Date().toISOString() }),
+        content: JSON.stringify({ ref: state.ref, pihak: state.pihak, answers: ia, timestamp: new Date().toISOString() }),
       });
     }
     setSubstep("3C");
@@ -248,30 +279,110 @@ export default function Stage3Analysis() {
     );
   }
 
-  // ── 3B — Interview ───────────────────────────────────────────────────────────
+  // ── 3B — Interview Strategis ─────────────────────────────────────────────────
   if (substep === "3B") {
     return (
       <div>
-        <StepHeader step="3B" title="Pertanyaan Wawancara Klien" total={3} />
-        <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 20 }}>
-          Jawab pertanyaan berikut berdasarkan hasil wawancara dengan klien.
-        </p>
-        {loadingQuestions && (
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 20, background: "var(--bg-surface)", borderRadius: 4, border: "1px solid var(--border-color)", marginBottom: 20 }}>
-            <Spinner /><span style={{ color: "var(--text-muted)", fontSize: 14 }}>Menghasilkan pertanyaan...</span>
-          </div>
-        )}
-        {questionsError && (
-          <div style={{ padding: 14, background: "rgba(192,57,43,0.1)", border: "1px solid var(--error)", borderRadius: 4, color: "var(--error)", fontSize: 13, marginBottom: 20 }}>
-            {questionsError}
-            <button onClick={loadInterviewQuestions} style={{ marginLeft: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>Coba lagi</button>
-          </div>
-        )}
-        {questions.length > 0 && (
+        <StepHeader step="3B" title="Interview Strategis" total={3} />
+
+        {/* Sub-step 1: pihak selection — nothing else renders until chosen */}
+        {b3Step === "pihak" && (
           <div>
+            <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 24 }}>
+              Pihak mana yang kita wakili dalam perkara ini? Pertanyaan wawancara akan disusun spesifik untuk posisi pihak tersebut.
+            </p>
+            <div style={{ display: "flex", gap: 16, marginBottom: 24 }}>
+              {[
+                { value: "penggugat", label: "Penggugat / Pemohon", desc: "Kami mengajukan gugatan/permohonan" },
+                { value: "tergugat", label: "Tergugat / Termohon", desc: "Kami membela terhadap gugatan/permohonan" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => choosePihak(opt.value)}
+                  style={{
+                    flex: 1, padding: "28px 24px", background: "var(--bg-surface)",
+                    border: "2px solid var(--border-color)", borderRadius: 8,
+                    cursor: "pointer", textAlign: "left",
+                  }}
+                >
+                  <div style={{ fontSize: 17, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
+                    {opt.label}
+                  </div>
+                  <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{opt.desc}</div>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setSubstep("3A")} style={btnSecondary}>← Kembali</button>
+          </div>
+        )}
+
+        {/* Sub-step 2: generating questions */}
+        {b3Step === "loading" && (
+          <div>
+            {!questionsError ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 20, background: "var(--bg-surface)", borderRadius: 4, border: "1px solid var(--border-color)" }}>
+                <Spinner /><span style={{ color: "var(--text-muted)", fontSize: 14 }}>Menyusun pertanyaan strategis untuk posisi {state.pihak === "tergugat" ? "Tergugat / Termohon" : "Penggugat / Pemohon"}...</span>
+              </div>
+            ) : (
+              <div style={{ padding: 14, background: "rgba(192,57,43,0.1)", border: "1px solid var(--error)", borderRadius: 4, color: "var(--error)", fontSize: 13 }}>
+                {questionsError}
+                <button onClick={() => { setQuestionsError(""); loadInterviewQuestions(state.pihak || "penggugat"); }} style={{ marginLeft: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>Coba lagi</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Sub-step 3: one question at a time */}
+        {b3Step === "wizard" && questions.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-gold)", letterSpacing: "0.08em", marginBottom: 14 }}>
+              PERTANYAAN {currentQ + 1} DARI {questions.length}
+            </div>
+            <div style={{ padding: "18px 20px", background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 6, marginBottom: 14 }}>
+              <div style={{ fontSize: 15, color: "var(--text-primary)", lineHeight: 1.6 }}>{questions[currentQ]}</div>
+            </div>
+            <textarea
+              value={answers[currentQ] || ""}
+              onChange={(e) => {
+                const next = [...answers];
+                next[currentQ] = e.target.value;
+                setAnswers(next);
+              }}
+              rows={5}
+              placeholder="Jawaban berdasarkan keterangan klien..."
+              autoFocus
+              style={{ resize: "vertical", fontSize: 13, lineHeight: 1.6, width: "100%" }}
+            />
+            <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+              <button
+                onClick={() => setCurrentQ((i) => Math.max(0, i - 1))}
+                disabled={currentQ === 0}
+                style={{ ...btnSecondary, opacity: currentQ === 0 ? 0.4 : 1, cursor: currentQ === 0 ? "default" : "pointer" }}
+              >
+                ← Kembali
+              </button>
+              <button
+                onClick={() => {
+                  if (currentQ < questions.length - 1) setCurrentQ(currentQ + 1);
+                  else setB3Step("review");
+                }}
+                style={btnPrimary}
+              >
+                {currentQ < questions.length - 1 ? "Lanjut →" : "Tinjau Jawaban →"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Sub-step 4: editable review + single confirm */}
+        {b3Step === "review" && (
+          <div>
+            <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 20 }}>
+              Tinjau seluruh jawaban. Anda dapat menyunting langsung sebelum konfirmasi.
+            </p>
             {questions.map((q, i) => (
-              <div key={i} style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--accent-gold)", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 6 }}>
+              <div key={i} style={{ marginBottom: 18 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--accent-gold)", letterSpacing: "0.06em", marginBottom: 6 }}>
                   {i + 1}. {q}
                 </label>
                 <textarea
@@ -282,19 +393,17 @@ export default function Stage3Analysis() {
                     setAnswers(next);
                   }}
                   rows={3}
-                  placeholder="Jawaban..."
+                  placeholder="(tidak dijawab)"
                   style={{ resize: "vertical", fontSize: 13, lineHeight: 1.6, width: "100%" }}
                 />
               </div>
             ))}
+            <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+              <button onClick={() => setB3Step("wizard")} style={btnSecondary}>← Kembali ke Pertanyaan</button>
+              <button onClick={confirm3B} style={btnPrimary}>Konfirmasi Jawaban →</button>
+            </div>
           </div>
         )}
-        <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
-          <button onClick={() => setSubstep("3A")} style={btnSecondary}>← Kembali</button>
-          {questions.length > 0 && !loadingQuestions && (
-            <button onClick={confirm3B} style={btnPrimary}>Konfirmasi Jawaban →</button>
-          )}
-        </div>
       </div>
     );
   }

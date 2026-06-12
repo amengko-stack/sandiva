@@ -9,12 +9,26 @@ const client = new Anthropic();
 
 export async function POST(req: NextRequest) {
   try {
-    const { caseAnalysis } = (await req.json()) as { caseAnalysis: CaseAnalysis };
+    const { caseAnalysis, docTypeId, claimType, pihak, kronologi } = (await req.json()) as {
+      caseAnalysis: CaseAnalysis;
+      docTypeId?: string;
+      claimType?: string | null;
+      pihak?: string;
+      kronologi?: string;
+    };
     if (!caseAnalysis) {
       return NextResponse.json({ error: "caseAnalysis wajib diisi" }, { status: 400 });
     }
 
-    const prompt = `Berdasarkan analisis perkara berikut, hasilkan 5–8 pertanyaan spesifik untuk wawancara klien guna mengisi celah fakta.
+    const pihakLabel =
+      pihak === "tergugat" ? "Tergugat / Termohon" : "Penggugat / Pemohon";
+
+    const prompt = `Anda mempersiapkan WAWANCARA STRATEGIS dengan klien. Drafter mewakili pihak ${pihakLabel} dalam perkara ${(docTypeId || "").replace(/_/g, " ")}${claimType ? ` (${claimType.replace(/_/g, " ")})` : ""}.
+
+Hasilkan 5–8 pertanyaan wawancara yang STRATEGIS dan SPESIFIK terhadap posisi ${pihakLabel}: gali fakta yang memperkuat posisi pihak kami, antisipasi serangan pihak lawan, dan isi celah bukti yang teridentifikasi.
+
+KRONOLOGI YANG SUDAH DIKONFIRMASI DRAFTER:
+${(kronologi || caseAnalysis.kronologi || "").slice(0, 4000)}
 
 KELEMAHAN & GAPS:
 ${caseAnalysis.kelemahanGaps}
@@ -25,12 +39,13 @@ ${caseAnalysis.identitasPihak}
 ANALISIS ELEMEN:
 ${caseAnalysis.analisisElemen}
 
-Hasilkan pertanyaan yang spesifik, faktual, dan dapat dijawab klien. Format respons sebagai JSON array string: ["pertanyaan 1", "pertanyaan 2", ...]`;
+Setiap pertanyaan harus spesifik, faktual, dapat dijawab klien, dan relevan dengan posisi ${pihakLabel}.
+PENTING: Kembalikan HANYA JSON array of strings yang valid — tanpa markdown, tanpa pagar kode, tanpa teks lain. Contoh format: ["pertanyaan 1", "pertanyaan 2"]`;
 
     const message = await client.messages.create({
       model: MODELS.interview,
       max_tokens: 4096,
-      system: "Anda adalah litigator senior yang mempersiapkan wawancara klien untuk mengisi celah fakta dalam analisis perkara.",
+      system: `Anda adalah litigator senior yang mempersiapkan wawancara klien strategis. Anda mewakili pihak ${pihakLabel}. Kembalikan HANYA JSON array string yang valid.`,
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -41,7 +56,8 @@ Hasilkan pertanyaan yang spesifik, faktual, dan dapat dijawab klien. Format resp
     );
 
     let questions: string[] | null = null;
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    const clean = text.replace(/```json|```/g, "").trim();
+    const jsonMatch = clean.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       try {
         questions = JSON.parse(jsonMatch[0]) as string[];
