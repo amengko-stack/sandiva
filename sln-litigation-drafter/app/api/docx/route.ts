@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildLitigationDocx } from "@/lib/docx-builder";
+import { verifyDocx } from "@/lib/docx-verify";
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,6 +16,19 @@ export async function POST(req: NextRequest) {
       docType: docType || "draf",
       claimType: claimType || "",
     });
+
+    // Verify integrity on the REAL draft before shipping; never serve a file
+    // we can already prove is corrupt.
+    const verdict = verifyDocx(buffer);
+    console.log(`[docx] integrity size=${buffer.length} entriesBad=${verdict.bad} illegalChars=${verdict.illegal} draftChars=${draftText.length}`);
+    if (verdict.bad > 0 || verdict.illegal > 0) {
+      const detail = verdict.entries.filter((e) => !e.ok).map((e) => `${e.name}(crc:${e.dataCrc}/${e.centralCrc},illegal:${e.illegalChars})`).join(", ");
+      console.error(`[docx] CORRUPT OUTPUT DETECTED: ${detail}`);
+      return NextResponse.json(
+        { error: `Dokumen yang dihasilkan terdeteksi korup (${detail}) — tidak dikirim. Laporkan pesan ini.` },
+        { status: 500 }
+      );
+    }
 
     const filename = `${(ref || "draf").replace(/\//g, "-")}.docx`;
 
