@@ -79,7 +79,10 @@ export async function POST(req: NextRequest) {
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    const initialUserMsg = `Susun dokumen litigasi lengkap berdasarkan analisis kasus dan instruksi sistem di atas. Tulis dalam Bahasa Indonesia formal. Nomor referensi: ${ref}`;
+    const pihakLine = pihak
+      ? `Drafter mewakili ${pihak === "tergugat" ? "Tergugat / Termohon" : "Penggugat / Pemohon"}. `
+      : "";
+    const initialUserMsg = `${pihakLine}Susun dokumen litigasi lengkap berdasarkan analisis kasus dan instruksi sistem di atas. Tulis dalam Bahasa Indonesia formal. Nomor referensi: ${ref}`;
 
     const encoder = new TextEncoder();
 
@@ -206,7 +209,26 @@ function formatCaseAnalysis(
   }
 
   if (strategicAssessment.trim()) {
-    text += `\n\n## ASESMEN STRATEGIS (telah dikonfirmasi drafter)\n${strategicAssessment}`;
+    // The assessment is stored as structured JSON since the 3C redesign —
+    // render it as readable sections for the model; fall back to raw text
+    // for legacy prose assessments.
+    let assessmentText = strategicAssessment;
+    try {
+      const parsed = JSON.parse(strategicAssessment) as {
+        kekuatan?: string[]; kelemahan?: string[]; risikoTersembunyi?: string[]; rekomendasi?: string;
+      };
+      if (parsed && Array.isArray(parsed.kekuatan)) {
+        const sec = (label: string, items?: string[]) =>
+          items && items.length ? `${label}:\n${items.map((x) => `- ${x}`).join("\n")}` : "";
+        assessmentText = [
+          sec("KEKUATAN", parsed.kekuatan),
+          sec("KELEMAHAN", parsed.kelemahan),
+          sec("RISIKO TERSEMBUNYI (telah dikonfirmasi drafter)", parsed.risikoTersembunyi),
+          parsed.rekomendasi ? `REKOMENDASI:\n${parsed.rekomendasi}` : "",
+        ].filter(Boolean).join("\n\n");
+      }
+    } catch { /* legacy prose — use as-is */ }
+    text += `\n\n## ASESMEN STRATEGIS (telah dikonfirmasi drafter)\n${assessmentText}`;
   }
 
   if (corrections?.trim()) {

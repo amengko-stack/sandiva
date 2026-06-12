@@ -73,15 +73,16 @@ export default function Stage4Draft() {
             } else if (event.done) {
               console.log(`[stage4] draft done stopReason=${event.stopReason ?? "(not sent)"} draftChars=${fullDraft.length}`);
               dispatch({ type: "SET_DRAFT_STREAMING", value: false });
-              // Critique must never run on a truncated draft. end_turn = complete;
-              // max_tokens after all continuation calls = still incomplete.
-              if (event.stopReason === "max_tokens") {
-                setStreamError(
-                  "Draf belum lengkap — batas keluaran model tercapai meski sudah dilanjutkan beberapa kali. Coba buat ulang draf."
-                );
-              } else {
+              // Critique runs ONLY on a complete draft (stop_reason end_turn);
+              // anything else (max_tokens after all continuation calls, or an
+              // unexpected stop) surfaces an error instead.
+              if (event.stopReason === "end_turn") {
                 dispatch({ type: "SET_DRAFT_COMPLETE", value: true });
                 runCritique(fullDraft);
+              } else {
+                setStreamError(
+                  `Draf belum lengkap (stop_reason=${event.stopReason ?? "tidak diketahui"}) — kritik tidak dijalankan. Coba buat ulang draf.`
+                );
               }
             } else if (event.error) {
               throw new Error(event.error);
