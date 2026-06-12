@@ -2,7 +2,18 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
-import type { CaseAnalysis, InterviewAnswer } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, StructuredAssessment } from "@/types";
+
+// Parse a stored assessment string: structured JSON from the new flow, or
+// legacy free-text prose (rendered as a recommendation-only assessment).
+function parseStoredAssessment(text: string): StructuredAssessment | null {
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && Array.isArray(parsed.kekuatan)) return parsed as StructuredAssessment;
+  } catch {}
+  return { kekuatan: [], kelemahan: [], risikoTersembunyi: [], rekomendasi: text };
+}
 
 type Stage3Substep = "3A" | "3B" | "3C";
 
@@ -34,10 +45,12 @@ export default function Stage3Analysis() {
   const [answers, setAnswers] = useState<string[]>([]);
   const [questionsError, setQuestionsError] = useState("");
 
-  // 3C state
-  const [assessmentText, setAssessmentText] = useState("");
+  // 3C state — structured four-section assessment + risk-acknowledgment modal
+  const [assessment, setAssessment] = useState<StructuredAssessment | null>(null);
   const [loadingAssessment, setLoadingAssessment] = useState(false);
   const [assessmentError, setAssessmentError] = useState("");
+  const [riskModalOpen, setRiskModalOpen] = useState(false);
+  const [riskChecks, setRiskChecks] = useState<boolean[]>([]);
 
   // Initial analysis
   const [analyzing, setAnalyzing] = useState(false);
@@ -60,7 +73,7 @@ export default function Stage3Analysis() {
       // Resume at the furthest completed substep:
       // interview answered → 3C, kronologi confirmed → 3B, analysis only → 3A
       if (state.strategicAssessment) {
-        setAssessmentText(state.strategicAssessment);
+        setAssessment(parseStoredAssessment(state.strategicAssessment));
         setSubstep("3C");
       } else if (state.interviewAnswers.length > 0 || hint === "3C") {
         setSubstep("3C");
@@ -172,11 +185,19 @@ export default function Stage3Analysis() {
       const res = await fetch("/api/analyze/strategic-assessment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caseAnalysis: state.caseAnalysis, interviewAnswers: ia }),
+        body: JSON.stringify({
+          sessionId: state.sessionId,
+          docTypeId: state.docTypeId,
+          claimType: state.claimType,
+          pihak: state.pihak,
+          kronologi: state.caseAnalysis?.kronologi ?? "",
+          interviewAnswers: ia,
+          caseAnalysis: state.caseAnalysis,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menghasilkan asesmen");
-      setAssessmentText(data.assessment);
+      setAssessment(data.assessment as StructuredAssessment);
     } catch (e: unknown) {
       setAssessmentError(e instanceof Error ? e.message : "Terjadi kesalahan");
     } finally {
@@ -217,16 +238,44 @@ export default function Stage3Analysis() {
     loadStrategicAssessment(ia);
   }
 
+  // "Lanjut dengan Strategi Ini": real risks require explicit per-risk
+  // acknowledgment in a modal before proceeding.
+  function proceedWithStrategy() {
+    if (!assessment) return;
+    if (assessment.risikoTersembunyi.length > 0) {
+      setRiskChecks(assessment.risikoTersembunyi.map(() => false));
+      setRiskModalOpen(true);
+    } else {
+      confirm3C();
+    }
+  }
+
   function confirm3C() {
-    dispatch({ type: "SET_STRATEGIC_ASSESSMENT", text: assessmentText });
+    if (!assessment) return;
+    const assessmentJson = JSON.stringify(assessment);
+    dispatch({ type: "SET_STRATEGIC_ASSESSMENT", text: assessmentJson });
+    fireAndForget("/api/analyze/save-assessment", {
+      sessionId: state.sessionId,
+      assessment,
+    });
     if (state.folderPath) {
       fireAndForget("/api/sharepoint/save-matter-file", {
         folderPath: state.folderPath,
+        // assessment stored as JSON string so check-session resume (which
+        // expects a string) keeps working; parseStoredAssessment re-hydrates.
         filename: `AI/strategic_assessment_${ts()}.json`,
-        content: JSON.stringify({ ref: state.ref, assessment: assessmentText, timestamp: new Date().toISOString() }),
+        content: JSON.stringify({ ref: state.ref, assessment: assessmentJson, timestamp: new Date().toISOString() }),
       });
     }
+    setRiskModalOpen(false);
     goToStage(4);
+  }
+
+  // "Ubah Pendekatan": back to Stage 1 WITHOUT reset — sessionId, folderPath,
+  // and all extracted-session state persist, so nothing is re-extracted.
+  function ubahPendekatan() {
+    try { sessionStorage.setItem("sln_change_approach", "1"); } catch {}
+    goToStage(1);
   }
 
   // ── Loading / error for initial analysis ────────────────────────────────────
@@ -408,16 +457,17 @@ export default function Stage3Analysis() {
     );
   }
 
-  // ── 3C — Strategic Assessment ────────────────────────────────────────────────
+  // ── 3C — Penilaian Strategis (four-section structured assessment) ───────────
+  const allRisksAcked = riskChecks.length > 0 && riskChecks.every(Boolean);
   return (
     <div>
-      <StepHeader step="3C" title="Asesmen Strategis" total={3} />
+      <StepHeader step="3C" title="Penilaian Strategis" total={3} />
       <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 20 }}>
-        Tinjau dan koreksi asesmen strategis yang dihasilkan AI.
+        Penilaian posisi perkara sebelum penyusunan draf — termasuk pemeriksaan risiko yurisdiksi dan prosedural.
       </p>
       {loadingAssessment && (
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 20, background: "var(--bg-surface)", borderRadius: 4, border: "1px solid var(--border-color)", marginBottom: 20 }}>
-          <Spinner /><span style={{ color: "var(--text-muted)", fontSize: 14 }}>Menghasilkan asesmen strategis...</span>
+          <Spinner /><span style={{ color: "var(--text-muted)", fontSize: 14 }}>Menilai posisi perkara dan memeriksa risiko tersembunyi...</span>
         </div>
       )}
       {assessmentError && (
@@ -426,20 +476,94 @@ export default function Stage3Analysis() {
           <button onClick={() => loadStrategicAssessment(state.interviewAnswers)} style={{ marginLeft: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>Coba lagi</button>
         </div>
       )}
-      {!loadingAssessment && assessmentText && (
-        <textarea
-          value={assessmentText}
-          onChange={(e) => setAssessmentText(e.target.value)}
-          rows={14}
-          style={{ resize: "vertical", fontSize: 13, lineHeight: 1.7, width: "100%" }}
-        />
+
+      {!loadingAssessment && assessment && (
+        <div>
+          <AssessmentSection title="KEKUATAN" color="#27ae60" items={assessment.kekuatan} emptyText="Tidak ada kekuatan yang teridentifikasi" />
+          <AssessmentSection title="KELEMAHAN" color="#f1c40f" items={assessment.kelemahan} emptyText="Tidak ada kelemahan yang teridentifikasi" />
+          <AssessmentSection
+            title="RISIKO TERSEMBUNYI"
+            color="#c0392b"
+            prominent
+            items={assessment.risikoTersembunyi}
+            emptyText="Tidak ditemukan risiko tersembunyi"
+          />
+          <div style={{ borderLeft: "4px solid var(--accent-blue)", background: "var(--bg-surface)", borderRadius: 4, padding: "16px 20px", marginBottom: 24 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: "var(--accent-blue)", marginBottom: 10 }}>REKOMENDASI</div>
+            <div style={{ fontSize: 14, color: "var(--text-primary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{assessment.rekomendasi}</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 12 }}>
+            <button onClick={proceedWithStrategy} style={btnPrimary}>Lanjut dengan Strategi Ini →</button>
+            <button onClick={ubahPendekatan} style={btnSecondary}>Ubah Pendekatan</button>
+          </div>
+        </div>
       )}
-      <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
-        <button onClick={() => setSubstep("3B")} style={btnSecondary}>← Kembali</button>
-        {assessmentText && !loadingAssessment && (
-          <button onClick={confirm3C} style={btnPrimary}>Konfirmasi Asesmen →</button>
-        )}
+
+      {/* Risk acknowledgment modal — every risk must be ticked to proceed */}
+      {riskModalOpen && assessment && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div style={{ background: "var(--bg-primary)", border: "1px solid var(--border-color)", borderRadius: 8, padding: "28px 32px", maxWidth: 640, width: "92%", maxHeight: "80vh", overflowY: "auto" }}>
+            <h2 style={{ fontSize: 17, fontWeight: 600, color: "#c0392b", marginBottom: 8 }}>
+              Konfirmasi Risiko Tersembunyi
+            </h2>
+            <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 18 }}>
+              Centang setiap risiko untuk menyatakan Anda telah membacanya dan tetap ingin melanjutkan dengan strategi ini.
+            </p>
+            {assessment.risikoTersembunyi.map((risk, i) => (
+              <label key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 14px", background: "rgba(192,57,43,0.06)", border: "1px solid rgba(192,57,43,0.3)", borderRadius: 4, marginBottom: 10, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={riskChecks[i] || false}
+                  onChange={() => setRiskChecks((rc) => rc.map((v, j) => (j === i ? !v : v)))}
+                  style={{ marginTop: 3, flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 13, color: "var(--text-primary)", lineHeight: 1.6 }}>{risk}</span>
+              </label>
+            ))}
+            <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
+              <button onClick={() => setRiskModalOpen(false)} style={btnSecondary}>Batal</button>
+              <button
+                onClick={confirm3C}
+                disabled={!allRisksAcked}
+                style={{ ...btnPrimary, opacity: allRisksAcked ? 1 : 0.4, cursor: allRisksAcked ? "pointer" : "not-allowed" }}
+              >
+                Konfirmasi & Lanjut ke Draf →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssessmentSection({
+  title, color, items, emptyText, prominent,
+}: {
+  title: string; color: string; items: string[]; emptyText: string; prominent?: boolean;
+}) {
+  const isEmpty = items.length === 0;
+  return (
+    <div style={{
+      borderLeft: `4px solid ${color}`,
+      background: prominent && !isEmpty ? "rgba(192,57,43,0.06)" : "var(--bg-surface)",
+      borderRadius: 4,
+      padding: "16px 20px",
+      marginBottom: 16,
+    }}>
+      <div style={{ fontSize: prominent ? 13 : 12, fontWeight: 700, letterSpacing: "0.08em", color, marginBottom: 10 }}>
+        {title}
       </div>
+      {isEmpty ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>{emptyText}</div>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          {items.map((item, i) => (
+            <li key={i} style={{ fontSize: 13.5, color: "var(--text-primary)", lineHeight: 1.7, marginBottom: 8 }}>{item}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
