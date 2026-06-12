@@ -27,6 +27,8 @@ export async function POST(req: NextRequest) {
       userCorrections,
       interviewAnswers,
       strategicAssessment,
+      revisionInstructions,
+      currentDraft,
     } = (await req.json()) as {
       docTypeId: string;
       practiceAreaId: string;
@@ -37,6 +39,8 @@ export async function POST(req: NextRequest) {
       userCorrections: string;
       interviewAnswers?: InterviewAnswer[];
       strategicAssessment?: string;
+      revisionInstructions?: string;
+      currentDraft?: string;
     };
 
     // Budget allocation: 1 full best-match style example (docType+claimType →
@@ -72,9 +76,11 @@ export async function POST(req: NextRequest) {
       comp("analysisOther", analysisText.length - (caseAnalysis.kronologi?.length ?? 0)) + " " +
       comp("interview", interviewChars) + " " +
       comp("assessment", strategicAssessment?.length ?? 0) + " " +
-      comp("userCorrections", userCorrections?.length ?? 0) + " | " +
+      comp("userCorrections", userCorrections?.length ?? 0) + " " +
+      comp("revisionInstructions", revisionInstructions?.length ?? 0) + " " +
+      comp("currentDraft", currentDraft?.length ?? 0) + " | " +
       comp("TOTAL systemPrompt", systemPrompt.length) +
-      ` | documentText=0 by design (drafts from caseAnalysis)`
+      ` | mode=${currentDraft ? "revision" : "original"}`
     );
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -82,7 +88,15 @@ export async function POST(req: NextRequest) {
     const pihakLine = pihak
       ? `Drafter mewakili ${pihak === "tergugat" ? "Tergugat / Termohon" : "Penggugat / Pemohon"}. `
       : "";
-    const initialUserMsg = `${pihakLine}Susun dokumen litigasi lengkap berdasarkan analisis kasus dan instruksi sistem di atas. Tulis dalam Bahasa Indonesia formal. Nomor referensi: ${ref}`;
+    const initialUserMsg = currentDraft && revisionInstructions
+      ? `${pihakLine}Revisi draf dokumen litigasi berikut berdasarkan instruksi revisi yang diberikan. Pertahankan bagian yang tidak direvisi persis seperti semula. Tulis ulang dokumen lengkap dalam Bahasa Indonesia formal. Nomor referensi: ${ref}
+
+## INSTRUKSI REVISI
+${revisionInstructions}
+
+## DRAF YANG DIREVISI
+${currentDraft}`
+      : `${pihakLine}Susun dokumen litigasi lengkap berdasarkan analisis kasus dan instruksi sistem di atas. Tulis dalam Bahasa Indonesia formal. Nomor referensi: ${ref}`;
 
     const encoder = new TextEncoder();
 
