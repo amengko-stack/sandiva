@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { inflateRawSync, crc32 } from "zlib";
 import { buildLitigationDocx } from "@/lib/docx-builder";
@@ -75,7 +75,7 @@ function checkZip(buf: Buffer): { entries: EntryCheck[]; bad: number } {
   return { entries, bad };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const buf = await buildLitigationDocx(SAMPLE, {
       ref: "SLN/SELFTEST/2026",
@@ -83,15 +83,54 @@ export async function GET() {
       claimType: "wanprestasi",
     });
     const { entries, bad } = checkZip(buf);
+    const builtSha = createHash("sha256").update(buf).digest("hex");
+
+    // Phase B: round-trip the EXACT download transport — call our own
+    // /api/docx over real HTTP (through Vercel's proxy) with the caller's
+    // session cookie, then CRC-check the received bytes.
+    let transport: Record<string, unknown> = { skipped: true };
+    try {
+      const origin = req.nextUrl.origin;
+      const res = await fetch(`${origin}/api/docx`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          cookie: req.headers.get("cookie") ?? "",
+        },
+        body: JSON.stringify({
+          draftText: SAMPLE,
+          ref: "SLN/SELFTEST/2026",
+          docType: "gugatan",
+          claimType: "wanprestasi",
+        }),
+      });
+      const ab = Buffer.from(await res.arrayBuffer());
+      let rt: { bad: number; entries: EntryCheck[] } | { error: string };
+      try {
+        const r = checkZip(ab);
+        rt = { bad: r.bad, entries: r.entries.filter((e) => !e.ok) };
+      } catch (ze) {
+        rt = { error: ze instanceof Error ? ze.message : String(ze) };
+      }
+      transport = {
+        status: res.status,
+        contentType: res.headers.get("content-type"),
+        contentEncoding: res.headers.get("content-encoding"),
+        receivedSize: ab.length,
+        receivedSha256: createHash("sha256").update(ab).digest("hex"),
+        firstBytes: ab.subarray(0, 4).toString("hex"),
+        zipCheck: rt,
+      };
+    } catch (te) {
+      transport = { error: te instanceof Error ? te.message : String(te) };
+    }
+
     const info = {
-      size: buf.length,
-      sha256: createHash("sha256").update(buf).digest("hex"),
       node: process.version,
-      badEntries: bad,
-      entries: entries.filter((e) => !e.ok),
-      allNames: entries.map((e) => `${e.name}:${e.ok ? "ok" : "BAD"}`),
+      built: { size: buf.length, sha256: builtSha, badEntries: bad, entries: entries.filter((e) => !e.ok) },
+      transport,
     };
-    console.log(`[docx-selftest] ${JSON.stringify({ size: info.size, sha256: info.sha256, node: info.node, badEntries: bad })}`);
+    console.log(`[docx-selftest] ${JSON.stringify(info)}`);
     return NextResponse.json(info);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "selftest gagal";
