@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import {
   CLAIM_TYPES,
@@ -16,6 +16,18 @@ export default function Stage1Select() {
   const [claimType, setClaimType] = useState(state.claimType      || "");
   const [docTypeId, setDocTypeId] = useState(state.docTypeId      || "");
   const [pihak,     setPihak]     = useState(state.pihak          || "");
+
+  // One-shot banner when arriving from 3C "Ubah Pendekatan" — the extracted
+  // documents and session are carried forward, nothing is re-extracted.
+  const [changeApproach, setChangeApproach] = useState(false);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("sln_change_approach") === "1") {
+        sessionStorage.removeItem("sln_change_approach");
+        setChangeApproach(true);
+      }
+    } catch {}
+  }, []);
 
   const claimTypes = forumId ? getClaimTypesForForum(forumId) : [];
   const docTypes   = forumId && claimType ? getForumDocTypes(forumId, claimType) : [];
@@ -60,9 +72,15 @@ export default function Stage1Select() {
       <h1 style={{ fontSize: 22, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
         Pilih Jenis Dokumen
       </h1>
-      <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 32 }}>
+      <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: changeApproach ? 16 : 32 }}>
         Pilih forum, jenis gugatan, dan jenis dokumen yang akan dibuat.
       </p>
+
+      {changeApproach && (
+        <div style={{ padding: "12px 16px", background: "rgba(41,128,185,0.1)", border: "1px solid var(--accent-blue)", borderRadius: 4, color: "var(--accent-blue)", fontSize: 13, marginBottom: 28 }}>
+          ⟳ Mengubah pendekatan — dokumen perkara sudah tersedia. Pilih jenis gugatan/dokumen baru; ekstraksi tidak akan diulang.
+        </div>
+      )}
 
       {/* ── Step 1: Forum ────────────────────────────────────────────────── */}
       <SectionLabel>Forum Pengadilan / Arbitrase</SectionLabel>

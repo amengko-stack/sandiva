@@ -53,6 +53,15 @@ export interface PatternEntry {
   date: string;
 }
 
+// Stage 3C structured strategic assessment — four sections rendered as
+// distinct cards; risikoTersembunyi empty array = explicit "none found" state.
+export interface StructuredAssessment {
+  kekuatan: string[];
+  kelemahan: string[];
+  risikoTersembunyi: string[];
+  rekomendasi: string;
+}
+
 export interface StyleExample {
   type: string;
   claimType: string;
@@ -139,6 +148,7 @@ export type WorkflowAction =
       pihak: string | null;
     }
   | { type: "SET_FOLDER"; folderPath: string }
+  | { type: "SET_PIHAK"; pihak: string }
   | { type: "SET_SESSION_ID"; id: string }
   | { type: "SET_ALL_FILES"; files: FileEntry[] }
   | { type: "SET_DOC_MAP"; map: DocMapEntry[] }

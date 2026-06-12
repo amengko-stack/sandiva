@@ -98,6 +98,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "SET_FOLDER":
       return { ...state, folderPath: action.folderPath };
 
+    case "SET_PIHAK":
+      return { ...state, pihak: action.pihak };
+
     case "SET_SESSION_ID":
       return { ...state, sessionId: action.id };
 
