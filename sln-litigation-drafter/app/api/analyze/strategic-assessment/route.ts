@@ -77,6 +77,7 @@ Ketentuan per bagian:
 - risikoTersembunyi: risiko yurisdiksi dan prosedural. WAJIB: periksa SETIAP kontrak/perjanjian dalam dokumen di atas untuk KLAUSULA ARBITRASE — jika ditemukan, butir risiko klausula arbitrase HARUS selalu dimasukkan (sebut nama kontraknya). Periksa juga: daluwarsa/lewat waktu, forum yang keliru, tergugat yang salah atau kurang, kemungkinan gugatan balik (rekonvensi). Jika setelah pemeriksaan sungguh tidak ada risiko, kembalikan array kosong [].
 - rekomendasi: satu rekomendasi spesifik dan dapat ditindaklanjuti — lanjutkan / ubah jenis gugatan / ubah forum / kumpulkan bukti dulu. Jika BUKAN "lanjutkan", sebutkan kelemahan spesifik yang mendasarinya.`;
 
+    console.log(`[model] stage=asesmen-strategis model=${MODELS.assessment}`);
     const message = await client.messages.create({
       model: MODELS.assessment,
       max_tokens: 4096,

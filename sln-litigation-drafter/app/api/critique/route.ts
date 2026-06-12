@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+    console.log(`[model] stage=kritik-draf model=${MODELS.critique}`);
     const response = await client.messages.create({
       model: MODELS.critique,
       max_tokens: 2048,

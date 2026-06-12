@@ -82,6 +82,7 @@ export async function POST(req: NextRequest) {
 
     step = "claude";
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    console.log(`[model] stage=analisis-sampel model=${MODELS.patterns}`);
     const response = await client.messages.create({
       model: MODELS.patterns,
       max_tokens: 1500,

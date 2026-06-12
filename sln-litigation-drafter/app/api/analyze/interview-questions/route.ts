@@ -42,6 +42,7 @@ ${caseAnalysis.analisisElemen}
 Setiap pertanyaan harus spesifik, faktual, dapat dijawab klien, dan relevan dengan posisi ${pihakLabel}.
 PENTING: Kembalikan HANYA JSON array of strings yang valid — tanpa markdown, tanpa pagar kode, tanpa teks lain. Contoh format: ["pertanyaan 1", "pertanyaan 2"]`;
 
+    console.log(`[model] stage=pertanyaan-wawancara model=${MODELS.interview}`);
     const message = await client.messages.create({
       model: MODELS.interview,
       max_tokens: 4096,

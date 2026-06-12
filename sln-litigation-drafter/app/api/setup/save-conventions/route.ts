@@ -79,6 +79,7 @@ Dokumen harus mencakup:
 6. Konvensi khusus firma yang teramati
 7. Instruksi untuk AI drafter`;
 
+    console.log(`[model] stage=simpan-konvensi model=${MODELS.patterns}`);
     const response = await client.messages.create({
       model: MODELS.patterns,
       max_tokens: 4000,

@@ -109,6 +109,7 @@ export async function POST(req: NextRequest) {
                     },
                   ];
 
+            console.log(`[model] stage=penyusunan-draf call=${call + 1}/${MAX_DRAFT_CALLS} model=${MODELS.drafting}`);
             const stream = client.messages.stream({
               model: MODELS.drafting,
               max_tokens: DRAFT_MAX_TOKENS,
