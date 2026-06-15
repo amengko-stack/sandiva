@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
-import type { CaseAnalysis, InterviewAnswer, StructuredAssessment, RelevantJurisprudence, JurisprudenceEntry } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, PartiesStrategy, StructuredAssessment, RelevantJurisprudence, JurisprudenceEntry } from "@/types";
 
 // Parse a stored assessment string: structured JSON from the new flow, or
 // legacy free-text prose (rendered as a recommendation-only assessment).
@@ -16,6 +16,25 @@ function parseStoredAssessment(text: string): StructuredAssessment | null {
 }
 
 type Stage3Substep = "3A" | "3B" | "3C";
+
+function partyNouns(docTypeId: string | null, claimType: string | null, pihak: string | null) {
+  const permohonan = /pkpu|pailit|permohonan|perdamaian/i.test(docTypeId || "")
+    || /pkpu|pailit|pauliana|perdamaian/i.test(claimType || "");
+  const initiator = permohonan ? "Pemohon" : "Penggugat";
+  const responder = permohonan ? "Termohon" : "Tergugat";
+  const isInitiator = pihak !== "tergugat";
+  return {
+    clientNoun: isInitiator ? initiator : responder,
+    lawanNoun: isInitiator ? responder : initiator,
+    lawanMultiple: isInitiator,
+    strategyLabel: isInitiator
+      ? (permohonan ? "Strategi Awal Permohonan" : "Strategi Awal Gugatan")
+      : "Strategi Awal Jawaban",
+    strategyPlaceholder: isInitiator
+      ? "Apa yang ingin dicapai dan bagaimana rencanamu? (contoh: tuntutan ganti rugi materiil + immateriil, target cepat selesai di PN, ada aset tergugat yang bisa disita)"
+      : "Apa posisi tergugat dan strategi pertahanan? (contoh: bantah seluruh gugatan, ajukan eksepsi kompetensi, ada klaim balik yang kuat)",
+  };
+}
 
 function ts() {
   return new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -36,14 +55,24 @@ export default function Stage3Analysis() {
   // 3A state
   const [kronoText, setKronoText] = useState("");
 
-  // 3B state — sub-step machine: pihak selection → loading → one-question
-  // wizard → editable review
-  type B3Step = "pihak" | "loading" | "wizard" | "review";
+  // 3B state — sub-step machine: pihak selection → parties → loading → wizard → review
+  type B3Step = "pihak" | "parties" | "loading" | "wizard" | "review";
   const [b3Step, setB3Step] = useState<B3Step>("pihak");
   const [currentQ, setCurrentQ] = useState(0);
   const [questions, setQuestions] = useState<string[]>([]);
   const [answers, setAnswers] = useState<string[]>([]);
   const [questionsError, setQuestionsError] = useState("");
+
+  // 3B parties step state — pre-seeded from persisted partiesStrategy on resume
+  const [clientIds, setClientIds] = useState<string[]>(
+    () => state.partiesStrategy?.clientIdentities ?? [""]
+  );
+  const [lawanIds, setLawanIds] = useState<string[]>(
+    () => state.partiesStrategy?.lawanIdentities ?? [""]
+  );
+  const [strategi, setStrategi] = useState<string>(
+    () => state.partiesStrategy?.strategi ?? ""
+  );
 
   // 3C state — structured four-section assessment + risk-acknowledgment modal
   const [assessment, setAssessment] = useState<StructuredAssessment | null>(null);
@@ -143,21 +172,38 @@ export default function Stage3Analysis() {
   // straight to question generation.
   function enter3B() {
     setSubstep("3B");
-    if (state.pihak) {
-      setB3Step("loading");
-      loadInterviewQuestions(state.pihak);
-    } else {
-      setB3Step("pihak");
-    }
+    setB3Step(state.pihak ? "parties" : "pihak");
   }
 
   function choosePihak(p: string) {
     dispatch({ type: "SET_PIHAK", pihak: p });
-    setB3Step("loading");
-    loadInterviewQuestions(p);
+    setB3Step("parties");
   }
 
-  async function loadInterviewQuestions(pihakValue: string) {
+  function confirmParties() {
+    const nouns = partyNouns(state.docTypeId, state.claimType, state.pihak);
+    const ps: PartiesStrategy = {
+      pihak: state.pihak ?? "penggugat",
+      clientNoun: nouns.clientNoun,
+      lawanNoun: nouns.lawanNoun,
+      clientIdentities: clientIds.map((s) => s.trim()).filter(Boolean),
+      lawanIdentities: lawanIds.map((s) => s.trim()).filter(Boolean),
+      strategi: strategi.trim(),
+    };
+    dispatch({ type: "SET_PARTIES_STRATEGY", value: ps });
+    fireAndForget("/api/analyze/save-parties", { sessionId: state.sessionId, partiesStrategy: ps });
+    if (state.folderPath) {
+      fireAndForget("/api/sharepoint/save-matter-file", {
+        folderPath: state.folderPath,
+        filename: `AI/parties_strategy_${ts()}.json`,
+        content: JSON.stringify({ ref: state.ref, ...ps, timestamp: new Date().toISOString() }),
+      });
+    }
+    setB3Step("loading");
+    void loadInterviewQuestions(state.pihak ?? "penggugat", ps);
+  }
+
+  async function loadInterviewQuestions(pihakValue: string, ps?: PartiesStrategy | null) {
     setQuestionsError("");
     try {
       const res = await fetch("/api/analyze/interview-questions", {
@@ -169,6 +215,7 @@ export default function Stage3Analysis() {
           claimType: state.claimType,
           pihak: pihakValue,
           kronologi: state.caseAnalysis?.kronologi ?? "",
+          partiesStrategy: ps ?? state.partiesStrategy,
         }),
       });
       const data = await res.json();
@@ -197,6 +244,7 @@ export default function Stage3Analysis() {
           kronologi: state.caseAnalysis?.kronologi ?? "",
           interviewAnswers: ia,
           caseAnalysis: state.caseAnalysis,
+          partiesStrategy: state.partiesStrategy,
         }),
       });
       const data = await res.json();
@@ -403,6 +451,92 @@ export default function Stage3Analysis() {
             <button onClick={() => setSubstep("3A")} style={btnSecondary}>← Kembali</button>
           </div>
         )}
+
+        {/* Sub-step 1B: party identities + initial strategy */}
+        {b3Step === "parties" && (() => {
+          const nouns = partyNouns(state.docTypeId, state.claimType, state.pihak);
+          const canProceed =
+            clientIds[0]?.trim() !== "" &&
+            lawanIds.some((id) => id.trim() !== "") &&
+            strategi.trim() !== "";
+          return (
+            <div>
+              <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 20 }}>
+                Konfirmasi identitas para pihak dan strategi awal sebelum pertanyaan wawancara dibuat.
+              </p>
+
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--accent-gold)", letterSpacing: "0.06em", marginBottom: 8 }}>
+                  IDENTITAS {nouns.clientNoun.toUpperCase()} (KLIEN)
+                </label>
+                <input
+                  type="text"
+                  value={clientIds[0] || ""}
+                  onChange={(e) => { const next = [...clientIds]; next[0] = e.target.value; setClientIds(next); }}
+                  placeholder={`Nama lengkap dan kualifikasi ${nouns.clientNoun} — orang/badan hukum`}
+                  style={{ width: "100%", fontSize: 13, padding: "10px 12px", border: "1px solid var(--border-color)", borderRadius: 4, background: "var(--bg-surface)", color: "var(--text-primary)", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 18 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--accent-gold)", letterSpacing: "0.06em", marginBottom: 8 }}>
+                  IDENTITAS {nouns.lawanNoun.toUpperCase()}
+                </label>
+                {lawanIds.map((val, idx) => (
+                  <div key={idx} style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <input
+                      type="text"
+                      value={val}
+                      onChange={(e) => { const next = [...lawanIds]; next[idx] = e.target.value; setLawanIds(next); }}
+                      placeholder={`Nama lengkap dan kualifikasi ${nouns.lawanNoun}${nouns.lawanMultiple && lawanIds.length > 1 ? ` ${idx + 1}` : ""}`}
+                      style={{ flex: 1, fontSize: 13, padding: "10px 12px", border: "1px solid var(--border-color)", borderRadius: 4, background: "var(--bg-surface)", color: "var(--text-primary)" }}
+                    />
+                    {nouns.lawanMultiple && idx > 0 && (
+                      <button
+                        onClick={() => setLawanIds((prev) => prev.filter((_, i) => i !== idx))}
+                        style={{ background: "none", border: "1px solid var(--border-color)", borderRadius: 4, padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}
+                      >
+                        Hapus
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {nouns.lawanMultiple && (
+                  <button
+                    onClick={() => setLawanIds((prev) => [...prev, ""])}
+                    style={{ background: "none", border: "none", color: "var(--accent-blue)", cursor: "pointer", fontSize: 13, padding: 0 }}
+                  >
+                    + Tambah {nouns.lawanNoun}
+                  </button>
+                )}
+              </div>
+
+              <div style={{ marginBottom: 24 }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--accent-gold)", letterSpacing: "0.06em", marginBottom: 8 }}>
+                  {nouns.strategyLabel.toUpperCase()}
+                </label>
+                <textarea
+                  value={strategi}
+                  onChange={(e) => setStrategi(e.target.value)}
+                  rows={4}
+                  placeholder={nouns.strategyPlaceholder}
+                  style={{ width: "100%", resize: "vertical", fontSize: 13, lineHeight: 1.6, padding: "10px 12px", border: "1px solid var(--border-color)", borderRadius: 4, background: "var(--bg-surface)", color: "var(--text-primary)", boxSizing: "border-box" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", gap: 12 }}>
+                <button onClick={() => setB3Step("pihak")} style={btnSecondary}>← Kembali</button>
+                <button
+                  onClick={confirmParties}
+                  disabled={!canProceed}
+                  style={{ ...btnPrimary, opacity: canProceed ? 1 : 0.4, cursor: canProceed ? "pointer" : "not-allowed" }}
+                >
+                  Lanjut ke Pertanyaan Interview →
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Sub-step 2: generating questions */}
         {b3Step === "loading" && (

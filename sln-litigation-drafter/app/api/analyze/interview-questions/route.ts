@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import type { CaseAnalysis } from "@/types";
+import type { CaseAnalysis, PartiesStrategy } from "@/types";
 import { MODELS } from "@/config/models";
 
 export const maxDuration = 60;
@@ -9,12 +9,13 @@ const client = new Anthropic();
 
 export async function POST(req: NextRequest) {
   try {
-    const { caseAnalysis, docTypeId, claimType, pihak, kronologi } = (await req.json()) as {
+    const { caseAnalysis, docTypeId, claimType, pihak, kronologi, partiesStrategy } = (await req.json()) as {
       caseAnalysis: CaseAnalysis;
       docTypeId?: string;
       claimType?: string | null;
       pihak?: string;
       kronologi?: string;
+      partiesStrategy?: PartiesStrategy | null;
     };
     if (!caseAnalysis) {
       return NextResponse.json({ error: "caseAnalysis wajib diisi" }, { status: 400 });
@@ -23,9 +24,14 @@ export async function POST(req: NextRequest) {
     const pihakLabel =
       pihak === "tergugat" ? "Tergugat / Termohon" : "Penggugat / Pemohon";
 
-    const prompt = `Anda mempersiapkan WAWANCARA STRATEGIS dengan klien. Drafter mewakili pihak ${pihakLabel} dalam perkara ${(docTypeId || "").replace(/_/g, " ")}${claimType ? ` (${claimType.replace(/_/g, " ")})` : ""}.
+    const partiesBlock = partiesStrategy
+      ? `Drafter mewakili ${partiesStrategy.clientNoun}: ${partiesStrategy.clientIdentities.join("; ")}. Pihak lawan (${partiesStrategy.lawanNoun}): ${partiesStrategy.lawanIdentities.join("; ")}.
+Strategi awal drafter: ${partiesStrategy.strategi}
+Berdasarkan ini dan kronologi perkara, hasilkan 5-8 pertanyaan strategis yang MENGGALI GAP antara strategi awal drafter dan fakta-fakta dalam dokumen — pertanyaan harus menantang dan mempertajam strategi awal, bukan sekadar mengkonfirmasinya.`
+      : `Anda mempersiapkan WAWANCARA STRATEGIS dengan klien. Drafter mewakili pihak ${pihakLabel} dalam perkara ${(docTypeId || "").replace(/_/g, " ")}${claimType ? ` (${claimType.replace(/_/g, " ")})` : ""}.
+Hasilkan 5–8 pertanyaan wawancara yang STRATEGIS dan SPESIFIK terhadap posisi ${pihakLabel}: gali fakta yang memperkuat posisi pihak kami, antisipasi serangan pihak lawan, dan isi celah bukti yang teridentifikasi.`;
 
-Hasilkan 5–8 pertanyaan wawancara yang STRATEGIS dan SPESIFIK terhadap posisi ${pihakLabel}: gali fakta yang memperkuat posisi pihak kami, antisipasi serangan pihak lawan, dan isi celah bukti yang teridentifikasi.
+    const prompt = `${partiesBlock}
 
 KRONOLOGI YANG SUDAH DIKONFIRMASI DRAFTER:
 ${(kronologi || caseAnalysis.kronologi || "").slice(0, 4000)}
@@ -33,7 +39,7 @@ ${(kronologi || caseAnalysis.kronologi || "").slice(0, 4000)}
 KELEMAHAN & GAPS:
 ${caseAnalysis.kelemahanGaps}
 
-IDENTITAS PIHAK:
+IDENTITAS PIHAK (dari dokumen):
 ${caseAnalysis.identitasPihak}
 
 ANALISIS ELEMEN:

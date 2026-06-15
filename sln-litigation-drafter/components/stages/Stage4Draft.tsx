@@ -62,6 +62,7 @@ export default function Stage4Draft() {
           interviewAnswers: state.interviewAnswers,
           strategicAssessment: state.strategicAssessment,
           selectedJurisprudence: state.selectedJurisprudence,
+          partiesStrategy: state.partiesStrategy,
           ...(revisionInstructions ? { revisionInstructions, currentDraft } : {}),
         }),
       });

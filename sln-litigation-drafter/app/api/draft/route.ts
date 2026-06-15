@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getSystemPrompt } from "@/src/prompts";
 import { loadDraftMemory, buildMemoryContext } from "@/lib/blob";
-import type { CaseAnalysis, InterviewAnswer, JurisprudenceEntry } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, JurisprudenceEntry, PartiesStrategy } from "@/types";
 import { MODELS } from "@/config/models";
 
 export const maxDuration = 300;
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
       revisionInstructions,
       currentDraft,
       selectedJurisprudence,
+      partiesStrategy,
     } = (await req.json()) as {
       docTypeId: string;
       practiceAreaId: string;
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
       revisionInstructions?: string;
       currentDraft?: string;
       selectedJurisprudence?: JurisprudenceEntry[];
+      partiesStrategy?: PartiesStrategy | null;
     };
 
     // Budget allocation: 1 full best-match style example (docType+claimType →
@@ -54,7 +56,8 @@ export async function POST(req: NextRequest) {
       caseAnalysis,
       userCorrections,
       interviewAnswers ?? [],
-      strategicAssessment ?? ""
+      strategicAssessment ?? "",
+      partiesStrategy ?? null
     );
 
     // Build jurisprudence block if there are selected entries
@@ -85,7 +88,8 @@ export async function POST(req: NextRequest) {
       comp("revisionInstructions", revisionInstructions?.length ?? 0) + " " +
       comp("currentDraft", currentDraft?.length ?? 0) + " | " +
       comp("TOTAL systemPrompt", systemPrompt.length) +
-      ` | mode=${currentDraft ? "revision" : "original"} jurisprudence=${(selectedJurisprudence ?? []).length} (~${Math.round(jurisBlock.length / 4)}t)`
+      ` | mode=${currentDraft ? "revision" : "original"} jurisprudence=${(selectedJurisprudence ?? []).length} (~${Math.round(jurisBlock.length / 4)}t)` +
+      (partiesStrategy ? ` parties=${comp("parties", JSON.stringify(partiesStrategy).length)}` : "")
     );
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -202,10 +206,22 @@ function formatCaseAnalysis(
   analysis: CaseAnalysis,
   corrections: string,
   interviewAnswers: InterviewAnswer[],
-  strategicAssessment: string
+  strategicAssessment: string,
+  partiesStrategy?: PartiesStrategy | null
 ): string {
+  let text = "";
+
+  if (partiesStrategy) {
+    const clientList = partiesStrategy.clientIdentities.join("; ");
+    const lawanList = partiesStrategy.lawanIdentities.join("; ");
+    text += `## IDENTITAS PARA PIHAK (DIKONFIRMASI DRAFTER — GUNAKAN NAMA INI PERSIS DALAM SELURUH DOKUMEN)\n`;
+    text += `${partiesStrategy.clientNoun}: ${clientList}\n`;
+    text += `${partiesStrategy.lawanNoun}: ${lawanList}\n\n`;
+    text += `## STRATEGI AWAL DRAFTER\n${partiesStrategy.strategi}\n\n`;
+  }
+
   const sections = [
-    ["Identitas Para Pihak", analysis.identitasPihak],
+    ["Identitas Para Pihak (dari Dokumen)", analysis.identitasPihak],
     ["Hubungan Hukum Para Pihak", analysis.hubunganHukum],
     ["Kronologi Fakta Material", analysis.kronologi],
     ["Elemen Hukum yang Dianalisis", analysis.elemenHukum],
@@ -215,7 +231,7 @@ function formatCaseAnalysis(
     ["Posisi Hukum yang Direkomendasikan", analysis.posisiHukum],
   ];
 
-  let text = sections
+  text += sections
     .filter(([, v]) => v?.trim())
     .map(([k, v]) => `## ${k}\n${v}`)
     .join("\n\n");
