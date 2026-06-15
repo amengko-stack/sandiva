@@ -170,7 +170,6 @@ export interface WorkflowState {
   approvedForMemory: boolean;
   selectedJurisprudence: JurisprudenceEntry[];
   error: string | null;
-  selectedJurisprudence: JurisprudenceEntry[];
 }
 
 export type WorkflowAction =

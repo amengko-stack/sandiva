@@ -82,7 +82,6 @@ const initialState: WorkflowState = {
   approvedForMemory: false,
   selectedJurisprudence: [],
   error: null,
-  selectedJurisprudence: [],
 };
 
 function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
