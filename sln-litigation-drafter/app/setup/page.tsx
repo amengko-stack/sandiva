@@ -35,9 +35,11 @@ function emptySample(): DocSample {
   return { path: "", claimType: "", analysis: "", refinements: "", storedChars: 0, loading: false };
 }
 
+type SetupMode = "konvensi" | "yurisprudensi";
+
 export default function SetupPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<"conventions" | "jurisprudence">("conventions");
+  const [mode, setMode] = useState<SetupMode>("konvensi");
   const [step, setStep] = useState<SetupStep>(1);
   const [globalError, setGlobalError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -121,31 +123,35 @@ export default function SetupPage() {
 
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 40px", width: "100%" }}>
         {/* Tab bar */}
-        <div style={{ display: "flex", gap: 0, borderBottom: "2px solid var(--border-color)", marginBottom: 32 }}>
-          {(["conventions", "jurisprudence"] as const).map((m) => (
+        <div style={{ display: "flex", gap: 0, marginBottom: 36, borderBottom: "1px solid var(--border-color)" }}>
+          {([
+            { key: "konvensi", label: "Konvensi Firma" },
+            { key: "yurisprudensi", label: "Kelola Yurisprudensi" },
+          ] as { key: SetupMode; label: string }[]).map((tab) => (
             <button
-              key={m}
-              onClick={() => setMode(m)}
+              key={tab.key}
+              onClick={() => setMode(tab.key)}
               style={{
-                padding: "10px 20px",
+                padding: "10px 22px",
+                background: "transparent",
                 border: "none",
-                background: "none",
-                cursor: "pointer",
-                fontWeight: mode === m ? 700 : 400,
-                borderBottom: mode === m ? "2px solid var(--accent-blue)" : "2px solid transparent",
-                marginBottom: -2,
-                color: mode === m ? "var(--accent-blue)" : "var(--text-muted)",
+                borderBottom: mode === tab.key ? "2px solid #008B8B" : "2px solid transparent",
+                color: mode === tab.key ? "#008B8B" : "var(--text-muted)",
                 fontSize: 14,
+                fontWeight: mode === tab.key ? 600 : 400,
+                cursor: "pointer",
+                marginBottom: -1,
               }}
             >
-              {m === "conventions" ? "Konvensi Firma" : "Kelola Yurisprudensi"}
+              {tab.label}
             </button>
           ))}
         </div>
 
-        {mode === "jurisprudence" && <JurisprudenceManager />}
+        {mode === "yurisprudensi" && <JurisprudenceManager />}
 
-        {mode === "conventions" && <>
+        {mode === "konvensi" && (
+        <div>
         {/* Step indicator */}
         <div style={{ display: "flex", gap: 0, marginBottom: 40 }}>
           {stepLabels.map((label, i) => {
@@ -360,7 +366,8 @@ export default function SetupPage() {
             </div>
           </div>
         )}
-        </>}
+        </div>
+        )}
       </div>
     </div>
   );

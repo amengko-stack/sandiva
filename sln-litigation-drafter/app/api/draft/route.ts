@@ -54,12 +54,24 @@ export async function POST(req: NextRequest) {
       caseAnalysis,
       userCorrections,
       interviewAnswers ?? [],
-      strategicAssessment ?? "",
-      selectedJurisprudence ?? []
+      strategicAssessment ?? ""
     );
 
+    let jurisprudenceBlock = "";
+    if (selectedJurisprudence && selectedJurisprudence.length > 0) {
+      const lines: string[] = ["\n\n=== YURISPRUDENSI RELEVAN ==="];
+      selectedJurisprudence.forEach((entry, i) => {
+        lines.push(`[${i + 1}] Putusan ${entry.nomor} — ${entry.forum}`);
+        lines.push(`Topik: ${entry.topik.join(", ")}`);
+        lines.push(`Kaidah: ${entry.kaidah}`);
+        lines.push(`Pasal Terkait: ${entry.pasal_terkait.join(", ")}`);
+        lines.push("");
+      });
+      jurisprudenceBlock = lines.join("\n");
+    }
+
     const systemPrompt = getSystemPrompt(docTypeId, {
-      caseAnalysis: analysisText,
+      caseAnalysis: analysisText + jurisprudenceBlock,
       memoryContext,
       claimType,
       ref,
@@ -82,7 +94,7 @@ export async function POST(req: NextRequest) {
       comp("userCorrections", userCorrections?.length ?? 0) + " " +
       comp("revisionInstructions", revisionInstructions?.length ?? 0) + " " +
       comp("currentDraft", currentDraft?.length ?? 0) + " " +
-      comp("jurisprudence", selectedJurisprudence?.length ?? 0) + " | " +
+      `jurisprudence=${selectedJurisprudence?.length ?? 0} (~${Math.round((jurisprudenceBlock?.length ?? 0) / 4)}t) | ` +
       comp("TOTAL systemPrompt", systemPrompt.length) +
       ` | mode=${currentDraft ? "revision" : "original"}`
     );
@@ -201,8 +213,7 @@ function formatCaseAnalysis(
   analysis: CaseAnalysis,
   corrections: string,
   interviewAnswers: InterviewAnswer[],
-  strategicAssessment: string,
-  selectedJurisprudence: JurisprudenceEntry[] = []
+  strategicAssessment: string
 ): string {
   const sections = [
     ["Identitas Para Pihak", analysis.identitasPihak],
@@ -253,13 +264,6 @@ function formatCaseAnalysis(
 
   if (corrections?.trim()) {
     text += `\n\n## KOREKSI DAN CATATAN DRAFTER\n${corrections}`;
-  }
-
-  if (selectedJurisprudence && selectedJurisprudence.length > 0) {
-    text += `\n\n## YURISPRUDENSI TERVERIFIKASI SLN\nPutusan MA berikut telah diverifikasi oleh SLN dan BOLEH dikutip langsung dalam draft tanpa tanda [VERIFIKASI]. Sertakan sitasi ke putusan yang relevan secara inline sesuai konteks argumen.\n`;
-    selectedJurisprudence.forEach((e, i) => {
-      text += `${i + 1}. ${e.nomor} — ${e.kaidah} (Pasal terkait: ${e.pasal_terkait.join(", ")})\n`;
-    });
   }
 
   return text;

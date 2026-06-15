@@ -168,6 +168,7 @@ export interface WorkflowState {
   ref: string;
   savedToSharePoint: boolean;
   approvedForMemory: boolean;
+  selectedJurisprudence: JurisprudenceEntry[];
   error: string | null;
   selectedJurisprudence: JurisprudenceEntry[];
 }
@@ -204,6 +205,7 @@ export type WorkflowAction =
   | { type: "SET_REF"; ref: string }
   | { type: "SET_SAVED_SHAREPOINT"; value: boolean }
   | { type: "SET_APPROVED_MEMORY"; value: boolean }
+  | { type: "SET_SELECTED_JURISPRUDENCE"; entries: JurisprudenceEntry[] }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_SELECTED_JURISPRUDENCE"; entries: JurisprudenceEntry[] }
   | { type: "RESET" };

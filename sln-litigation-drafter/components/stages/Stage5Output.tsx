@@ -35,8 +35,7 @@ export default function Stage5Output() {
     if (pasal.length > 0) {
       lines.push("A. PASAL / UU / PP / PERMA");
       pasal.forEach((c, i) => {
-        const sourceLabel = c.source === "terverifikasi — dari database SLN" ? "Terverifikasi (Database SLN)" : c.source;
-        lines.push(`${i + 1}. ${c.text} — [sumber: ${sourceLabel}]${c.note ? ` — ${c.note}` : ""}`);
+        lines.push(`${i + 1}. ${c.text} — [sumber: ${c.source}]${c.note ? ` — ${c.note}` : ""}`);
       });
       lines.push("");
     }
@@ -44,7 +43,12 @@ export default function Stage5Output() {
     if (yurisprudensi.length > 0) {
       lines.push("B. YURISPRUDENSI MAHKAMAH AGUNG");
       yurisprudensi.forEach((c, i) => {
-        const label = c.source === "terverifikasi — dari database SLN" ? "TERVERIFIKASI — DATABASE SLN" : c.source === "perlu verifikasi" ? "PERLU VERIFIKASI" : c.source;
+        const label =
+          c.source === "terverifikasi — dari database SLN"
+            ? "Terverifikasi (Database SLN)"
+            : c.source === "perlu verifikasi"
+            ? "Perlu Verifikasi"
+            : c.source;
         lines.push(`${i + 1}. ${c.text} — [sumber: ${label}]${c.note ? ` — ${c.note}` : ""}`);
       });
       lines.push("");
@@ -203,7 +207,6 @@ export default function Stage5Output() {
   }
 
   const needsVerification = citations?.filter((c) => c.source === "perlu verifikasi") ?? [];
-  const verifiedFromDb = citations?.filter((c) => c.source === "terverifikasi — dari database SLN") ?? [];
 
   return (
     <div>
@@ -396,10 +399,10 @@ export default function Stage5Output() {
 }
 
 function CitationRow({ item }: { item: CitationItem }) {
-  const isRed = item.source === "perlu verifikasi";
   const isTeal = item.source === "terverifikasi — dari database SLN";
-  const badgeColor = isRed ? "#c0392b" : isTeal ? "#ffffff" : item.source === "konvensi firma" ? "#27ae60" : "#2980b9";
-  const badgeBg = isRed ? "rgba(192,57,43,0.12)" : isTeal ? "#1abc9c" : item.source === "konvensi firma" ? "rgba(39,174,96,0.12)" : "rgba(41,128,185,0.12)";
+  const isRed = item.source === "perlu verifikasi";
+  const badgeColor = isTeal ? "#008B8B" : isRed ? "#c0392b" : item.source === "konvensi firma" ? "#27ae60" : "#2980b9";
+  const badgeBg = isTeal ? "rgba(0,139,139,0.12)" : isRed ? "rgba(192,57,43,0.12)" : item.source === "konvensi firma" ? "rgba(39,174,96,0.12)" : "rgba(41,128,185,0.12)";
 
   return (
     <div style={{
@@ -408,15 +411,15 @@ function CitationRow({ item }: { item: CitationItem }) {
       gap: 10,
       padding: "7px 10px",
       borderRadius: 4,
-      background: isRed ? "rgba(192,57,43,0.06)" : "transparent",
-      border: isRed ? "1px solid rgba(192,57,43,0.25)" : "1px solid transparent",
+      background: isRed ? "rgba(192,57,43,0.06)" : isTeal ? "rgba(0,139,139,0.04)" : "transparent",
+      border: isRed ? "1px solid rgba(192,57,43,0.25)" : isTeal ? "1px solid rgba(0,139,139,0.2)" : "1px solid transparent",
     }}>
       <span style={{ fontSize: 13, color: isRed ? "#c0392b" : "var(--text-primary)", flex: 1, lineHeight: 1.5 }}>
         {isRed && <strong>[PERLU VERIFIKASI] </strong>}{item.text}
         {item.note && <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 12 }}>— {item.note}</span>}
       </span>
       <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 10, background: badgeBg, color: badgeColor, whiteSpace: "nowrap", fontWeight: 500 }}>
-        {item.source}
+        {isTeal ? "terverifikasi — database SLN" : item.source}
       </span>
     </div>
   );
