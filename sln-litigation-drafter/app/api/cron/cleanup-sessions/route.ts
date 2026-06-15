@@ -13,7 +13,7 @@ async function deleteOlderThan(prefix: string, ttlMs: number): Promise<number> {
   let cursor: string | undefined;
   do {
     const page = await list({ prefix, cursor });
-    const stale = page.blobs.filter((b) => new Date(b.uploadedAt).getTime() < cutoff);
+    const stale = page.blobs.filter((b) => b.uploadedAt.getTime() < cutoff);
     if (stale.length > 0) {
       await del(stale.map((b) => b.url));
       deleted += stale.length;

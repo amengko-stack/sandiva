@@ -112,10 +112,26 @@ export interface DraftMeta {
   folderPath: string;
 }
 
+export interface JurisprudenceEntry {
+  id: string;
+  nomor: string;
+  tahun: number;
+  topik: string[];
+  kaidah: string;
+  pasal_terkait: string[];
+  forum: string;
+  sumber_file: string;
+  tipe_sumber: "pdf" | "docx" | "doc";
+  verified: boolean;
+  addedAt: string;
+}
+
+export type RelevantJurisprudence = JurisprudenceEntry & { score: number; preselect: boolean };
+
 export interface CitationItem {
   text: string;
   type: "pasal_uu" | "yurisprudensi";
-  source: "konvensi firma" | "dokumen perkara" | "perlu verifikasi";
+  source: "konvensi firma" | "dokumen perkara" | "perlu verifikasi" | "terverifikasi — dari database SLN";
   note?: string;
 }
 
@@ -152,6 +168,7 @@ export interface WorkflowState {
   ref: string;
   savedToSharePoint: boolean;
   approvedForMemory: boolean;
+  selectedJurisprudence: JurisprudenceEntry[];
   error: string | null;
 }
 
@@ -187,5 +204,6 @@ export type WorkflowAction =
   | { type: "SET_REF"; ref: string }
   | { type: "SET_SAVED_SHAREPOINT"; value: boolean }
   | { type: "SET_APPROVED_MEMORY"; value: boolean }
+  | { type: "SET_SELECTED_JURISPRUDENCE"; entries: JurisprudenceEntry[] }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "RESET" };

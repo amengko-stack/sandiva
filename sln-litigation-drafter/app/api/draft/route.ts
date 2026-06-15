@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getSystemPrompt } from "@/src/prompts";
 import { loadDraftMemory, buildMemoryContext } from "@/lib/blob";
-import type { CaseAnalysis, InterviewAnswer } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, JurisprudenceEntry } from "@/types";
 import { MODELS } from "@/config/models";
 
 export const maxDuration = 300;
@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
       strategicAssessment,
       revisionInstructions,
       currentDraft,
+      selectedJurisprudence,
     } = (await req.json()) as {
       docTypeId: string;
       practiceAreaId: string;
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
       strategicAssessment?: string;
       revisionInstructions?: string;
       currentDraft?: string;
+      selectedJurisprudence?: JurisprudenceEntry[];
     };
 
     // Budget allocation: 1 full best-match style example (docType+claimType →
@@ -55,9 +57,12 @@ export async function POST(req: NextRequest) {
       strategicAssessment ?? ""
     );
 
+    // Build jurisprudence block if there are selected entries
+    const jurisBlock = buildJurisprudenceBlock(selectedJurisprudence ?? []);
+
     const systemPrompt = getSystemPrompt(docTypeId, {
       caseAnalysis: analysisText,
-      memoryContext,
+      memoryContext: memoryContext + jurisBlock,
       claimType,
       ref,
       pihak,
@@ -80,7 +85,7 @@ export async function POST(req: NextRequest) {
       comp("revisionInstructions", revisionInstructions?.length ?? 0) + " " +
       comp("currentDraft", currentDraft?.length ?? 0) + " | " +
       comp("TOTAL systemPrompt", systemPrompt.length) +
-      ` | mode=${currentDraft ? "revision" : "original"}`
+      ` | mode=${currentDraft ? "revision" : "original"} jurisprudence=${(selectedJurisprudence ?? []).length} (~${Math.round(jurisBlock.length / 4)}t)`
     );
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -251,4 +256,17 @@ function formatCaseAnalysis(
   }
 
   return text;
+}
+
+function buildJurisprudenceBlock(entries: JurisprudenceEntry[]): string {
+  if (entries.length === 0) return "";
+  const lines = ["\n\n=== YURISPRUDENSI RELEVAN ==="];
+  entries.forEach((e, i) => {
+    lines.push(`[${i + 1}] Putusan ${e.nomor} — ${e.forum}`);
+    lines.push(`Topik: ${e.topik.join(", ")}`);
+    lines.push(`Kaidah: ${e.kaidah}`);
+    lines.push(`Pasal Terkait: ${e.pasal_terkait.join(", ")}`);
+    lines.push("");
+  });
+  return lines.join("\n");
 }

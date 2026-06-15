@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
 import { readBlobText } from "@/lib/blob";
-import type { CitationItem } from "@/types";
+import type { CitationItem, JurisprudenceEntry } from "@/types";
 
 export const maxDuration = 60;
 
@@ -21,14 +21,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "draftText wajib diisi" }, { status: 400 });
     }
 
-    // Read conventions and case documents in parallel
-    const [conventions, caseDocsRaw] = await Promise.all([
+    // Read conventions, case documents, and selected jurisprudence in parallel
+    const [conventions, caseDocsRaw, jurisRaw] = await Promise.all([
       readBlobText("firm_conventions.md"),
       sessionId ? readBlobText(`sessions/${sessionId}/extracted_text.json`) : Promise.resolve(null),
+      sessionId ? readBlobText(`sessions/${sessionId}/jurisprudence_selected.json`) : Promise.resolve(null),
     ]);
 
     const conventionsText = conventions ?? "(tidak tersedia)";
     const caseDocsText = caseDocsRaw ? caseDocsRaw.slice(0, 100000) : "(tidak tersedia)";
+
+    // Parse stored jurisprudence entries
+    let storedJuris: JurisprudenceEntry[] = [];
+    if (jurisRaw) {
+      try {
+        storedJuris = JSON.parse(jurisRaw) as JurisprudenceEntry[];
+      } catch {}
+    }
 
     const prompt = `Ekstrak dan klasifikasikan setiap sitasi dari draf dokumen berikut.
 
@@ -73,8 +82,27 @@ Kembalikan HANYA JSON dengan format:
       `head=${JSON.stringify(raw.slice(0, 150))} tail=${JSON.stringify(raw.slice(-100))}`
     );
 
-    const citations = parseCitations(raw, response.stop_reason ?? "");
-    console.log(`[citations] extracted=${citations.length} perluVerifikasi=${citations.filter(c => c.source === "perlu verifikasi").length}`);
+    let citations = parseCitations(raw, response.stop_reason ?? "");
+
+    // Override source for yurisprudensi that are verified in the stored DB
+    if (storedJuris.length > 0) {
+      const verifiedNomors = storedJuris
+        .filter((e) => e.verified)
+        .map((e) => e.nomor.toLowerCase());
+      citations = citations.map((c) => {
+        if (c.type === "yurisprudensi") {
+          const textLower = c.text.toLowerCase();
+          for (const nomor of verifiedNomors) {
+            if (textLower.includes(nomor)) {
+              return { ...c, source: "terverifikasi — dari database SLN" as const };
+            }
+          }
+        }
+        return c;
+      });
+    }
+
+    console.log(`[citations] extracted=${citations.length} perluVerifikasi=${citations.filter(c => c.source === "perlu verifikasi").length} terverifikasi=${citations.filter(c => c.source === "terverifikasi — dari database SLN").length}`);
     return NextResponse.json({ citations });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Terjadi kesalahan";
@@ -101,7 +129,7 @@ function parseCitations(raw: string, stopReason: string): CitationItem[] {
           (c): c is CitationItem =>
             typeof (c as CitationItem).text === "string" &&
             ["pasal_uu", "yurisprudensi"].includes((c as CitationItem).type) &&
-            ["konvensi firma", "dokumen perkara", "perlu verifikasi"].includes((c as CitationItem).source)
+            ["konvensi firma", "dokumen perkara", "perlu verifikasi", "terverifikasi — dari database SLN"].includes((c as CitationItem).source)
         );
         return items;
       }
