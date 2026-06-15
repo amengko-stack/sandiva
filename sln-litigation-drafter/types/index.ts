@@ -205,5 +205,4 @@ export type WorkflowAction =
   | { type: "SET_SAVED_SHAREPOINT"; value: boolean }
   | { type: "SET_APPROVED_MEMORY"; value: boolean }
   | { type: "SET_ERROR"; error: string | null }
-  | { type: "SET_SELECTED_JURISPRUDENCE"; entries: JurisprudenceEntry[] }
   | { type: "RESET" };
