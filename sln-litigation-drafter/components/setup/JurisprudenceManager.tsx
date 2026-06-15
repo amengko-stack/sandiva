@@ -2,10 +2,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { JurisprudenceEntry } from "@/types";
 
+type ParseMessage =
+  | { type: "progress"; chunk: number; total: number; entriesFound: number; running: number; file: string }
+  | { type: "done"; entries: JurisprudenceEntry[] }
+  | { type: "error"; message: string };
+
 export default function JurisprudenceManager() {
   const [dbEntries, setDbEntries] = useState<JurisprudenceEntry[]>([]);
   const [pendingEntries, setPendingEntries] = useState<JurisprudenceEntry[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -27,6 +33,7 @@ export default function JurisprudenceManager() {
     setUploading(true);
     setError(null);
     setSuccessMsg(null);
+    setProgress(null);
     try {
       const form = new FormData();
       for (const f of Array.from(files)) form.append("files", f);
@@ -39,14 +46,39 @@ export default function JurisprudenceManager() {
         setError(errText.slice(0, 400));
         return;
       }
-      const data = (await res.json()) as { entries?: JurisprudenceEntry[]; error?: string };
-      if (data.error) { setError(data.error); return; }
-      setPendingEntries(data.entries ?? []);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+
+      // Read NDJSON stream line by line.
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let msg: ParseMessage;
+          try { msg = JSON.parse(line) as ParseMessage; } catch { continue; }
+          if (msg.type === "progress") {
+            setProgress(`Memproses bagian ${msg.chunk} dari ${msg.total} — ${msg.running} putusan ditemukan sejauh ini...`);
+          } else if (msg.type === "done") {
+            setPendingEntries(msg.entries ?? []);
+            setProgress(null);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          } else if (msg.type === "error") {
+            setError(msg.message ?? "Error tidak diketahui");
+            setProgress(null);
+          }
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload gagal");
     } finally {
       setUploading(false);
+      setProgress(null);
     }
   }
 
@@ -116,6 +148,9 @@ export default function JurisprudenceManager() {
         </button>
       </div>
 
+      {progress && (
+        <p style={{ color: "#2563eb", fontSize: 13, marginBottom: 12, fontStyle: "italic" }}>{progress}</p>
+      )}
       {error && <p style={{ color: "#dc2626", marginBottom: 12 }}>{error}</p>}
       {successMsg && <p style={{ color: "#16a34a", marginBottom: 12 }}>{successMsg}</p>}
 
