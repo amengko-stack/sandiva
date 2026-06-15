@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
+import AddDocumentsModal from "@/components/AddDocumentsModal";
 import type { CaseAnalysis, InterviewAnswer, PartiesStrategy, StructuredAssessment, RelevantJurisprudence, JurisprudenceEntry } from "@/types";
 
 // Parse a stored assessment string: structured JSON from the new flow, or
@@ -84,6 +85,10 @@ export default function Stage3Analysis() {
   // 3C jurisprudence
   const [relevantJurisprudence, setRelevantJurisprudence] = useState<RelevantJurisprudence[]>([]);
   const [checkedJuris, setCheckedJuris] = useState<boolean[]>([]);
+
+  // Tambah Dokumen (add documents mid-workflow)
+  const [addDocsOpen, setAddDocsOpen] = useState(false);
+  const [addDocsWarning, setAddDocsWarning] = useState(false);
 
   // Initial analysis
   const [analyzing, setAnalyzing] = useState(false);
@@ -221,7 +226,10 @@ export default function Stage3Analysis() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menghasilkan pertanyaan");
       setQuestions(data.questions);
-      setAnswers(data.questions.map(() => ""));
+      // Preserve prior interview answers as pre-filled defaults (e.g. after
+      // adding documents + re-running analysis): match by exact question text.
+      const prior = new Map(state.interviewAnswers.map((a) => [a.question.trim(), a.answer]));
+      setAnswers((data.questions as string[]).map((q) => prior.get(q.trim()) ?? ""));
       setCurrentQ(0);
       setB3Step("wizard");
     } catch (e: unknown) {
@@ -365,6 +373,45 @@ export default function Stage3Analysis() {
     goToStage(1);
   }
 
+  // After adding documents: clear analysis + assessment (interview answers and
+  // party strategy are preserved) and re-run Stage 3A on the full document set.
+  function reanalyzeWithNewDocs() {
+    dispatch({ type: "CLEAR_ANALYSIS" });
+    setAssessment(null);
+    setAddDocsWarning(false);
+    setSubstep("3A");
+    runAnalysis();
+  }
+
+  const addDocsModal = (
+    <AddDocumentsModal
+      open={addDocsOpen}
+      onClose={() => setAddDocsOpen(false)}
+      onReanalyze={reanalyzeWithNewDocs}
+      onContinueWithout={() => setAddDocsWarning(true)}
+    />
+  );
+
+  const actionRow = (
+    <div style={{ marginTop: 28, paddingTop: 16, borderTop: "1px solid var(--border-color)" }}>
+      {addDocsWarning && (
+        <div style={{ padding: 12, background: "rgba(184,134,11,0.1)", border: "1px solid var(--accent-gold)", borderRadius: 4, color: "var(--accent-gold)", fontSize: 13, marginBottom: 14 }}>
+          Analisis tidak diperbarui — dokumen baru belum tercermin dalam kronologi dan penilaian strategis.
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 28, flexWrap: "wrap" }}>
+        <div>
+          <button onClick={() => setAddDocsOpen(true)} style={btnSecondary}>Tambah Dokumen</button>
+          <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "4px 0 0" }}>tambah dokumen baru ke analisis perkara ini</p>
+        </div>
+        <div>
+          <button onClick={ubahPendekatan} style={btnSecondary}>Ubah Pendekatan</button>
+          <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "4px 0 0" }}>ubah jenis gugatan atau forum tanpa mengekstraksi ulang</p>
+        </div>
+      </div>
+    </div>
+  );
+
   // ── Loading / error for initial analysis ────────────────────────────────────
   if (substep === null) {
     return (
@@ -411,6 +458,8 @@ export default function Stage3Analysis() {
           <button onClick={() => goToStage(2)} style={btnSecondary}>← Kembali</button>
           <button onClick={confirm3A} style={btnPrimary}>Konfirmasi Kronologi →</button>
         </div>
+        {actionRow}
+        {addDocsModal}
       </div>
     );
   }
@@ -626,6 +675,8 @@ export default function Stage3Analysis() {
             </div>
           </div>
         )}
+        {actionRow}
+        {addDocsModal}
       </div>
     );
   }
@@ -706,10 +757,11 @@ export default function Stage3Analysis() {
 
           <div style={{ display: "flex", gap: 12 }}>
             <button onClick={proceedWithStrategy} style={btnPrimary}>Lanjut dengan Strategi Ini →</button>
-            <button onClick={ubahPendekatan} style={btnSecondary}>Ubah Pendekatan</button>
           </div>
+          {actionRow}
         </div>
       )}
+      {addDocsModal}
 
       {/* Risk acknowledgment modal — every risk must be ticked to proceed */}
       {riskModalOpen && assessment && (

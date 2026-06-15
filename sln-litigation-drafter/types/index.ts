@@ -179,6 +179,7 @@ export interface WorkflowState {
   approvedForMemory: boolean;
   selectedJurisprudence: JurisprudenceEntry[];
   partiesStrategy: PartiesStrategy | null;
+  addedFileIds: string[];
   error: string | null;
 }
 
@@ -216,5 +217,7 @@ export type WorkflowAction =
   | { type: "SET_APPROVED_MEMORY"; value: boolean }
   | { type: "SET_SELECTED_JURISPRUDENCE"; entries: JurisprudenceEntry[] }
   | { type: "SET_PARTIES_STRATEGY"; value: PartiesStrategy }
+  | { type: "MARK_FILES_ADDED"; ids: string[] }
+  | { type: "CLEAR_ANALYSIS" }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "RESET" };
