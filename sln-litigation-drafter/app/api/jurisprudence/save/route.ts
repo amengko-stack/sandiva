@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       const buf = Buffer.from(sourceFile.base64, "base64");
       await uploadFileToSharePoint("SLN-AI/jurisprudence/sources", sourceFile.name, buf, sourceFile.mime);
     }
-    return NextResponse.json({ total: merged.length });
+    return NextResponse.json({ total: merged.length, entries: merged });
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Error" }, { status: 500 });
   }

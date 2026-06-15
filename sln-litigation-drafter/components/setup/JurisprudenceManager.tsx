@@ -92,11 +92,11 @@ export default function JurisprudenceManager() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entries: pendingEntries }),
       });
-      const data = (await res.json()) as { total?: number; error?: string };
+      const data = (await res.json()) as { total?: number; entries?: JurisprudenceEntry[]; error?: string };
       if (data.error) { setError(data.error); return; }
       setSuccessMsg(`Tersimpan. Database SLN: ${data.total ?? 0} putusan terverifikasi.`);
       setPendingEntries([]);
-      await loadDb();
+      if (data.entries) setDbEntries(data.entries);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Simpan gagal");
     } finally {
