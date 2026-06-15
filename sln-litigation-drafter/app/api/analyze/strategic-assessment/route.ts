@@ -79,12 +79,13 @@ Ketentuan per bagian:
 - rekomendasi: satu rekomendasi spesifik dan dapat ditindaklanjuti — lanjutkan / ubah jenis gugatan / ubah forum / kumpulkan bukti dulu. Jika BUKAN "lanjutkan", sebutkan kelemahan spesifik yang mendasarinya.`;
 
     console.log(`[model] stage=asesmen-strategis model=${MODELS.assessment}`);
-    const message = await client.messages.create({
+    const stream = client.messages.stream({
       model: MODELS.assessment,
       max_tokens: 4096,
       system: SYSTEM,
       messages: [{ role: "user", content: prompt }],
     });
+    const message = await stream.finalMessage();
 
     const raw = message.content[0].type === "text" ? message.content[0].text : "";
     console.log(
