@@ -57,22 +57,12 @@ export async function POST(req: NextRequest) {
       strategicAssessment ?? ""
     );
 
-    let jurisprudenceBlock = "";
-    if (selectedJurisprudence && selectedJurisprudence.length > 0) {
-      const lines: string[] = ["\n\n=== YURISPRUDENSI RELEVAN ==="];
-      selectedJurisprudence.forEach((entry, i) => {
-        lines.push(`[${i + 1}] Putusan ${entry.nomor} — ${entry.forum}`);
-        lines.push(`Topik: ${entry.topik.join(", ")}`);
-        lines.push(`Kaidah: ${entry.kaidah}`);
-        lines.push(`Pasal Terkait: ${entry.pasal_terkait.join(", ")}`);
-        lines.push("");
-      });
-      jurisprudenceBlock = lines.join("\n");
-    }
+    // Build jurisprudence block if there are selected entries
+    const jurisBlock = buildJurisprudenceBlock(selectedJurisprudence ?? []);
 
     const systemPrompt = getSystemPrompt(docTypeId, {
-      caseAnalysis: analysisText + jurisprudenceBlock,
-      memoryContext,
+      caseAnalysis: analysisText,
+      memoryContext: memoryContext + jurisBlock,
       claimType,
       ref,
       pihak,
@@ -93,10 +83,9 @@ export async function POST(req: NextRequest) {
       comp("assessment", strategicAssessment?.length ?? 0) + " " +
       comp("userCorrections", userCorrections?.length ?? 0) + " " +
       comp("revisionInstructions", revisionInstructions?.length ?? 0) + " " +
-      comp("currentDraft", currentDraft?.length ?? 0) + " " +
-      `jurisprudence=${selectedJurisprudence?.length ?? 0} (~${Math.round((jurisprudenceBlock?.length ?? 0) / 4)}t) | ` +
+      comp("currentDraft", currentDraft?.length ?? 0) + " | " +
       comp("TOTAL systemPrompt", systemPrompt.length) +
-      ` | mode=${currentDraft ? "revision" : "original"}`
+      ` | mode=${currentDraft ? "revision" : "original"} jurisprudence=${(selectedJurisprudence ?? []).length} (~${Math.round(jurisBlock.length / 4)}t)`
     );
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -267,4 +256,17 @@ function formatCaseAnalysis(
   }
 
   return text;
+}
+
+function buildJurisprudenceBlock(entries: JurisprudenceEntry[]): string {
+  if (entries.length === 0) return "";
+  const lines = ["\n\n=== YURISPRUDENSI RELEVAN ==="];
+  entries.forEach((e, i) => {
+    lines.push(`[${i + 1}] Putusan ${e.nomor} — ${e.forum}`);
+    lines.push(`Topik: ${e.topik.join(", ")}`);
+    lines.push(`Kaidah: ${e.kaidah}`);
+    lines.push(`Pasal Terkait: ${e.pasal_terkait.join(", ")}`);
+    lines.push("");
+  });
+  return lines.join("\n");
 }

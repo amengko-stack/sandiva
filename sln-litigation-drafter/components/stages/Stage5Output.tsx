@@ -281,7 +281,6 @@ export default function Stage5Output() {
           )}
           {citations && !citationsLoading && citations.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* Pasal / UU group */}
               {citations.filter((c) => c.type === "pasal_uu").length > 0 && (
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>Pasal / UU</div>
@@ -292,7 +291,6 @@ export default function Stage5Output() {
                   </div>
                 </div>
               )}
-              {/* Yurisprudensi MA group */}
               {citations.filter((c) => c.type === "yurisprudensi").length > 0 && (
                 <div>
                   <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)", letterSpacing: "0.05em", textTransform: "uppercase", marginBottom: 8 }}>Yurisprudensi Mahkamah Agung</div>
@@ -401,8 +399,8 @@ export default function Stage5Output() {
 function CitationRow({ item }: { item: CitationItem }) {
   const isTeal = item.source === "terverifikasi — dari database SLN";
   const isRed = item.source === "perlu verifikasi";
-  const badgeColor = isTeal ? "#008B8B" : isRed ? "#c0392b" : item.source === "konvensi firma" ? "#27ae60" : "#2980b9";
-  const badgeBg = isTeal ? "rgba(0,139,139,0.12)" : isRed ? "rgba(192,57,43,0.12)" : item.source === "konvensi firma" ? "rgba(39,174,96,0.12)" : "rgba(41,128,185,0.12)";
+  const badgeColor = isTeal ? "#16a085" : isRed ? "#c0392b" : item.source === "konvensi firma" ? "#27ae60" : "#2980b9";
+  const badgeBg = isTeal ? "rgba(22,160,133,0.12)" : isRed ? "rgba(192,57,43,0.12)" : item.source === "konvensi firma" ? "rgba(39,174,96,0.12)" : "rgba(41,128,185,0.12)";
 
   return (
     <div style={{
@@ -411,15 +409,15 @@ function CitationRow({ item }: { item: CitationItem }) {
       gap: 10,
       padding: "7px 10px",
       borderRadius: 4,
-      background: isRed ? "rgba(192,57,43,0.06)" : isTeal ? "rgba(0,139,139,0.04)" : "transparent",
-      border: isRed ? "1px solid rgba(192,57,43,0.25)" : isTeal ? "1px solid rgba(0,139,139,0.2)" : "1px solid transparent",
+      background: isRed ? "rgba(192,57,43,0.06)" : isTeal ? "rgba(22,160,133,0.06)" : "transparent",
+      border: isRed ? "1px solid rgba(192,57,43,0.25)" : isTeal ? "1px solid rgba(22,160,133,0.25)" : "1px solid transparent",
     }}>
       <span style={{ fontSize: 13, color: isRed ? "#c0392b" : "var(--text-primary)", flex: 1, lineHeight: 1.5 }}>
         {isRed && <strong>[PERLU VERIFIKASI] </strong>}{item.text}
         {item.note && <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 12 }}>— {item.note}</span>}
       </span>
       <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 10, background: badgeBg, color: badgeColor, whiteSpace: "nowrap", fontWeight: 500 }}>
-        {isTeal ? "terverifikasi — database SLN" : item.source}
+        {item.source}
       </span>
     </div>
   );

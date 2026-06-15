@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "draftText wajib diisi" }, { status: 400 });
     }
 
-    // Read conventions, case documents, and jurisprudence_selected in parallel
+    // Read conventions, case documents, and selected jurisprudence in parallel
     const [conventions, caseDocsRaw, jurisRaw] = await Promise.all([
       readBlobText("firm_conventions.md"),
       sessionId ? readBlobText(`sessions/${sessionId}/extracted_text.json`) : Promise.resolve(null),
@@ -32,13 +32,11 @@ export async function POST(req: NextRequest) {
     const caseDocsText = caseDocsRaw ? caseDocsRaw.slice(0, 100000) : "(tidak tersedia)";
 
     // Parse stored jurisprudence entries
-    let storedJurisprudence: JurisprudenceEntry[] = [];
+    let storedJuris: JurisprudenceEntry[] = [];
     if (jurisRaw) {
       try {
-        storedJurisprudence = JSON.parse(jurisRaw) as JurisprudenceEntry[];
-      } catch {
-        storedJurisprudence = [];
-      }
+        storedJuris = JSON.parse(jurisRaw) as JurisprudenceEntry[];
+      } catch {}
     }
 
     const prompt = `Ekstrak dan klasifikasikan setiap sitasi dari draf dokumen berikut.
@@ -86,17 +84,18 @@ Kembalikan HANYA JSON dengan format:
 
     let citations = parseCitations(raw, response.stop_reason ?? "");
 
-    // Override source for verified jurisprudence entries from database
-    if (storedJurisprudence.length > 0) {
-      const verifiedNomors = storedJurisprudence
+    // Override source for yurisprudensi that are verified in the stored DB
+    if (storedJuris.length > 0) {
+      const verifiedNomors = storedJuris
         .filter((e) => e.verified)
         .map((e) => e.nomor.toLowerCase());
       citations = citations.map((c) => {
         if (c.type === "yurisprudensi") {
           const textLower = c.text.toLowerCase();
-          const matched = verifiedNomors.some((nomor) => textLower.includes(nomor));
-          if (matched) {
-            return { ...c, source: "terverifikasi — dari database SLN" as const };
+          for (const nomor of verifiedNomors) {
+            if (textLower.includes(nomor)) {
+              return { ...c, source: "terverifikasi — dari database SLN" as const };
+            }
           }
         }
         return c;

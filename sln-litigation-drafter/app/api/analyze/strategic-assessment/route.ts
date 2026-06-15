@@ -10,8 +10,7 @@ const client = new Anthropic();
 
 const SYSTEM = `Anda adalah ahli strategi litigasi senior di firma hukum Indonesia.
 Tugas Anda menilai posisi perkara secara jujur dan tajam SEBELUM draf disusun — termasuk risiko yang tidak disadari drafter.
-Kembalikan HANYA JSON yang valid, tanpa markdown, tanpa teks lain.
-ATURAN SITASI: Jangan menyebut nomor putusan Mahkamah Agung yang spesifik kecuali nomor tersebut muncul secara eksplisit dalam dokumen perkara yang disediakan. Jika yurisprudensi relevan tetapi nomornya tidak tersedia, deskripsikan saja tanpa nomor putusan.`;
+Kembalikan HANYA JSON yang valid, tanpa markdown, tanpa teks lain.`;
 
 export async function POST(req: NextRequest) {
   try {

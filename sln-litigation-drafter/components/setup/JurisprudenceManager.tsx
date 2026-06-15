@@ -7,15 +7,17 @@ export default function JurisprudenceManager() {
   const [entries, setEntries] = useState<JurisprudenceEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [saveSuccess, setSaveSuccess] = useState("");
 
-  // Upload section state
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  // Upload / add section state
+  const [file, setFile] = useState<File | null>(null);
   const [jsonInput, setJsonInput] = useState("");
   const [parsedEntries, setParsedEntries] = useState<JurisprudenceEntry[] | null>(null);
   const [parseError, setParseError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState("");
+
+  // Delete state
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadEntries();
@@ -36,66 +38,41 @@ export default function JurisprudenceManager() {
     }
   }
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setUploadedFile(file);
-    setParsedEntries(null);
-    setParseError("");
-  }
-
   function parseJson() {
     setParseError("");
     setParsedEntries(null);
     try {
       const raw = jsonInput.trim();
       if (!raw) {
-        setParseError("Tempel JSON entri yurisprudensi di atas.");
+        setParseError("JSON kosong");
         return;
       }
-      let parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) parsed = [parsed];
+      const parsed = JSON.parse(raw);
+      const arr: JurisprudenceEntry[] = Array.isArray(parsed) ? parsed : [parsed];
       // Basic validation
-      const validated: JurisprudenceEntry[] = parsed.map((item: Record<string, unknown>, idx: number) => {
-        if (typeof item.nomor !== "string" || !item.nomor)
-          throw new Error(`Entri ${idx + 1}: field 'nomor' wajib dan harus berupa string`);
-        if (typeof item.kaidah !== "string" || !item.kaidah)
-          throw new Error(`Entri ${idx + 1}: field 'kaidah' wajib dan harus berupa string`);
-        return {
-          id: item.id as string || `juris_${Date.now()}_${idx}`,
-          nomor: item.nomor as string,
-          tahun: Number(item.tahun) || 0,
-          topik: Array.isArray(item.topik) ? item.topik as string[] : [],
-          kaidah: item.kaidah as string,
-          pasal_terkait: Array.isArray(item.pasal_terkait) ? item.pasal_terkait as string[] : [],
-          forum: (item.forum as string) || "",
-          sumber_file: (item.sumber_file as string) || uploadedFile?.name || "",
-          tipe_sumber: ((item.tipe_sumber as string) || "pdf") as "pdf" | "docx" | "doc",
-          verified: true,
-          addedAt: new Date().toISOString(),
-        };
-      });
-      setParsedEntries(validated);
-    } catch (e: unknown) {
-      setParseError(e instanceof Error ? e.message : "JSON tidak valid");
+      for (const e of arr) {
+        if (!e.id || !e.nomor || !e.kaidah) {
+          setParseError("Setiap entri harus memiliki id, nomor, dan kaidah");
+          return;
+        }
+      }
+      setParsedEntries(arr);
+    } catch {
+      setParseError("Format JSON tidak valid");
     }
   }
 
   async function saveEntries() {
-    if (!parsedEntries || parsedEntries.length === 0) return;
+    if (!parsedEntries) return;
     setSaving(true);
-    setSaveError("");
     setSaveSuccess("");
+    setError("");
     try {
       let sourceFile: { name: string; base64: string; mime: string } | undefined;
-      if (uploadedFile) {
-        const buf = await uploadedFile.arrayBuffer();
-        const uint8 = new Uint8Array(buf);
-        const base64 = btoa(Array.from(uint8).map((b) => String.fromCharCode(b)).join(""));
-        sourceFile = {
-          name: uploadedFile.name,
-          base64,
-          mime: uploadedFile.type || "application/octet-stream",
-        };
+      if (file) {
+        const buf = await file.arrayBuffer();
+        const base64 = Buffer.from(buf).toString("base64");
+        sourceFile = { name: file.name, base64, mime: file.type || "application/octet-stream" };
       }
       const res = await fetch("/api/jurisprudence/save", {
         method: "POST",
@@ -104,20 +81,21 @@ export default function JurisprudenceManager() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menyimpan");
-      setSaveSuccess(`${parsedEntries.length} entri disimpan. Total database: ${data.total} entri.`);
+      setSaveSuccess(`${parsedEntries.length} entri berhasil disimpan. Total database: ${data.total}`);
       setParsedEntries(null);
       setJsonInput("");
-      setUploadedFile(null);
+      setFile(null);
       await loadEntries();
     } catch (e: unknown) {
-      setSaveError(e instanceof Error ? e.message : "Terjadi kesalahan");
+      setError(e instanceof Error ? e.message : "Terjadi kesalahan");
     } finally {
       setSaving(false);
     }
   }
 
   async function deleteEntry(id: string) {
-    if (!confirm("Hapus entri ini dari database?")) return;
+    setDeletingId(id);
+    setError("");
     try {
       const res = await fetch("/api/jurisprudence/delete", {
         method: "POST",
@@ -128,185 +106,148 @@ export default function JurisprudenceManager() {
       if (!res.ok) throw new Error(data.error || "Gagal menghapus");
       setEntries((prev) => prev.filter((e) => e.id !== id));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Gagal menghapus entri");
+      setError(e instanceof Error ? e.message : "Terjadi kesalahan");
+    } finally {
+      setDeletingId(null);
     }
   }
 
   return (
     <div>
-      {/* Upload section */}
-      <div style={{ marginBottom: 32 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
-          Tambah Yurisprudensi
-        </h3>
-        <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
-          Upload dokumen sumber (PDF/DOCX), lalu tempel JSON entri yurisprudensi yang diekstrak dari dokumen tersebut.
-        </p>
+      <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
+        Kelola Yurisprudensi
+      </h2>
+      <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 28 }}>
+        Tambah, tinjau, dan hapus entri yurisprudensi dari database SLN. Entri yang tersimpan akan otomatis dipertimbangkan saat penyusunan draf.
+      </p>
 
-        <div style={{ border: "1px solid var(--border-color)", borderRadius: 6, overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ padding: "10px 16px", background: "rgba(0,139,139,0.08)", borderBottom: "1px solid var(--border-color)" }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#008B8B", letterSpacing: "0.08em" }}>LANGKAH 1 — UPLOAD DOKUMEN SUMBER (OPSIONAL)</span>
+      {error && (
+        <div style={{ padding: 12, background: "rgba(192,57,43,0.1)", border: "1px solid #c0392b", borderRadius: 4, color: "#c0392b", fontSize: 13, marginBottom: 20 }}>
+          {error}
+        </div>
+      )}
+
+      {saveSuccess && (
+        <div style={{ padding: 12, background: "rgba(22,160,133,0.1)", border: "1px solid #16a085", borderRadius: 4, color: "#16a085", fontSize: 13, marginBottom: 20 }}>
+          ✓ {saveSuccess}
+        </div>
+      )}
+
+      {/* Upload section */}
+      <div style={{ border: "1px solid #1a5f57", borderRadius: 6, marginBottom: 32, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", background: "rgba(22,160,133,0.08)", borderBottom: "1px solid #1a5f57" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", color: "#16a085" }}>
+            TAMBAH ENTRI BARU
           </div>
-          <div style={{ padding: "14px 16px" }}>
+        </div>
+        <div style={{ padding: "16px 20px" }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-muted)", marginBottom: 6 }}>
+              File Sumber (PDF/DOCX) — opsional
+            </label>
             <input
               type="file"
               accept=".pdf,.docx,.doc"
-              onChange={handleFileChange}
-              style={{ fontSize: 13 }}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              style={{ fontSize: 13, color: "var(--text-primary)" }}
             />
-            {uploadedFile && (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#008B8B" }}>
-                ✓ {uploadedFile.name} ({Math.round(uploadedFile.size / 1024)} KB)
-              </div>
+            {file && (
+              <div style={{ fontSize: 12, color: "#16a085", marginTop: 4 }}>✓ {file.name}</div>
             )}
           </div>
-        </div>
 
-        <div style={{ border: "1px solid var(--border-color)", borderRadius: 6, overflow: "hidden", marginBottom: 16 }}>
-          <div style={{ padding: "10px 16px", background: "rgba(0,139,139,0.08)", borderBottom: "1px solid var(--border-color)" }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#008B8B", letterSpacing: "0.08em" }}>LANGKAH 2 — TEMPEL JSON ENTRI</span>
-          </div>
-          <div style={{ padding: "14px 16px" }}>
-            <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
-              Format: array JSON dengan field: <code>nomor</code>, <code>tahun</code>, <code>topik</code>, <code>kaidah</code>, <code>pasal_terkait</code>, <code>forum</code>
-            </p>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "var(--text-muted)", marginBottom: 6 }}>
+              JSON Entri Yurisprudensi
+            </label>
             <textarea
               value={jsonInput}
-              onChange={(e) => { setJsonInput(e.target.value); setParsedEntries(null); setParseError(""); }}
+              onChange={(e) => setJsonInput(e.target.value)}
               rows={8}
-              placeholder={`[\n  {\n    "nomor": "123 K/Pdt/2020",\n    "tahun": 2020,\n    "topik": ["wanprestasi", "kontrak"],\n    "kaidah": "...",\n    "pasal_terkait": ["Pasal 1243 KUHPerdata"],\n    "forum": "Mahkamah Agung"\n  }\n]`}
-              style={{ fontSize: 12, fontFamily: "monospace", width: "100%", resize: "vertical" }}
+              placeholder={`[\n  {\n    "id": "uuid-unik",\n    "nomor": "123 K/Pdt/2020",\n    "tahun": 2020,\n    "topik": ["wanprestasi", "kontrak"],\n    "kaidah": "Ingkar janji harus dibuktikan...",\n    "pasal_terkait": ["Pasal 1243 KUHPerdata"],\n    "forum": "Mahkamah Agung",\n    "sumber_file": "putusan_123.pdf",\n    "tipe_sumber": "pdf",\n    "verified": true,\n    "addedAt": "2024-01-01T00:00:00.000Z"\n  }\n]`}
+              style={{ fontSize: 12, fontFamily: "monospace", lineHeight: 1.5 }}
             />
             {parseError && (
-              <div style={{ marginTop: 8, fontSize: 12, color: "var(--error)" }}>{parseError}</div>
+              <div style={{ fontSize: 12, color: "#c0392b", marginTop: 4 }}>{parseError}</div>
             )}
-            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-              <button
-                onClick={parseJson}
-                disabled={!jsonInput.trim()}
-                style={{ padding: "7px 16px", background: "rgba(0,139,139,0.15)", border: "1px solid #008B8B", borderRadius: 4, color: "#008B8B", fontSize: 13, cursor: !jsonInput.trim() ? "not-allowed" : "pointer", opacity: !jsonInput.trim() ? 0.5 : 1 }}
-              >
-                Validasi JSON
-              </button>
-            </div>
           </div>
-        </div>
 
-        {/* Parsed entries preview */}
-        {parsedEntries && parsedEntries.length > 0 && (
-          <div style={{ border: "1px solid #008B8B", borderRadius: 6, overflow: "hidden", marginBottom: 16 }}>
-            <div style={{ padding: "10px 16px", background: "rgba(0,139,139,0.1)", borderBottom: "1px solid #008B8B" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#008B8B", letterSpacing: "0.08em" }}>
-                LANGKAH 3 — TINJAU {parsedEntries.length} ENTRI SEBELUM SIMPAN
-              </span>
-            </div>
-            <div style={{ padding: "14px 16px" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-                {parsedEntries.map((entry, i) => (
-                  <EntryCard key={i} entry={entry} />
-                ))}
-              </div>
-              {saveError && (
-                <div style={{ padding: "8px 12px", background: "rgba(192,57,43,0.1)", border: "1px solid var(--error)", borderRadius: 4, color: "var(--error)", fontSize: 12, marginBottom: 10 }}>
-                  {saveError}
-                </div>
-              )}
-              {saveSuccess && (
-                <div style={{ padding: "8px 12px", background: "rgba(39,174,96,0.1)", border: "1px solid var(--success)", borderRadius: 4, color: "var(--success)", fontSize: 12, marginBottom: 10 }}>
-                  ✓ {saveSuccess}
-                </div>
-              )}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={parseJson}
+              disabled={!jsonInput.trim()}
+              style={{ padding: "8px 18px", background: "transparent", border: "1px solid #16a085", borderRadius: 4, color: "#16a085", fontSize: 13, cursor: !jsonInput.trim() ? "not-allowed" : "pointer", opacity: !jsonInput.trim() ? 0.5 : 1 }}
+            >
+              Validasi JSON
+            </button>
+            {parsedEntries && (
               <button
                 onClick={saveEntries}
                 disabled={saving}
-                style={{ padding: "8px 20px", background: "#008B8B", color: "white", border: "none", borderRadius: 4, fontSize: 13, fontWeight: 500, cursor: saving ? "wait" : "pointer" }}
+                style={{ padding: "8px 18px", background: "#16a085", border: "none", borderRadius: 4, color: "white", fontSize: 13, fontWeight: 500, cursor: saving ? "wait" : "pointer" }}
               >
-                {saving ? "Menyimpan..." : `Simpan ${parsedEntries.length} Entri ke Database →`}
+                {saving ? "Menyimpan..." : `Simpan ${parsedEntries.length} Entri`}
               </button>
-            </div>
+            )}
           </div>
-        )}
 
-        {saveSuccess && !parsedEntries && (
-          <div style={{ padding: "8px 12px", background: "rgba(39,174,96,0.1)", border: "1px solid var(--success)", borderRadius: 4, color: "var(--success)", fontSize: 12, marginBottom: 10 }}>
-            ✓ {saveSuccess}
-          </div>
-        )}
+          {/* Preview parsed entries */}
+          {parsedEntries && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#16a085", marginBottom: 10 }}>
+                PRATINJAU — {parsedEntries.length} ENTRI
+              </div>
+              {parsedEntries.map((e, i) => (
+                <EntryCard key={i} entry={e} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Database view */}
-      <div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
-            Database Yurisprudensi
-            {!loading && <span style={{ fontSize: 13, fontWeight: 400, color: "var(--text-muted)", marginLeft: 8 }}>({entries.length} entri)</span>}
-          </h3>
-          <button
-            onClick={loadEntries}
-            disabled={loading}
-            style={{ fontSize: 12, color: "#008B8B", background: "none", border: "none", cursor: "pointer" }}
-          >
-            {loading ? "Memuat..." : "↻ Muat Ulang"}
-          </button>
+      <div style={{ border: "1px solid var(--border-color)", borderRadius: 6, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", background: "var(--bg-sidebar)", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", color: "var(--text-muted)" }}>
+            DATABASE YURISPRUDENSI
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {loading ? "Memuat..." : `${entries.length} entri`}
+          </div>
         </div>
-
-        {error && (
-          <div style={{ padding: "8px 12px", background: "rgba(192,57,43,0.1)", border: "1px solid var(--error)", borderRadius: 4, color: "var(--error)", fontSize: 13, marginBottom: 14 }}>
-            {error}
-          </div>
-        )}
-
-        {loading && (
-          <div style={{ padding: 16, fontSize: 13, color: "var(--text-muted)" }}>Memuat database...</div>
-        )}
-
-        {!loading && entries.length === 0 && (
-          <div style={{ padding: 16, fontSize: 13, color: "var(--text-muted)", background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 4 }}>
-            Database kosong. Tambahkan yurisprudensi di atas.
-          </div>
-        )}
-
-        {!loading && entries.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {entries.map((entry) => (
-              <div
-                key={entry.id}
-                style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 6, overflow: "hidden" }}
-              >
-                <div style={{ padding: "10px 16px", display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ padding: "16px 20px" }}>
+          {loading && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16 }}>
+              <div style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid var(--border-color)", borderTopColor: "#16a085", animation: "spin 0.8s linear infinite" }} />
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>Memuat database...</span>
+            </div>
+          )}
+          {!loading && entries.length === 0 && (
+            <p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0, fontStyle: "italic" }}>
+              Database kosong. Tambahkan entri pertama di atas.
+            </p>
+          )}
+          {!loading && entries.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {entries.map((e) => (
+                <div key={e.id} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
-                      {entry.nomor}
-                      {entry.tahun > 0 && <span style={{ fontSize: 12, fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>({entry.tahun})</span>}
-                      <span style={{ marginLeft: 8, fontSize: 11, padding: "1px 6px", borderRadius: 8, background: "rgba(0,139,139,0.12)", color: "#008B8B", fontWeight: 500 }}>
-                        {entry.forum}
-                      </span>
-                    </div>
-                    {entry.topik.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
-                        {entry.topik.map((t, i) => (
-                          <span key={i} style={{ fontSize: 11, padding: "1px 8px", borderRadius: 10, background: "rgba(0,139,139,0.08)", color: "#008B8B", border: "1px solid rgba(0,139,139,0.2)" }}>
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                      {entry.kaidah.slice(0, 200)}{entry.kaidah.length > 200 ? "…" : ""}
-                    </div>
+                    <EntryCard entry={e} />
                   </div>
                   <button
-                    onClick={() => deleteEntry(entry.id)}
-                    title="Hapus entri"
-                    style={{ flexShrink: 0, padding: "4px 10px", background: "transparent", border: "1px solid rgba(192,57,43,0.3)", borderRadius: 4, color: "#c0392b", fontSize: 11, cursor: "pointer" }}
+                    onClick={() => deleteEntry(e.id)}
+                    disabled={deletingId === e.id}
+                    title="Hapus entri ini"
+                    style={{ marginTop: 10, padding: "4px 10px", background: "transparent", border: "1px solid rgba(192,57,43,0.4)", borderRadius: 4, color: "#c0392b", fontSize: 12, cursor: deletingId === e.id ? "wait" : "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
                   >
-                    Hapus
+                    {deletingId === e.id ? "..." : "Hapus"}
                   </button>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -314,18 +255,33 @@ export default function JurisprudenceManager() {
 
 function EntryCard({ entry }: { entry: JurisprudenceEntry }) {
   return (
-    <div style={{ padding: "10px 14px", background: "rgba(0,139,139,0.04)", border: "1px solid rgba(0,139,139,0.2)", borderRadius: 4 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
-        {entry.nomor} — {entry.forum}
+    <div style={{ padding: "12px 14px", background: "var(--bg-surface)", border: "1px solid #1a5f57", borderRadius: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#16a085" }}>{entry.nomor}</span>
+        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{entry.forum} · {entry.tahun}</span>
+        {entry.verified && (
+          <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "rgba(22,160,133,0.15)", color: "#16a085", fontWeight: 600 }}>
+            TERVERIFIKASI
+          </span>
+        )}
       </div>
       {entry.topik.length > 0 && (
-        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
-          Topik: {entry.topik.join(", ")}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+          {entry.topik.map((t: string, i: number) => (
+            <span key={i} style={{ fontSize: 11, padding: "2px 7px", borderRadius: 8, background: "rgba(22,160,133,0.08)", color: "#16a085", border: "1px solid rgba(22,160,133,0.2)" }}>
+              {t}
+            </span>
+          ))}
         </div>
       )}
-      <div style={{ fontSize: 12, color: "var(--text-primary)", lineHeight: 1.5 }}>
-        {entry.kaidah.slice(0, 150)}{entry.kaidah.length > 150 ? "…" : ""}
+      <div style={{ fontSize: 12, color: "var(--text-primary)", lineHeight: 1.6, marginBottom: entry.pasal_terkait.length > 0 ? 4 : 0 }}>
+        {entry.kaidah}
       </div>
+      {entry.pasal_terkait.length > 0 && (
+        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          Pasal terkait: {entry.pasal_terkait.join(", ")}
+        </div>
+      )}
     </div>
   );
 }

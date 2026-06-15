@@ -6,6 +6,7 @@ import { CLAIM_TYPES } from "@/config/documentTypes";
 import JurisprudenceManager from "@/components/setup/JurisprudenceManager";
 
 type SetupStep = 1 | 2 | 3 | 4;
+type SetupMode = "konvensi" | "yurisprudensi";
 
 interface DocSample {
   path: string;
@@ -34,8 +35,6 @@ type Samples = Record<string, DocSample>;
 function emptySample(): DocSample {
   return { path: "", claimType: "", analysis: "", refinements: "", storedChars: 0, loading: false };
 }
-
-type SetupMode = "konvensi" | "yurisprudensi";
 
 export default function SetupPage() {
   const router = useRouter();
@@ -123,7 +122,7 @@ export default function SetupPage() {
 
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 40px", width: "100%" }}>
         {/* Tab bar */}
-        <div style={{ display: "flex", gap: 0, marginBottom: 36, borderBottom: "1px solid var(--border-color)" }}>
+        <div style={{ display: "flex", gap: 0, marginBottom: 36, borderBottom: "2px solid var(--border-color)" }}>
           {([
             { key: "konvensi", label: "Konvensi Firma" },
             { key: "yurisprudensi", label: "Kelola Yurisprudensi" },
@@ -132,15 +131,15 @@ export default function SetupPage() {
               key={tab.key}
               onClick={() => setMode(tab.key)}
               style={{
-                padding: "10px 22px",
+                padding: "10px 20px",
                 background: "transparent",
                 border: "none",
-                borderBottom: mode === tab.key ? "2px solid #008B8B" : "2px solid transparent",
-                color: mode === tab.key ? "#008B8B" : "var(--text-muted)",
+                borderBottom: mode === tab.key ? "2px solid var(--accent-blue)" : "2px solid transparent",
+                marginBottom: -2,
                 fontSize: 14,
                 fontWeight: mode === tab.key ? 600 : 400,
+                color: mode === tab.key ? "var(--accent-blue)" : "var(--text-muted)",
                 cursor: "pointer",
-                marginBottom: -1,
               }}
             >
               {tab.label}
@@ -148,10 +147,12 @@ export default function SetupPage() {
           ))}
         </div>
 
+        {/* Yurisprudensi tab */}
         {mode === "yurisprudensi" && <JurisprudenceManager />}
 
-        {mode === "konvensi" && (
-        <div>
+        {/* Konvensi tab content */}
+        {mode === "konvensi" && <>
+
         {/* Step indicator */}
         <div style={{ display: "flex", gap: 0, marginBottom: 40 }}>
           {stepLabels.map((label, i) => {
@@ -366,8 +367,7 @@ export default function SetupPage() {
             </div>
           </div>
         )}
-        </div>
-        )}
+        </>}
       </div>
     </div>
   );

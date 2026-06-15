@@ -36,11 +36,10 @@ export function searchRelevant(
   kronologiSummary: string
 ): RelevantJurisprudence[] {
   const lower = kronologiSummary.toLowerCase();
-  const keywordsArray = [
+  const keywords = Array.from(new Set([
     ...(DOC_TYPE_KEYWORDS[docType] ?? []),
     ...(claimType ? DOC_TYPE_KEYWORDS[claimType] ?? [] : []),
-  ];
-  const keywords = keywordsArray;
+  ]));
 
   const scored = entries.map((e) => {
     let score = 0;
@@ -51,7 +50,7 @@ export function searchRelevant(
     for (const topic of e.topik) {
       if (lower.includes(topic.toLowerCase())) score += 1;
     }
-    const kaidahWords = e.kaidah.toLowerCase().split(/\s+/).filter((w) => w.length > 5);
+    const kaidahWords = e.kaidah.toLowerCase().split(/\s+/).filter((w: string) => w.length > 5);
     for (const w of kaidahWords) {
       if (lower.includes(w)) score += 0.5;
     }

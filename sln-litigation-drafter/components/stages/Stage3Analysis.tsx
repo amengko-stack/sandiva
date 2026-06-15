@@ -52,9 +52,9 @@ export default function Stage3Analysis() {
   const [riskModalOpen, setRiskModalOpen] = useState(false);
   const [riskChecks, setRiskChecks] = useState<boolean[]>([]);
 
-  // Jurisprudence state
+  // 3C jurisprudence
   const [relevantJurisprudence, setRelevantJurisprudence] = useState<RelevantJurisprudence[]>([]);
-  const [jurisprudenceChecks, setJurisprudenceChecks] = useState<boolean[]>([]);
+  const [checkedJuris, setCheckedJuris] = useState<boolean[]>([]);
 
   // Initial analysis
   const [analyzing, setAnalyzing] = useState(false);
@@ -79,7 +79,6 @@ export default function Stage3Analysis() {
       if (state.strategicAssessment) {
         setAssessment(parseStoredAssessment(state.strategicAssessment));
         setSubstep("3C");
-        fetchRelevantJurisprudence();
       } else if (state.interviewAnswers.length > 0 || hint === "3C") {
         setSubstep("3C");
         loadStrategicAssessment(state.interviewAnswers);
@@ -203,8 +202,8 @@ export default function Stage3Analysis() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menghasilkan asesmen");
       setAssessment(data.assessment as StructuredAssessment);
-      // After assessment loads, fetch relevant jurisprudence in background
-      fetchRelevantJurisprudence();
+      // After assessment, load relevant jurisprudence (fire-and-forget on failure)
+      loadRelevantJurisprudence();
     } catch (e: unknown) {
       setAssessmentError(e instanceof Error ? e.message : "Terjadi kesalahan");
     } finally {
@@ -212,7 +211,7 @@ export default function Stage3Analysis() {
     }
   }
 
-  async function fetchRelevantJurisprudence() {
+  async function loadRelevantJurisprudence() {
     try {
       const res = await fetch("/api/jurisprudence/relevant", {
         method: "POST",
@@ -223,13 +222,13 @@ export default function Stage3Analysis() {
           kronologi: state.caseAnalysis?.kronologi ?? "",
         }),
       });
-      if (!res.ok) return;
       const data = await res.json();
-      const entries: RelevantJurisprudence[] = data.entries ?? [];
-      setRelevantJurisprudence(entries);
-      setJurisprudenceChecks(entries.map((e) => e.preselect));
+      if (!res.ok) return;
+      const items: RelevantJurisprudence[] = data.entries ?? [];
+      setRelevantJurisprudence(items);
+      setCheckedJuris(items.map((e) => e.preselect));
     } catch {
-      // Jurisprudence fetch failure is non-fatal
+      // Non-fatal: jurisprudence DB may be empty or unavailable
     }
   }
 
@@ -286,18 +285,6 @@ export default function Stage3Analysis() {
       sessionId: state.sessionId,
       assessment,
     });
-
-    // Dispatch selected jurisprudence and save to blob
-    const selectedEntries: JurisprudenceEntry[] = relevantJurisprudence
-      .filter((_, i) => jurisprudenceChecks[i])
-      .map(({ score: _score, preselect: _preselect, ...entry }) => entry);
-    dispatch({ type: "SET_SELECTED_JURISPRUDENCE", entries: selectedEntries });
-    if (selectedEntries.length > 0) {
-      fireAndForget("/api/jurisprudence/save-selected", {
-        sessionId: state.sessionId,
-        entries: selectedEntries,
-      });
-    }
     if (state.folderPath) {
       fireAndForget("/api/sharepoint/save-matter-file", {
         folderPath: state.folderPath,
@@ -305,6 +292,18 @@ export default function Stage3Analysis() {
         // expects a string) keeps working; parseStoredAssessment re-hydrates.
         filename: `AI/strategic_assessment_${ts()}.json`,
         content: JSON.stringify({ ref: state.ref, assessment: assessmentJson, timestamp: new Date().toISOString() }),
+      });
+    }
+    // Dispatch selected jurisprudence entries
+    const selected: JurisprudenceEntry[] = relevantJurisprudence
+      .filter((_, i) => checkedJuris[i])
+      .map(({ score: _score, preselect: _preselect, ...entry }) => entry as JurisprudenceEntry);
+    dispatch({ type: "SET_SELECTED_JURISPRUDENCE", entries: selected });
+    // Fire-and-forget save selected to blob
+    if (selected.length > 0) {
+      fireAndForget("/api/jurisprudence/save-selected", {
+        sessionId: state.sessionId,
+        entries: selected,
       });
     }
     setRiskModalOpen(false);
@@ -533,39 +532,37 @@ export default function Stage3Analysis() {
             <div style={{ fontSize: 14, color: "var(--text-primary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{assessment.rekomendasi}</div>
           </div>
 
-          {/* Jurisprudence section */}
+          {/* Yurisprudensi relevan */}
           {relevantJurisprudence.length > 0 && (
-            <div style={{ borderLeft: "4px solid #008B8B", background: "rgba(0,139,139,0.04)", borderRadius: 4, padding: "16px 20px", marginBottom: 24 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: "#008B8B", marginBottom: 12 }}>
+            <div style={{ borderLeft: "4px solid #16a085", background: "var(--bg-surface)", borderRadius: 4, padding: "16px 20px", marginBottom: 24 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: "#16a085", marginBottom: 12 }}>
                 YURISPRUDENSI YANG RELEVAN
               </div>
               <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
-                Centang yurisprudensi yang ingin disertakan dalam draf. Entri yang dicentang akan dimasukkan sebagai referensi.
+                Pilih yurisprudensi yang akan dipertimbangkan dalam penyusunan draf:
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {relevantJurisprudence.map((entry, i) => (
-                  <label key={entry.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", background: jurisprudenceChecks[i] ? "rgba(0,139,139,0.08)" : "transparent", border: `1px solid ${jurisprudenceChecks[i] ? "#008B8B" : "rgba(0,139,139,0.2)"}`, borderRadius: 4, cursor: "pointer" }}>
+                  <label
+                    key={entry.id}
+                    style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", background: checkedJuris[i] ? "rgba(22,160,133,0.08)" : "transparent", border: `1px solid ${checkedJuris[i] ? "#16a085" : "rgba(22,160,133,0.2)"}`, borderRadius: 4, cursor: "pointer" }}
+                  >
                     <input
                       type="checkbox"
-                      checked={jurisprudenceChecks[i] ?? false}
-                      onChange={() => setJurisprudenceChecks((c) => c.map((v, j) => j === i ? !v : v))}
-                      style={{ marginTop: 3, flexShrink: 0 }}
+                      checked={checkedJuris[i] ?? false}
+                      onChange={() => setCheckedJuris((prev) => prev.map((v, j) => j === i ? !v : v))}
+                      style={{ marginTop: 3, flexShrink: 0, accentColor: "#16a085" }}
                     />
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 2 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#16a085", marginBottom: 2 }}>
                         {entry.nomor} — {entry.forum}
-                        <span style={{ marginLeft: 8, fontSize: 11, padding: "1px 6px", borderRadius: 8, background: "rgba(0,139,139,0.15)", color: "#008B8B", fontWeight: 500 }}>
-                          skor {entry.score.toFixed(1)}
-                        </span>
                       </div>
+                      <div style={{ fontSize: 12, color: "var(--text-primary)", lineHeight: 1.6 }}>{entry.kaidah}</div>
                       {entry.topik.length > 0 && (
-                        <div style={{ fontSize: 11, color: "#008B8B", marginBottom: 4 }}>
-                          {entry.topik.join(" · ")}
+                        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 3 }}>
+                          Topik: {entry.topik.join(", ")}
                         </div>
                       )}
-                      <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                        {entry.kaidah.slice(0, 150)}{entry.kaidah.length > 150 ? "…" : ""}
-                      </div>
                     </div>
                   </label>
                 ))}
