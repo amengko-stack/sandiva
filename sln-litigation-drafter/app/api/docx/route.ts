@@ -4,18 +4,18 @@ import { verifyDocx } from "@/lib/docx-verify";
 
 export async function POST(req: NextRequest) {
   try {
-    const { draftText, ref, docType, claimType } = await req.json();
+    const { draftText, ref, docType, claimType, citationAppendix } = await req.json();
 
-    console.log(`[docx] received draftText=${draftText?.length ?? 0} chars ref=${ref} docType=${docType}`);
+    console.log(`[docx] received draftText=${draftText?.length ?? 0} chars ref=${ref} docType=${docType} appendix=${citationAppendix ? "yes" : "no"}`);
     if (!draftText) {
       return NextResponse.json({ error: "Tidak ada teks draf" }, { status: 400 });
     }
 
-    const buffer = await buildLitigationDocx(draftText, {
-      ref: ref || "SLN/DRF",
-      docType: docType || "draf",
-      claimType: claimType || "",
-    });
+    const buffer = await buildLitigationDocx(
+      draftText,
+      { ref: ref || "SLN/DRF", docType: docType || "draf", claimType: claimType || "" },
+      citationAppendix ?? undefined
+    );
 
     // Verify integrity on the REAL draft before shipping; never serve a file
     // we can already prove is corrupt.

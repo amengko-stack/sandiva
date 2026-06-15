@@ -9,7 +9,7 @@ const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingm
 
 export async function POST(req: NextRequest) {
   try {
-    const { draftText, ref, docType, claimType, folderPath, filename } =
+    const { draftText, ref, docType, claimType, folderPath, filename, citationAppendix } =
       await req.json();
 
     if (!draftText || !folderPath || !filename) {
@@ -19,11 +19,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const buffer = await buildLitigationDocx(draftText, {
-      ref: ref || "SLN/DRF",
-      docType: docType || "draf",
-      claimType: claimType || "",
-    });
+    const buffer = await buildLitigationDocx(
+      draftText,
+      { ref: ref || "SLN/DRF", docType: docType || "draf", claimType: claimType || "" },
+      citationAppendix ?? undefined
+    );
 
     const verdict = verifyDocx(buffer);
     console.log(`[sharepoint-save] integrity size=${buffer.length} entriesBad=${verdict.bad} illegalChars=${verdict.illegal} draftChars=${draftText.length}`);

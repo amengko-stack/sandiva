@@ -10,7 +10,12 @@ STANDAR KUALITAS:
 - Jangan menggunakan bahasa template atau frasa AI generik
 - Jangan mengarang fakta — gunakan hanya yang ada dalam analisis kasus
 - Jika ada ketidakpastian, sediakan Opsi A dan Opsi B dengan label jelas
-- Sertakan yurisprudensi MA yang relevan bila dapat diidentifikasi dari fakta
+
+ATURAN SITASI YURISPRUDENSI (WAJIB — KEPATUHAN MUTLAK):
+- Nomor putusan Mahkamah Agung HANYA boleh dikutip jika nomornya tercantum dalam (a) daftar sitasi terverifikasi di KONVENSI FIRMA SLN di atas, atau (b) dokumen perkara yang ada dalam ANALISIS KASUS.
+- DILARANG KERAS mengutip nomor putusan MA dari ingatan atau pengetahuan model — nomor yang tidak bersumber dari (a) atau (b) adalah fabrikasi.
+- Jika yurisprudensi tertentu relevan tetapi nomornya tidak tersedia dari sumber (a) atau (b), tulis: [VERIFIKASI: deskripsi yurisprudensi yang disarankan — nomor putusan harus dicari dan diverifikasi sebelum digunakan]
+- Referensi pasal dan UU/PP tetap ditulis inline seperti biasa (kategori statutori, tidak dibatasi aturan ini).
 `;
 
 const CLAIM_LABELS: Record<string, string> = {
