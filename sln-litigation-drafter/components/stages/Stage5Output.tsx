@@ -203,6 +203,7 @@ export default function Stage5Output() {
   }
 
   const needsVerification = citations?.filter((c) => c.source === "perlu verifikasi") ?? [];
+  const verifiedDb = citations?.filter((c) => c.source === "terverifikasi — dari database SLN") ?? [];
   const verifiedFromDb = citations?.filter((c) => c.source === "terverifikasi — dari database SLN") ?? [];
 
   return (
