@@ -1,5 +1,5 @@
-import { readSiteFileText, writeMatterFile } from "./graph-client";
 import type { JurisprudenceEntry, RelevantJurisprudence } from "@/types";
+import { readSiteFileText, writeMatterFile } from "./graph-client";
 
 export const JURIS_DIR = "SLN-AI/jurisprudence";
 
@@ -18,13 +18,13 @@ export async function saveJurisprudenceDb(entries: JurisprudenceEntry[]): Promis
 }
 
 const DOC_TYPE_KEYWORDS: Record<string, string[]> = {
-  permohonan_pailit: ["kepailitan", "pailit", "pkpu", "penundaan kewajiban pembayaran utang"],
-  pmh: ["perbuatan melawan hukum", "pmh", "ganti rugi", "onrechtmatige daad"],
-  wanprestasi: ["wanprestasi", "ingkar janji", "cidera janji", "kontrak", "perjanjian"],
-  perceraian: ["cerai", "perceraian", "perkawinan", "rumah tangga"],
-  warisan: ["waris", "warisan", "harta bersama", "testamen"],
-  sengketa_tanah: ["tanah", "hak milik", "sertifikat", "agraria", "shm", "shgb"],
-  phk: ["phk", "pemutusan hubungan kerja", "tenaga kerja", "buruh"],
+  permohonan_pailit: ["kepailitan", "pailit", "pkpu"],
+  pmh: ["perbuatan melawan hukum", "pmh", "ganti rugi"],
+  wanprestasi: ["wanprestasi", "ingkar janji", "kontrak", "perjanjian"],
+  perceraian: ["cerai", "perceraian", "perkawinan"],
+  warisan: ["waris", "warisan", "harta bersama"],
+  sengketa_tanah: ["tanah", "hak milik", "sertifikat", "agraria"],
+  phk: ["phk", "pemutusan hubungan kerja", "tenaga kerja"],
 };
 
 const THRESHOLD = 2;
@@ -38,7 +38,7 @@ export function searchRelevant(
   const lower = kronologiSummary.toLowerCase();
   const keywords = Array.from(new Set([
     ...(DOC_TYPE_KEYWORDS[docType] ?? []),
-    ...(claimType ? DOC_TYPE_KEYWORDS[claimType] ?? [] : []),
+    ...(claimType ? (DOC_TYPE_KEYWORDS[claimType] ?? []) : []),
   ]));
 
   const scored = entries.map((e) => {
@@ -49,10 +49,6 @@ export function searchRelevant(
     }
     for (const topic of e.topik) {
       if (lower.includes(topic.toLowerCase())) score += 1;
-    }
-    const kaidahWords = e.kaidah.toLowerCase().split(/\s+/).filter((w: string) => w.length > 5);
-    for (const w of kaidahWords) {
-      if (lower.includes(w)) score += 0.5;
     }
     return { ...e, score, preselect: score >= THRESHOLD };
   });

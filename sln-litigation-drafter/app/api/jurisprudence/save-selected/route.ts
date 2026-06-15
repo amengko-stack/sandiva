@@ -4,7 +4,7 @@ import type { JurisprudenceEntry } from "@/types";
 
 export async function POST(req: NextRequest) {
   try {
-    const { sessionId, entries } = await req.json() as {
+    const { sessionId, entries } = (await req.json()) as {
       sessionId: string;
       entries: JurisprudenceEntry[];
     };

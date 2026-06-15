@@ -3,7 +3,7 @@ import { loadJurisprudenceDb, searchRelevant } from "@/lib/jurisprudence";
 
 export async function POST(req: NextRequest) {
   try {
-    const { docTypeId, claimType, kronologi } = await req.json() as {
+    const { docTypeId, claimType, kronologi } = (await req.json()) as {
       docTypeId?: string;
       claimType?: string | null;
       kronologi?: string;

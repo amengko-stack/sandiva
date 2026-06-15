@@ -80,6 +80,7 @@ const initialState: WorkflowState = {
   ref: "",
   savedToSharePoint: false,
   approvedForMemory: false,
+  selectedJurisprudence: [],
   error: null,
   selectedJurisprudence: [],
 };
@@ -176,6 +177,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
 
     case "SET_APPROVED_MEMORY":
       return { ...state, approvedForMemory: action.value };
+
+    case "SET_SELECTED_JURISPRUDENCE":
+      return { ...state, selectedJurisprudence: action.entries };
 
     case "SET_ERROR":
       return { ...state, error: action.error };

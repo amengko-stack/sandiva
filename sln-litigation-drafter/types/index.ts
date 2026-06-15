@@ -168,6 +168,7 @@ export interface WorkflowState {
   ref: string;
   savedToSharePoint: boolean;
   approvedForMemory: boolean;
+  selectedJurisprudence: JurisprudenceEntry[];
   error: string | null;
   selectedJurisprudence: JurisprudenceEntry[];
 }

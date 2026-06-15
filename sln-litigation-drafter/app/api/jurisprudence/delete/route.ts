@@ -3,7 +3,7 @@ import { loadJurisprudenceDb, saveJurisprudenceDb } from "@/lib/jurisprudence";
 
 export async function POST(req: NextRequest) {
   try {
-    const { id } = await req.json() as { id: string };
+    const { id } = (await req.json()) as { id: string };
     const entries = await loadJurisprudenceDb();
     const filtered = entries.filter((e) => e.id !== id);
     await saveJurisprudenceDb(filtered);
