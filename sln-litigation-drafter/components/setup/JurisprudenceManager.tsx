@@ -31,6 +31,14 @@ export default function JurisprudenceManager() {
       const form = new FormData();
       for (const f of Array.from(files)) form.append("files", f);
       const res = await fetch("/api/jurisprudence/parse", { method: "POST", body: form });
+      if (!res.ok) {
+        const ct = res.headers.get("content-type") ?? "";
+        const errText = ct.includes("json")
+          ? ((await res.json()) as { error?: string }).error ?? `HTTP ${res.status}`
+          : await res.text();
+        setError(errText.slice(0, 400));
+        return;
+      }
       const data = (await res.json()) as { entries?: JurisprudenceEntry[]; error?: string };
       if (data.error) { setError(data.error); return; }
       setPendingEntries(data.entries ?? []);
