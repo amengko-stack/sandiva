@@ -7,7 +7,7 @@ import { randomUUID } from "crypto";
 
 export const maxDuration = 300;
 
-const CHUNK_SIZE = 40_000;
+const CHUNK_SIZE = 25_000;
 const CHUNK_OVERLAP = 2_000;
 
 const enc = new TextEncoder();
@@ -19,6 +19,11 @@ type ParseMessage =
 
 function emit(controller: ReadableStreamDefaultController, msg: ParseMessage) {
   controller.enqueue(enc.encode(JSON.stringify(msg) + "\n"));
+}
+
+const NOMOR_RE = /\b\d{1,4}\s*[/\\]\s*[A-Za-z.]{1,20}\s*[/\\]\s*\d{4}\b/;
+function hasNomor(text: string): boolean {
+  return NOMOR_RE.test(text);
 }
 
 function chunkText(text: string): string[] {
@@ -127,12 +132,18 @@ Kembalikan HANYA JSON array:
 
 Jika tidak ada putusan yang relevan di bagian ini, kembalikan array kosong: []`;
 
+            if (!hasNomor(chunk)) {
+              console.log(`[parse-juris] chunk=${i + 1}/${chunks.length} SKIPPED (no nomor pattern)`);
+              emit(controller, { type: "progress", chunk: i + 1, total: chunks.length, entriesFound: 0, running: allEntries.length, file: file.name });
+              continue;
+            }
+
             console.log(`[model] stage=parse-yurisprudensi model=${MODELS.extraction} chunk=${i + 1}/${chunks.length} chunkChars=${chunk.length}`);
             let response;
             try {
               response = await client.messages.create({
                 model: MODELS.extraction,
-                max_tokens: 16000,
+                max_tokens: 8192,
                 system: SYSTEM,
                 messages: [{ role: "user", content: prompt }],
               });
