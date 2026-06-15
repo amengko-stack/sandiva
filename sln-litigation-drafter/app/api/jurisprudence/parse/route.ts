@@ -127,7 +127,7 @@ Kembalikan HANYA JSON array:
 
 Jika tidak ada putusan yang relevan di bagian ini, kembalikan array kosong: []`;
 
-            console.log(`[model] stage=parse-yurisprudensi model=${MODELS.extraction} chunk=${i + 1}/${chunks.length}`);
+            console.log(`[model] stage=parse-yurisprudensi model=${MODELS.extraction} chunk=${i + 1}/${chunks.length} chunkChars=${chunk.length}`);
             let response;
             try {
               response = await client.messages.create({
@@ -144,9 +144,10 @@ Jika tidak ada putusan yang relevan di bagian ini, kembalikan array kosong: []`;
             }
 
             const raw = response.content.find((b) => b.type === "text")?.text ?? "";
-            console.log(`[parse-juris] chunk=${i + 1}/${chunks.length} file=${file.name} stop_reason=${response.stop_reason} rawLen=${raw.length}`);
+            console.log(`[parse-juris] chunk=${i + 1}/${chunks.length} file=${file.name} stop_reason=${response.stop_reason} rawLen=${raw.length} raw200=${raw.slice(0, 200).replace(/\n/g, " ")}`);
 
             let chunkCount = 0;
+            let skippedDup = 0;
             try {
               const clean = raw.replace(/```json|```/g, "").trim();
               const arrayMatch = clean.match(/\[[\s\S]*\]/);
@@ -160,10 +161,14 @@ Jika tidak ada putusan yang relevan di bagian ini, kembalikan array kosong: []`;
                 if (Array.isArray(candidate.entries)) parsed = candidate.entries;
               }
 
+              if (!parsed) {
+                console.warn(`[parse-juris] chunk=${i + 1}/${chunks.length}: no JSON array found in response`);
+              }
               if (parsed) {
                 for (const e of parsed) {
                   const entry = e as Partial<JurisprudenceEntry>;
-                  if (!entry.nomor || existingNomor.has(entry.nomor)) continue;
+                  if (!entry.nomor) continue;
+                  if (existingNomor.has(entry.nomor)) { skippedDup++; continue; }
                   allEntries.push({
                     id: randomUUID(),
                     nomor: entry.nomor,
@@ -185,11 +190,12 @@ Jika tidak ada putusan yang relevan di bagian ini, kembalikan array kosong: []`;
               console.error(`[parse-juris] JSON parse failed chunk=${i + 1}/${chunks.length} raw=${raw.slice(0, 200)}`);
             }
 
-            console.log(`[parse-juris] chunk=${i + 1}/${chunks.length} file=${file.name} entriesFound=${chunkCount} totalSoFar=${allEntries.length}`);
+            console.log(`[parse-juris] chunk=${i + 1}/${chunks.length} file=${file.name} entriesFound=${chunkCount} skippedDup=${skippedDup} totalSoFar=${allEntries.length}`);
             emit(controller, { type: "progress", chunk: i + 1, total: chunks.length, entriesFound: chunkCount, running: allEntries.length, file: file.name });
           }
         }
 
+        console.log(`[parse-juris] DONE totalEntries=${allEntries.length}`);
         emit(controller, { type: "done", entries: allEntries });
       } catch (e) {
         console.error("[parse-juris] fatal:", e instanceof Error ? e.message : e);
