@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
-import type { CaseAnalysis, InterviewAnswer, StructuredAssessment } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, RelevantJurisprudence, StructuredAssessment } from "@/types";
 
 // Parse a stored assessment string: structured JSON from the new flow, or
 // legacy free-text prose (rendered as a recommendation-only assessment).
@@ -51,6 +51,8 @@ export default function Stage3Analysis() {
   const [assessmentError, setAssessmentError] = useState("");
   const [riskModalOpen, setRiskModalOpen] = useState(false);
   const [riskChecks, setRiskChecks] = useState<boolean[]>([]);
+  const [relevantJuris, setRelevantJuris] = useState<RelevantJurisprudence[]>([]);
+  const [jurisChecked, setJurisChecked] = useState<boolean[]>([]);
 
   // Initial analysis
   const [analyzing, setAnalyzing] = useState(false);
@@ -198,6 +200,23 @@ export default function Stage3Analysis() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal menghasilkan asesmen");
       setAssessment(data.assessment as StructuredAssessment);
+      // Load relevant jurisprudence from DB (fire-and-forget style — non-blocking)
+      fetch("/api/jurisprudence/relevant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          docTypeId: state.docTypeId,
+          claimType: state.claimType,
+          kronologi: state.caseAnalysis?.kronologi,
+        }),
+      })
+        .then((r) => r.json())
+        .then((d: { entries?: RelevantJurisprudence[] }) => {
+          const entries = d.entries ?? [];
+          setRelevantJuris(entries);
+          setJurisChecked(entries.map((e) => e.preselect));
+        })
+        .catch(() => {});
     } catch (e: unknown) {
       setAssessmentError(e instanceof Error ? e.message : "Terjadi kesalahan");
     } finally {
@@ -254,6 +273,15 @@ export default function Stage3Analysis() {
     if (!assessment) return;
     const assessmentJson = JSON.stringify(assessment);
     dispatch({ type: "SET_STRATEGIC_ASSESSMENT", text: assessmentJson });
+    const selected = relevantJuris.filter((_, i) => jurisChecked[i]);
+    dispatch({ type: "SET_SELECTED_JURISPRUDENCE", entries: selected });
+    if (state.sessionId) {
+      fetch("/api/jurisprudence/save-selected", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: state.sessionId, entries: selected }),
+      }).catch(() => {});
+    }
     fireAndForget("/api/analyze/save-assessment", {
       sessionId: state.sessionId,
       assessment,
@@ -491,6 +519,44 @@ export default function Stage3Analysis() {
           <div style={{ borderLeft: "4px solid var(--accent-blue)", background: "var(--bg-surface)", borderRadius: 4, padding: "16px 20px", marginBottom: 24 }}>
             <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: "var(--accent-blue)", marginBottom: 10 }}>REKOMENDASI</div>
             <div style={{ fontSize: 14, color: "var(--text-primary)", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{assessment.rekomendasi}</div>
+          </div>
+
+          {/* 5th section: Jurisprudence suggestions */}
+          <div style={{ borderLeft: "4px solid #1abc9c", paddingLeft: 16, marginBottom: 24 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: "#1abc9c", marginBottom: 12 }}>
+              YURISPRUDENSI YANG RELEVAN
+            </div>
+            {relevantJuris.length === 0 ? (
+              <p style={{ fontSize: 13, color: "var(--text-muted)", margin: 0 }}>
+                Database yurisprudensi SLN belum diisi — tambahkan putusan MA di halaman Setup untuk mengaktifkan fitur ini.
+              </p>
+            ) : (
+              relevantJuris.map((e, i) => (
+                <div key={e.id} style={{ border: "1px solid var(--border-color)", borderRadius: 6, padding: 12, marginBottom: 10, background: "var(--bg-surface)" }}>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={jurisChecked[i] ?? false}
+                      onChange={(ev) => {
+                        const next = [...jurisChecked];
+                        next[i] = ev.target.checked;
+                        setJurisChecked(next);
+                      }}
+                      style={{ marginTop: 3, flexShrink: 0 }}
+                    />
+                    <div>
+                      <p style={{ fontWeight: 600, fontSize: 13, margin: 0, color: "var(--text-primary)" }}>{e.nomor}</p>
+                      <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4, lineHeight: 1.5 }}>
+                        {e.kaidah.slice(0, 200)}{e.kaidah.length > 200 ? "..." : ""}
+                      </p>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                        Topik: {e.topik.join(", ")}{e.pasal_terkait.length > 0 ? ` | Pasal: ${e.pasal_terkait.join(", ")}` : ""}
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              ))
+            )}
           </div>
 
           <div style={{ display: "flex", gap: 12 }}>

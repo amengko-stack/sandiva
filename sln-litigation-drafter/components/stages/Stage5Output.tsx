@@ -35,7 +35,8 @@ export default function Stage5Output() {
     if (pasal.length > 0) {
       lines.push("A. PASAL / UU / PP / PERMA");
       pasal.forEach((c, i) => {
-        lines.push(`${i + 1}. ${c.text} — [sumber: ${c.source}]${c.note ? ` — ${c.note}` : ""}`);
+        const sourceLabel = c.source === "terverifikasi — dari database SLN" ? "Terverifikasi (Database SLN)" : c.source;
+        lines.push(`${i + 1}. ${c.text} — [sumber: ${sourceLabel}]${c.note ? ` — ${c.note}` : ""}`);
       });
       lines.push("");
     }
@@ -43,7 +44,8 @@ export default function Stage5Output() {
     if (yurisprudensi.length > 0) {
       lines.push("B. YURISPRUDENSI MAHKAMAH AGUNG");
       yurisprudensi.forEach((c, i) => {
-        lines.push(`${i + 1}. ${c.text} — [sumber: ${c.source}]${c.note ? ` — ${c.note}` : ""}`);
+        const label = c.source === "terverifikasi — dari database SLN" ? "TERVERIFIKASI — DATABASE SLN" : c.source === "perlu verifikasi" ? "PERLU VERIFIKASI" : c.source;
+        lines.push(`${i + 1}. ${c.text} — [sumber: ${label}]${c.note ? ` — ${c.note}` : ""}`);
       });
       lines.push("");
     }
@@ -201,6 +203,7 @@ export default function Stage5Output() {
   }
 
   const needsVerification = citations?.filter((c) => c.source === "perlu verifikasi") ?? [];
+  const verifiedFromDb = citations?.filter((c) => c.source === "terverifikasi — dari database SLN") ?? [];
 
   return (
     <div>
@@ -394,8 +397,9 @@ export default function Stage5Output() {
 
 function CitationRow({ item }: { item: CitationItem }) {
   const isRed = item.source === "perlu verifikasi";
-  const badgeColor = isRed ? "#c0392b" : item.source === "konvensi firma" ? "#27ae60" : "#2980b9";
-  const badgeBg = isRed ? "rgba(192,57,43,0.12)" : item.source === "konvensi firma" ? "rgba(39,174,96,0.12)" : "rgba(41,128,185,0.12)";
+  const isTeal = item.source === "terverifikasi — dari database SLN";
+  const badgeColor = isRed ? "#c0392b" : isTeal ? "#ffffff" : item.source === "konvensi firma" ? "#27ae60" : "#2980b9";
+  const badgeBg = isRed ? "rgba(192,57,43,0.12)" : isTeal ? "#1abc9c" : item.source === "konvensi firma" ? "rgba(39,174,96,0.12)" : "rgba(41,128,185,0.12)";
 
   return (
     <div style={{

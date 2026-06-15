@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CLAIM_TYPES } from "@/config/documentTypes";
+import JurisprudenceManager from "@/components/setup/JurisprudenceManager";
 
 type SetupStep = 1 | 2 | 3 | 4;
 
@@ -36,6 +37,7 @@ function emptySample(): DocSample {
 
 export default function SetupPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<"conventions" | "jurisprudence">("conventions");
   const [step, setStep] = useState<SetupStep>(1);
   const [globalError, setGlobalError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -118,6 +120,32 @@ export default function SetupPage() {
       </div>
 
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "40px 40px", width: "100%" }}>
+        {/* Tab bar */}
+        <div style={{ display: "flex", gap: 0, borderBottom: "2px solid var(--border-color)", marginBottom: 32 }}>
+          {(["conventions", "jurisprudence"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                padding: "10px 20px",
+                border: "none",
+                background: "none",
+                cursor: "pointer",
+                fontWeight: mode === m ? 700 : 400,
+                borderBottom: mode === m ? "2px solid var(--accent-blue)" : "2px solid transparent",
+                marginBottom: -2,
+                color: mode === m ? "var(--accent-blue)" : "var(--text-muted)",
+                fontSize: 14,
+              }}
+            >
+              {m === "conventions" ? "Konvensi Firma" : "Kelola Yurisprudensi"}
+            </button>
+          ))}
+        </div>
+
+        {mode === "jurisprudence" && <JurisprudenceManager />}
+
+        {mode === "conventions" && <>
         {/* Step indicator */}
         <div style={{ display: "flex", gap: 0, marginBottom: 40 }}>
           {stepLabels.map((label, i) => {
@@ -332,6 +360,7 @@ export default function SetupPage() {
             </div>
           </div>
         )}
+        </>}
       </div>
     </div>
   );

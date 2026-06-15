@@ -81,6 +81,7 @@ const initialState: WorkflowState = {
   savedToSharePoint: false,
   approvedForMemory: false,
   error: null,
+  selectedJurisprudence: [],
 };
 
 function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
@@ -146,6 +147,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "APPEND_DRAFT":
       return { ...state, draftText: state.draftText + action.chunk };
 
+    case "SET_SELECTED_JURISPRUDENCE":
+      return { ...state, selectedJurisprudence: action.entries };
+
     case "RESET_DRAFT":
       return { ...state, draftText: "", draftComplete: false, critiqueItems: [], draftVersions: [], draftVersion: 0 };
 
@@ -180,7 +184,7 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       return { ...state, error: action.error };
 
     case "RESET":
-      return { ...initialState, sessionId: newSessionId() };
+      return { ...initialState, sessionId: newSessionId(), selectedJurisprudence: [] };
 
     default:
       return state;

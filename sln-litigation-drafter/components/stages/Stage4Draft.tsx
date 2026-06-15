@@ -61,6 +61,7 @@ export default function Stage4Draft() {
           userCorrections: state.userCorrections,
           interviewAnswers: state.interviewAnswers,
           strategicAssessment: state.strategicAssessment,
+          selectedJurisprudence: state.selectedJurisprudence,
           ...(revisionInstructions ? { revisionInstructions, currentDraft } : {}),
         }),
       });

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getSystemPrompt } from "@/src/prompts";
 import { loadDraftMemory, buildMemoryContext } from "@/lib/blob";
-import type { CaseAnalysis, InterviewAnswer } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, JurisprudenceEntry } from "@/types";
 import { MODELS } from "@/config/models";
 
 export const maxDuration = 300;
@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
       strategicAssessment,
       revisionInstructions,
       currentDraft,
+      selectedJurisprudence,
     } = (await req.json()) as {
       docTypeId: string;
       practiceAreaId: string;
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
       strategicAssessment?: string;
       revisionInstructions?: string;
       currentDraft?: string;
+      selectedJurisprudence?: JurisprudenceEntry[];
     };
 
     // Budget allocation: 1 full best-match style example (docType+claimType →
@@ -52,7 +54,8 @@ export async function POST(req: NextRequest) {
       caseAnalysis,
       userCorrections,
       interviewAnswers ?? [],
-      strategicAssessment ?? ""
+      strategicAssessment ?? "",
+      selectedJurisprudence ?? []
     );
 
     const systemPrompt = getSystemPrompt(docTypeId, {
@@ -78,7 +81,8 @@ export async function POST(req: NextRequest) {
       comp("assessment", strategicAssessment?.length ?? 0) + " " +
       comp("userCorrections", userCorrections?.length ?? 0) + " " +
       comp("revisionInstructions", revisionInstructions?.length ?? 0) + " " +
-      comp("currentDraft", currentDraft?.length ?? 0) + " | " +
+      comp("currentDraft", currentDraft?.length ?? 0) + " " +
+      comp("jurisprudence", selectedJurisprudence?.length ?? 0) + " | " +
       comp("TOTAL systemPrompt", systemPrompt.length) +
       ` | mode=${currentDraft ? "revision" : "original"}`
     );
@@ -197,7 +201,8 @@ function formatCaseAnalysis(
   analysis: CaseAnalysis,
   corrections: string,
   interviewAnswers: InterviewAnswer[],
-  strategicAssessment: string
+  strategicAssessment: string,
+  selectedJurisprudence: JurisprudenceEntry[] = []
 ): string {
   const sections = [
     ["Identitas Para Pihak", analysis.identitasPihak],
@@ -248,6 +253,13 @@ function formatCaseAnalysis(
 
   if (corrections?.trim()) {
     text += `\n\n## KOREKSI DAN CATATAN DRAFTER\n${corrections}`;
+  }
+
+  if (selectedJurisprudence && selectedJurisprudence.length > 0) {
+    text += `\n\n## YURISPRUDENSI TERVERIFIKASI SLN\nPutusan MA berikut telah diverifikasi oleh SLN dan BOLEH dikutip langsung dalam draft tanpa tanda [VERIFIKASI]. Sertakan sitasi ke putusan yang relevan secara inline sesuai konteks argumen.\n`;
+    selectedJurisprudence.forEach((e, i) => {
+      text += `${i + 1}. ${e.nomor} — ${e.kaidah} (Pasal terkait: ${e.pasal_terkait.join(", ")})\n`;
+    });
   }
 
   return text;

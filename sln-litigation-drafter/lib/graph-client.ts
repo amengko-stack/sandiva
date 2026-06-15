@@ -198,6 +198,13 @@ export async function writeMatterFile(
   return (data as { webUrl?: string }).webUrl || "";
 }
 
+export async function readSiteFileText(relPath: string): Promise<string | null> {
+  const encoded = relPath.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const res = await graphFetch(`/drive/root:/${encoded}:/content`);
+  if (res.status === 404 || !res.ok) return null;
+  return res.text();
+}
+
 export async function listAiFolder(
   matterFolderPath: string
 ): Promise<{ name: string; downloadUrl: string; lastModified: string }[]> {
