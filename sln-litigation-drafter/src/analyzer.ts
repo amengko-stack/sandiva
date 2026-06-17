@@ -235,12 +235,13 @@ Panduan per field:
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   console.log(`[model] stage=analisis-perkara model=${MODELS.kronologi}`);
-  const response = await client.messages.create({
+  const stream = client.messages.stream({
     model: MODELS.kronologi,
     max_tokens: 32000,
     system: ANALYSIS_SYSTEM,
     messages: [{ role: "user", content: prompt }],
   });
+  const response = await stream.finalMessage();
 
   const stopReason = response.stop_reason;
   const raw =

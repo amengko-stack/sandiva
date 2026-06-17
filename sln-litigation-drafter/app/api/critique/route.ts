@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     console.log(`[model] stage=kritik-draf model=${MODELS.critique}`);
-    const response = await client.messages.create({
+    const stream = client.messages.stream({
       model: MODELS.critique,
       max_tokens: 8192,
       system: CRITIQUE_SYSTEM,
@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
         },
       ],
     });
+    const response = await stream.finalMessage();
 
     const raw = response.content.find((b) => b.type === "text")?.text || "";
     console.log(

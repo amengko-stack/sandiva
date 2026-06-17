@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import type { CaseAnalysis, InterviewAnswer, StructuredAssessment } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, PartiesStrategy, StructuredAssessment } from "@/types";
 import { MODELS } from "@/config/models";
 import { readBlobText } from "@/lib/blob";
 
@@ -15,7 +15,7 @@ ATURAN SITASI: Jangan menyebut nomor putusan Mahkamah Agung yang spesifik kecual
 
 export async function POST(req: NextRequest) {
   try {
-    const { sessionId, docTypeId, claimType, pihak, kronologi, interviewAnswers, caseAnalysis } =
+    const { sessionId, docTypeId, claimType, pihak, kronologi, interviewAnswers, caseAnalysis, partiesStrategy } =
       (await req.json()) as {
         sessionId?: string;
         docTypeId?: string;
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
         kronologi?: string;
         interviewAnswers: InterviewAnswer[];
         caseAnalysis: CaseAnalysis;
+        partiesStrategy?: PartiesStrategy | null;
       };
     if (!caseAnalysis) {
       return NextResponse.json({ error: "caseAnalysis wajib diisi" }, { status: 400 });
@@ -45,7 +46,18 @@ export async function POST(req: NextRequest) {
       .map((ia, i) => `${i + 1}. ${ia.question}\n   Jawaban: ${ia.answer || "(tidak dijawab)"}`)
       .join("\n\n");
 
+    const partiesBlock = partiesStrategy
+      ? `IDENTITAS PARA PIHAK (dikonfirmasi drafter):
+- ${partiesStrategy.clientNoun} (klien kami): ${partiesStrategy.clientIdentities.join("; ")}
+- ${partiesStrategy.lawanNoun}: ${partiesStrategy.lawanIdentities.join("; ")}
+STRATEGI AWAL DRAFTER: ${partiesStrategy.strategi}
+
+`
+      : "";
+
     const prompt = `Drafter mewakili pihak ${pihakLabel} dalam perkara ${(docTypeId || "").replace(/_/g, " ")}${claimType ? ` (${claimType.replace(/_/g, " ")})` : ""}.
+
+${partiesBlock}
 
 DOKUMEN PERKARA YANG TELAH DIEKSTRAK:
 ${documents || "(tidak tersedia)"}
@@ -76,15 +88,16 @@ Ketentuan per bagian:
 - kekuatan: hal yang terdukung kuat oleh dokumen — SETIAP butir menyebut dokumen spesifik yang mendukungnya.
 - kelemahan: elemen yang lemah atau buktinya kurang — SETIAP butir menjelaskan persis bukti apa yang hilang/kurang.
 - risikoTersembunyi: risiko yurisdiksi dan prosedural. WAJIB: periksa SETIAP kontrak/perjanjian dalam dokumen di atas untuk KLAUSULA ARBITRASE — jika ditemukan, butir risiko klausula arbitrase HARUS selalu dimasukkan (sebut nama kontraknya). Periksa juga: daluwarsa/lewat waktu, forum yang keliru, tergugat yang salah atau kurang, kemungkinan gugatan balik (rekonvensi). Jika setelah pemeriksaan sungguh tidak ada risiko, kembalikan array kosong [].
-- rekomendasi: satu rekomendasi spesifik dan dapat ditindaklanjuti — lanjutkan / ubah jenis gugatan / ubah forum / kumpulkan bukti dulu. Jika BUKAN "lanjutkan", sebutkan kelemahan spesifik yang mendasarinya.`;
+- rekomendasi: satu rekomendasi spesifik dan dapat ditindaklanjuti — lanjutkan / ubah jenis gugatan / ubah forum / kumpulkan bukti dulu. Jika BUKAN "lanjutkan", sebutkan kelemahan spesifik yang mendasarinya.${partiesStrategy ? ` WAJIB: evaluasi apakah strategi awal drafter ("${partiesStrategy.strategi.slice(0, 100)}...") tepat berdasarkan fakta dokumen — jika tidak, sebutkan apa yang perlu diubah.` : ""}`;
 
     console.log(`[model] stage=asesmen-strategis model=${MODELS.assessment}`);
-    const message = await client.messages.create({
+    const stream = client.messages.stream({
       model: MODELS.assessment,
       max_tokens: 4096,
       system: SYSTEM,
       messages: [{ role: "user", content: prompt }],
     });
+    const message = await stream.finalMessage();
 
     const raw = message.content[0].type === "text" ? message.content[0].text : "";
     console.log(

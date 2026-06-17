@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
+import AddDocumentsModal from "@/components/AddDocumentsModal";
+import FileTree from "@/components/FileTree";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, CaseAnalysis, InterviewAnswer } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -121,6 +123,10 @@ export default function Stage2Files() {
   const [ocrMatches, setOcrMatches] = useState<Record<string, string>>({});
   const [batchInfo, setBatchInfo] = useState<{ batch: number; totalBatches: number } | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+
+  // Tambah Dokumen (add documents mid-workflow)
+  const [addDocsOpen, setAddDocsOpen] = useState(false);
+  const [addDocsWarning, setAddDocsWarning] = useState(false);
 
   // 2D: inventory collapse/expand + SharePoint save status
   const [inventoryExpanded, setInventoryExpanded] = useState(true);
@@ -249,6 +255,16 @@ export default function Stage2Files() {
 
   function clearAll2A() {
     setCheckedIds(new Set());
+  }
+
+  // Toggle many files at once (folder-level check/uncheck in the tree).
+  function setMany2A(ids: string[], checked: boolean) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) ids.forEach((id) => next.add(id));
+      else ids.forEach((id) => next.delete(id));
+      return next;
+    });
   }
 
   // Confirm selection → trigger AI mapping
@@ -858,43 +874,12 @@ export default function Stage2Files() {
                   <button onClick={clearAll2A} style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>Batalkan Semua</button>
                 </div>
               </div>
-              <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 300, overflowY: "auto", marginBottom: 12 }}>
-                {state.allFiles.map((f, i) => {
-                  const checked = checkedIds.has(f.id);
-                  return (
-                    <div
-                      key={f.id}
-                      onClick={() => toggleCheck2A(f.id)}
-                      style={{
-                        display: "flex", gap: 10, padding: "9px 12px",
-                        borderBottom: i < state.allFiles.length - 1 ? "1px solid var(--border-color)" : "none",
-                        alignItems: "center", cursor: "pointer",
-                        background: checked ? "rgba(91,155,213,0.05)" : "transparent",
-                        opacity: checked ? 1 : 0.45,
-                        userSelect: "none",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {}}
-                        style={{ flexShrink: 0, pointerEvents: "none" }}
-                      />
-                      <span style={{ fontSize: 14, flexShrink: 0 }}>{FILE_ICON[f.type] || "📎"}</span>
-                      <span style={{
-                        flex: 1, fontSize: 13,
-                        color: checked ? "var(--text-primary)" : "var(--text-muted)",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        textDecoration: checked ? "none" : "line-through",
-                      }}>
-                        {f.name}
-                      </span>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{f.size}</span>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", flexShrink: 0 }}>{f.type}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <FileTree
+                files={state.allFiles}
+                checkedIds={checkedIds}
+                onToggleFile={toggleCheck2A}
+                onSetMany={setMany2A}
+              />
               {checkedIds.size === 0 && (
                 <p style={{ fontSize: 13, color: "var(--error)", marginBottom: 12 }}>
                   Pilih minimal satu file untuk melanjutkan.
@@ -1292,6 +1277,21 @@ export default function Stage2Files() {
                   </div>
                 );
               })}
+              {/* Files added mid-workflow via "Tambah Dokumen" — badged distinctly */}
+              {state.allFiles
+                .filter((f) => state.addedFileIds.includes(f.id) && !extractLog.some((e) => e.name === f.name))
+                .map((f) => {
+                  const cat = state.docMap.find((m) => m.fileId === f.id)?.category ?? "REFERENSI";
+                  const meta = CATEGORY_META[cat];
+                  return (
+                    <div key={`added-${f.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderTop: "1px solid var(--border-color)", background: "rgba(39,174,96,0.04)" }}>
+                      <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0, color: "var(--success)" }}>✓</span>
+                      <span style={{ flex: 1, fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: "#fff", background: "#16a34a", borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>Ditambahkan</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: meta.color, letterSpacing: "0.05em", flexShrink: 0 }}>{meta.label}</span>
+                    </div>
+                  );
+                })}
             </div>
           )}
 
@@ -1305,12 +1305,24 @@ export default function Stage2Files() {
             </div>
           )}
 
+          {addDocsWarning && (
+            <div style={{ padding: 12, background: "rgba(184,134,11,0.1)", border: "1px solid var(--accent-gold)", borderRadius: 4, color: "var(--accent-gold)", fontSize: 13, marginBottom: 16 }}>
+              Analisis tidak diperbarui — dokumen baru belum tercermin dalam kronologi dan penilaian strategis.
+            </div>
+          )}
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <button
               onClick={() => setSubstep("2B")}
               style={{ padding: "10px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: "pointer" }}
             >
               ← Ulang Pilihan
+            </button>
+            <button
+              onClick={() => setAddDocsOpen(true)}
+              title="Tambah dokumen baru ke analisis perkara ini"
+              style={{ padding: "10px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: "pointer" }}
+            >
+              + Tambah Dokumen
             </button>
             {!stoppedEarly && (
               <a
@@ -1330,6 +1342,13 @@ export default function Stage2Files() {
           </div>
         </div>
       )}
+
+      <AddDocumentsModal
+        open={addDocsOpen}
+        onClose={() => setAddDocsOpen(false)}
+        onReanalyze={() => { dispatch({ type: "CLEAR_ANALYSIS" }); setAddDocsWarning(false); goToStage(3); }}
+        onContinueWithout={() => setAddDocsWarning(true)}
+      />
     </div>
   );
 }

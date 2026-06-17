@@ -7,6 +7,10 @@ export interface FileEntry {
   size: string;
   type: string;
   selected: boolean;
+  // Relative folder path from the matter root ("" = root-level file). Used by
+  // Stage 2A to render a navigable folder tree. Optional so older saved file
+  // lists (without this field) degrade gracefully to root-level entries.
+  folder?: string;
 }
 
 export type DocCategory = "KRITIS" | "PENDUKUNG" | "REFERENSI";
@@ -112,6 +116,15 @@ export interface DraftMeta {
   folderPath: string;
 }
 
+export interface PartiesStrategy {
+  pihak: string;
+  clientNoun: string;
+  lawanNoun: string;
+  clientIdentities: string[];
+  lawanIdentities: string[];
+  strategi: string;
+}
+
 export interface JurisprudenceEntry {
   id: string;
   nomor: string;
@@ -169,6 +182,8 @@ export interface WorkflowState {
   savedToSharePoint: boolean;
   approvedForMemory: boolean;
   selectedJurisprudence: JurisprudenceEntry[];
+  partiesStrategy: PartiesStrategy | null;
+  addedFileIds: string[];
   error: string | null;
 }
 
@@ -205,5 +220,8 @@ export type WorkflowAction =
   | { type: "SET_SAVED_SHAREPOINT"; value: boolean }
   | { type: "SET_APPROVED_MEMORY"; value: boolean }
   | { type: "SET_SELECTED_JURISPRUDENCE"; entries: JurisprudenceEntry[] }
+  | { type: "SET_PARTIES_STRATEGY"; value: PartiesStrategy }
+  | { type: "MARK_FILES_ADDED"; ids: string[] }
+  | { type: "CLEAR_ANALYSIS" }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "RESET" };

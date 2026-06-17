@@ -81,6 +81,8 @@ const initialState: WorkflowState = {
   savedToSharePoint: false,
   approvedForMemory: false,
   selectedJurisprudence: [],
+  partiesStrategy: null,
+  addedFileIds: [],
   error: null,
 };
 
@@ -180,11 +182,22 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "SET_SELECTED_JURISPRUDENCE":
       return { ...state, selectedJurisprudence: action.entries };
 
+    case "SET_PARTIES_STRATEGY":
+      return { ...state, partiesStrategy: action.value };
+
+    case "MARK_FILES_ADDED":
+      return { ...state, addedFileIds: Array.from(new Set([...state.addedFileIds, ...action.ids])) };
+
+    case "CLEAR_ANALYSIS":
+      // Force Stage 3A re-analysis with the full document set while preserving
+      // the drafter's interview answers and party identities/strategy.
+      return { ...state, caseAnalysis: null, strategicAssessment: "" };
+
     case "SET_ERROR":
       return { ...state, error: action.error };
 
     case "RESET":
-      return { ...initialState, sessionId: newSessionId(), selectedJurisprudence: [] };
+      return { ...initialState, sessionId: newSessionId(), selectedJurisprudence: [], partiesStrategy: null, addedFileIds: [] };
 
     default:
       return state;
