@@ -69,12 +69,13 @@ Kembalikan HANYA JSON dengan format:
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     console.log(`[model] stage=ekstraksi-sitasi model=${MODELS.critique}`);
-    const response = await client.messages.create({
+    const stream = client.messages.stream({
       model: MODELS.critique,
       max_tokens: 8192,
       system: SYSTEM,
       messages: [{ role: "user", content: prompt }],
     });
+    const response = await stream.finalMessage();
 
     const raw = response.content.find((b) => b.type === "text")?.text ?? "";
     console.log(

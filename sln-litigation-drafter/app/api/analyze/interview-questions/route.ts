@@ -49,12 +49,13 @@ Setiap pertanyaan harus spesifik, faktual, dapat dijawab klien, dan relevan deng
 PENTING: Kembalikan HANYA JSON array of strings yang valid — tanpa markdown, tanpa pagar kode, tanpa teks lain. Contoh format: ["pertanyaan 1", "pertanyaan 2"]`;
 
     console.log(`[model] stage=pertanyaan-wawancara model=${MODELS.interview}`);
-    const message = await client.messages.create({
+    const interviewStream = client.messages.stream({
       model: MODELS.interview,
       max_tokens: 4096,
       system: `Anda adalah litigator senior yang mempersiapkan wawancara klien strategis. Anda mewakili pihak ${pihakLabel}. Kembalikan HANYA JSON array string yang valid.`,
       messages: [{ role: "user", content: prompt }],
     });
+    const message = await interviewStream.finalMessage();
 
     const text = message.content[0].type === "text" ? message.content[0].text : "";
     console.log(
