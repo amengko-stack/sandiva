@@ -7,6 +7,10 @@ export interface FileEntry {
   size: string;
   type: string;
   selected: boolean;
+  // Relative folder path from the matter root ("" = root-level file). Used by
+  // Stage 2A to render a navigable folder tree. Optional so older saved file
+  // lists (without this field) degrade gracefully to root-level entries.
+  folder?: string;
 }
 
 export type DocCategory = "KRITIS" | "PENDUKUNG" | "REFERENSI";

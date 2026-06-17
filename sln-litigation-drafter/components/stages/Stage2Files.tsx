@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import AddDocumentsModal from "@/components/AddDocumentsModal";
+import FileTree from "@/components/FileTree";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, CaseAnalysis, InterviewAnswer } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -254,6 +255,16 @@ export default function Stage2Files() {
 
   function clearAll2A() {
     setCheckedIds(new Set());
+  }
+
+  // Toggle many files at once (folder-level check/uncheck in the tree).
+  function setMany2A(ids: string[], checked: boolean) {
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) ids.forEach((id) => next.add(id));
+      else ids.forEach((id) => next.delete(id));
+      return next;
+    });
   }
 
   // Confirm selection → trigger AI mapping
@@ -863,43 +874,12 @@ export default function Stage2Files() {
                   <button onClick={clearAll2A} style={{ fontSize: 12, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>Batalkan Semua</button>
                 </div>
               </div>
-              <div style={{ border: "1px solid var(--border-color)", borderRadius: 4, maxHeight: 300, overflowY: "auto", marginBottom: 12 }}>
-                {state.allFiles.map((f, i) => {
-                  const checked = checkedIds.has(f.id);
-                  return (
-                    <div
-                      key={f.id}
-                      onClick={() => toggleCheck2A(f.id)}
-                      style={{
-                        display: "flex", gap: 10, padding: "9px 12px",
-                        borderBottom: i < state.allFiles.length - 1 ? "1px solid var(--border-color)" : "none",
-                        alignItems: "center", cursor: "pointer",
-                        background: checked ? "rgba(91,155,213,0.05)" : "transparent",
-                        opacity: checked ? 1 : 0.45,
-                        userSelect: "none",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {}}
-                        style={{ flexShrink: 0, pointerEvents: "none" }}
-                      />
-                      <span style={{ fontSize: 14, flexShrink: 0 }}>{FILE_ICON[f.type] || "📎"}</span>
-                      <span style={{
-                        flex: 1, fontSize: 13,
-                        color: checked ? "var(--text-primary)" : "var(--text-muted)",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        textDecoration: checked ? "none" : "line-through",
-                      }}>
-                        {f.name}
-                      </span>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)", flexShrink: 0 }}>{f.size}</span>
-                      <span style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", flexShrink: 0 }}>{f.type}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <FileTree
+                files={state.allFiles}
+                checkedIds={checkedIds}
+                onToggleFile={toggleCheck2A}
+                onSetMany={setMany2A}
+              />
               {checkedIds.size === 0 && (
                 <p style={{ fontSize: 13, color: "var(--error)", marginBottom: 12 }}>
                   Pilih minimal satu file untuk melanjutkan.

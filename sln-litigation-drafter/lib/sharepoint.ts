@@ -249,6 +249,7 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
           size: root.size ? `${Math.round(root.size / 1024)} KB` : "",
           type: fileExt(root.name),
           selected: true,
+          folder: "",
         });
       }
       return results;
@@ -258,12 +259,13 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
       throw new Error("Tidak dapat menentukan driveId dari sharing link ini.");
     }
 
-    // Recursive listing via drive items
-    const recurseByDrive = async (itemId: string): Promise<void> => {
+    // Recursive listing via drive items. relFolder accumulates the folder path
+    // relative to the shared root ("" = root-level) so Stage 2A can build a tree.
+    const recurseByDrive = async (itemId: string, relFolder: string): Promise<void> => {
       const items = await listChildrenByDriveItem(driveId, itemId);
       for (const item of items) {
         if (item.folder) {
-          await recurseByDrive(item.id);
+          await recurseByDrive(item.id, relFolder ? `${relFolder}/${item.name}` : item.name);
         } else if (item.file && ALLOWED_EXTENSIONS.has(fileExt(item.name))) {
           results.push({
             id: `file-${index++}`,
@@ -272,23 +274,29 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
             size: item.size ? `${Math.round(item.size / 1024)} KB` : "",
             type: fileExt(item.name),
             selected: true,
+            folder: relFolder,
           });
         }
       }
     };
 
-    await recurseByDrive(root.id);
+    await recurseByDrive(root.id, "");
     return results;
   }
 
   // Site-based listing (full URL or plain path)
   const siteId = parsed.siteAddr!;
 
-  const recurse = async (path: string): Promise<void> => {
+  // relFolder accumulates the folder path relative to the matter root that the
+  // user linked ("" = root-level) so Stage 2A can build a navigable tree.
+  const recurse = async (path: string, relFolder: string): Promise<void> => {
     const items = await listChildren(siteId, path);
     for (const item of items) {
       if (item.folder) {
-        await recurse(path ? `${path}/${item.name}` : item.name);
+        await recurse(
+          path ? `${path}/${item.name}` : item.name,
+          relFolder ? `${relFolder}/${item.name}` : item.name,
+        );
       } else if (item.file && ALLOWED_EXTENSIONS.has(fileExt(item.name))) {
         const filePath = path ? `${path}/${item.name}` : item.name;
         results.push({
@@ -298,12 +306,13 @@ export async function listMatterFiles(folderPath: string): Promise<FileEntry[]> 
           size: item.size ? `${Math.round(item.size / 1024)} KB` : "",
           type: fileExt(item.name),
           selected: true,
+          folder: relFolder,
         });
       }
     }
   }
 
-  await recurse(normalizePath(parsed.folderPath));
+  await recurse(normalizePath(parsed.folderPath), "");
   return results;
 }
 
