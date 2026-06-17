@@ -117,6 +117,7 @@ export async function POST(req: NextRequest) {
               name: file.name, category, documentType,
               extractionMode: "Perlu OCR", status: "perlu_ocr",
             };
+            addedFiles.push({ id: file.id, name: file.name, category });
             enqueue({ type: "ocr_required", name: file.name, category, index: i, total });
             return;
           }
