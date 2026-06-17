@@ -390,28 +390,61 @@ export default function AddDocumentsModal({
         {/* Step 4 + 5 — decide */}
         {step === "decide" && summary && (
           <div>
-            <div style={{ padding: 14, background: "rgba(22,163,74,0.08)", border: "1px solid #16a34a", borderRadius: 6, marginBottom: 16 }}>
-              <p style={{ fontSize: 14, fontWeight: 600, margin: "0 0 4px", color: "#16a34a" }}>
-                {summary.ocrCount > 0 && summary.ocrCount === summary.count
-                  ? `${summary.count} dokumen ditambahkan ke inventaris (perlu OCR — belum ada konten teks).`
-                  : summary.ocrCount > 0
-                  ? `${summary.count - summary.ocrCount} dari ${summary.count} dokumen berhasil diekstrak (${summary.addedChars.toLocaleString("id-ID")} karakter); ${summary.ocrCount} perlu OCR.`
-                  : `${summary.count} dokumen baru berhasil ditambahkan (${summary.addedChars.toLocaleString("id-ID")} karakter).`}
-              </p>
-              <p style={{ fontSize: 13, color: "var(--text-muted,#555)", margin: 0 }}>
-                Analisis perkara perlu dijalankan ulang dengan dokumen lengkap.
-              </p>
-            </div>
+            {(() => {
+              const successCount = summary.count - summary.ocrCount;
+              const failedRows = extractLog.filter((r) => r.status === "gagal");
+              const hasSuccess = successCount > 0 || summary.ocrCount > 0;
+              return (
+                <>
+                  {hasSuccess ? (
+                    <div style={{ padding: 14, background: "rgba(22,163,74,0.08)", border: "1px solid #16a34a", borderRadius: 6, marginBottom: 16 }}>
+                      <p style={{ fontSize: 14, fontWeight: 600, margin: "0 0 4px", color: "#16a34a" }}>
+                        {summary.ocrCount > 0 && summary.ocrCount === summary.count
+                          ? `${summary.count} dokumen ditambahkan ke inventaris (perlu OCR — belum ada konten teks).`
+                          : summary.ocrCount > 0
+                          ? `${successCount} dari ${summary.count} dokumen berhasil diekstrak (${summary.addedChars.toLocaleString("id-ID")} karakter); ${summary.ocrCount} perlu OCR.`
+                          : `${summary.count} dokumen baru berhasil ditambahkan (${summary.addedChars.toLocaleString("id-ID")} karakter).`}
+                      </p>
+                      <p style={{ fontSize: 13, color: "var(--text-muted,#555)", margin: 0 }}>
+                        Analisis perkara perlu dijalankan ulang dengan dokumen lengkap.
+                      </p>
+                    </div>
+                  ) : (
+                    <div style={{ padding: 14, background: "rgba(202,138,4,0.08)", border: "1px solid #ca8a04", borderRadius: 6, marginBottom: 16 }}>
+                      <p style={{ fontSize: 14, fontWeight: 600, margin: 0, color: "#ca8a04" }}>
+                        Tidak ada dokumen baru yang berhasil ditambahkan.
+                      </p>
+                    </div>
+                  )}
 
-            <div style={{ marginBottom: 18 }}>
-              {extractLog.filter((r) => r.status === "selesai" || r.status === "cache").map((r, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", fontSize: 13 }}>
-                  <span style={{ flex: 1 }}>{r.name}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#16a34a", borderRadius: 4, padding: "2px 8px" }}>Ditambahkan</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: catLabel(r.category) }}>{r.category}</span>
-                </div>
-              ))}
-            </div>
+                  {failedRows.length > 0 && (
+                    <div style={{ marginBottom: 16, padding: 12, background: "rgba(202,138,4,0.06)", border: "1px solid rgba(202,138,4,0.3)", borderRadius: 6 }}>
+                      <p style={{ fontSize: 12, fontWeight: 600, color: "#ca8a04", margin: "0 0 8px" }}>
+                        {failedRows.length} file gagal diekstrak:
+                      </p>
+                      {failedRows.map((r, i) => (
+                        <div key={i} style={{ marginBottom: 6 }}>
+                          <span style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</span>
+                          {r.reason && (
+                            <p style={{ fontSize: 12, color: "var(--text-muted,#555)", margin: "2px 0 0" }}>{r.reason}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{ marginBottom: 18 }}>
+                    {extractLog.filter((r) => r.status === "selesai" || r.status === "cache").map((r, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", fontSize: 13 }}>
+                        <span style={{ flex: 1 }}>{r.name}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", background: "#16a34a", borderRadius: 4, padding: "2px 8px" }}>Ditambahkan</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: catLabel(r.category) }}>{r.category}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
 
             <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
               <button onClick={() => { closeAndReset(); onContinueWithout(); }} style={btnSecondary}>
