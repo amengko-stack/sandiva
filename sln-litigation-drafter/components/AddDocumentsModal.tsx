@@ -21,6 +21,7 @@ interface AddedSummary {
   count: number;
   addedChars: number;
   oldChars: number;
+  ocrCount: number;
   newTotal: number;
 }
 
@@ -209,11 +210,13 @@ export default function AddDocumentsModal({
             dispatch({ type: "SET_ALL_FILES", files: [...state.allFiles, ...addedEntries] });
             dispatch({ type: "SET_DOC_MAP", map: [...state.docMap, ...addedMap] });
             dispatch({ type: "MARK_FILES_ADDED", ids: added.map((a) => a.id) });
+            const ocrCount = extractLog.filter((r) => r.status === "perlu_ocr").length;
             setSummary({
               count: added.length,
               addedChars: msg.addedChars as number,
               oldChars: msg.oldChars as number,
               newTotal: msg.newTotal as number,
+              ocrCount,
             });
             // Persist updated inventory PDF + merged file list (fire-and-forget).
             if (state.folderPath) {
@@ -389,7 +392,11 @@ export default function AddDocumentsModal({
           <div>
             <div style={{ padding: 14, background: "rgba(22,163,74,0.08)", border: "1px solid #16a34a", borderRadius: 6, marginBottom: 16 }}>
               <p style={{ fontSize: 14, fontWeight: 600, margin: "0 0 4px", color: "#16a34a" }}>
-                {summary.count} dokumen baru berhasil ditambahkan ({summary.addedChars.toLocaleString("id-ID")} karakter).
+                {summary.ocrCount > 0 && summary.ocrCount === summary.count
+                  ? `${summary.count} dokumen ditambahkan ke inventaris (perlu OCR — belum ada konten teks).`
+                  : summary.ocrCount > 0
+                  ? `${summary.count - summary.ocrCount} dari ${summary.count} dokumen berhasil diekstrak (${summary.addedChars.toLocaleString("id-ID")} karakter); ${summary.ocrCount} perlu OCR.`
+                  : `${summary.count} dokumen baru berhasil ditambahkan (${summary.addedChars.toLocaleString("id-ID")} karakter).`}
               </p>
               <p style={{ fontSize: 13, color: "var(--text-muted,#555)", margin: 0 }}>
                 Analisis perkara perlu dijalankan ulang dengan dokumen lengkap.
