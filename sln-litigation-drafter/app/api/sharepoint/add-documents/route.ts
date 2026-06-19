@@ -82,12 +82,15 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const enqueue = (data: object) => controller.enqueue(encoder.encode(sse(data)));
 
+      const isBlank = (s: string) => s.replace(/\s+/g, "").length === 0;
+
       const processFile = async (i: number) => {
         const file = sorted[i];
         const entry = mapById.get(file.id);
         const category: DocCategory = entry?.category ?? "REFERENSI";
         const documentType: DocDocumentType = entry?.documentType ?? "tidak_dikenali";
 
+        console.log(`[add-docs] start name=${file.name} path=${file.path} type=${file.type} category=${category}`);
         enqueue({ type: "start", name: file.name, category, index: i, total });
 
         try {
@@ -95,21 +98,28 @@ export async function POST(req: NextRequest) {
 
           const cached = await readExtractionCache(file.path, currentModifiedAt, category);
           if (cached) {
-            cacheHits++;
-            processed++;
-            addedChars += cached.content.length;
-            docBlocks[i] = formatDocBlock(cached.metadata, cached.content);
-            newReportFiles[i] = {
-              name: file.name, category, documentType,
-              extractionMode: `${METHOD_LABEL[cached.metadata.extractionMethod] ?? cached.metadata.extractionMethod} [Dari Cache]`,
-              status: "selesai", charCount: cached.content.length,
-            };
-            addedFiles.push({ id: file.id, name: file.name, category });
-            enqueue({ type: "done", name: file.name, category, charCount: cached.content.length, index: i, total, fromCache: true, method: cached.metadata.extractionMethod });
-            return;
+            console.log(`[add-docs] cache-hit name=${file.name} contentLen=${cached.content.length}`);
+            if (isBlank(cached.content)) {
+              // Stale empty cache entry — fall through to fresh extraction.
+              console.log(`[add-docs] cache-hit empty → fall through name=${file.name}`);
+            } else {
+              cacheHits++;
+              processed++;
+              addedChars += cached.content.length;
+              docBlocks[i] = formatDocBlock(cached.metadata, cached.content);
+              newReportFiles[i] = {
+                name: file.name, category, documentType,
+                extractionMode: `${METHOD_LABEL[cached.metadata.extractionMethod] ?? cached.metadata.extractionMethod} [Dari Cache]`,
+                status: "selesai", charCount: cached.content.length,
+              };
+              addedFiles.push({ id: file.id, name: file.name, category });
+              enqueue({ type: "done", name: file.name, category, charCount: cached.content.length, index: i, total, fromCache: true, method: cached.metadata.extractionMethod });
+              return;
+            }
           }
 
           const { content, extractionMethod, needsOcr } = await extractWithTier(file.path, file.name, category);
+          console.log(`[add-docs] extract name=${file.name} contentLen=${content.length} method=${extractionMethod} needsOcr=${needsOcr}`);
 
           if (needsOcr) {
             ocrRequired++;
@@ -118,7 +128,17 @@ export async function POST(req: NextRequest) {
               extractionMode: "Perlu OCR", status: "perlu_ocr",
             };
             addedFiles.push({ id: file.id, name: file.name, category });
+            console.log(`[add-docs] decision=perlu_ocr name=${file.name}`);
             enqueue({ type: "ocr_required", name: file.name, category, index: i, total });
+            return;
+          }
+
+          if (isBlank(content)) {
+            const reason = "Tidak ada teks yang dapat diekstrak — file kemungkinan .doc lama (hanya .docx didukung), kosong, atau rusak. Konversi ke .docx atau PDF lalu coba lagi.";
+            skipped++;
+            newReportFiles[i] = { name: file.name, category, documentType, extractionMode: "—", status: "gagal", reason };
+            console.log(`[add-docs] decision=empty-skip name=${file.name}`);
+            enqueue({ type: "error", name: file.name, category, reason, index: i, total });
             return;
           }
 
@@ -142,6 +162,7 @@ export async function POST(req: NextRequest) {
             status: "selesai", charCount: content.length,
           };
           addedFiles.push({ id: file.id, name: file.name, category });
+          console.log(`[add-docs] decision=appended name=${file.name} chars=${content.length}`);
           enqueue({ type: "done", name: file.name, category, charCount: content.length, index: i, total, fromCache: false, method: extractionMethod });
         } catch (e: unknown) {
           const reason = e instanceof Error ? e.message : String(e);

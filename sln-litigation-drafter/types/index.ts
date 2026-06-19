@@ -224,4 +224,5 @@ export type WorkflowAction =
   | { type: "MARK_FILES_ADDED"; ids: string[] }
   | { type: "CLEAR_ANALYSIS" }
   | { type: "SET_ERROR"; error: string | null }
+  | { type: "HYDRATE"; state: WorkflowState }
   | { type: "RESET" };

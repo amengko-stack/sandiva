@@ -5,6 +5,7 @@ import {
   useContext,
   useReducer,
   useEffect,
+  useState,
   type ReactNode,
 } from "react";
 import type { WorkflowState, WorkflowAction, Stage } from "@/types";
@@ -196,6 +197,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "SET_ERROR":
       return { ...state, error: action.error };
 
+    case "HYDRATE":
+      return { ...action.state };
+
     case "RESET":
       return { ...initialState, sessionId: newSessionId(), selectedJurisprudence: [], partiesStrategy: null, addedFileIds: [] };
 
@@ -213,16 +217,25 @@ interface WorkflowContextValue {
 const WorkflowContext = createContext<WorkflowContextValue | null>(null);
 
 export function WorkflowProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState, (init) => {
-    if (typeof window === "undefined") return init;
-    try {
-      const saved = sessionStorage.getItem(SESSION_KEY);
-      if (saved) return JSON.parse(saved) as WorkflowState;
-    } catch {}
-    return init;
-  });
+  // Initialize deterministically so the server render and the client's first
+  // (hydration) render produce identical output. Persisted state is loaded from
+  // sessionStorage AFTER mount via HYDRATE — reading it during render would make
+  // the client tree diverge from the server HTML (React #418/#423 hydration error).
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(SESSION_KEY);
+      if (saved) dispatch({ type: "HYDRATE", state: JSON.parse(saved) as WorkflowState });
+    } catch {}
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    // Don't persist until the saved session has been loaded, otherwise the
+    // initial `initialState` would clobber the stored session before HYDRATE runs.
+    if (!hydrated) return;
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
     } catch {}
@@ -238,7 +251,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
         localStorage.setItem(LAST_MATTER_KEY, state.folderPath);
       } catch {}
     }
-  }, [state]);
+  }, [state, hydrated]);
 
   function goToStage(stage: Stage) {
     dispatch({ type: "SET_STAGE", stage });
@@ -246,7 +259,11 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
 
   return (
     <WorkflowContext.Provider value={{ state, dispatch, goToStage }}>
-      {children}
+      {hydrated ? children : (
+        <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>
+          Memuat…
+        </div>
+      )}
     </WorkflowContext.Provider>
   );
 }

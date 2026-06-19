@@ -29,16 +29,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Format laporan tidak valid" }, { status: 500 });
     }
 
-    const pdfBuffer = await generateInventoryPdf(report);
+    console.log(`[inventory-save] report shape: files=${report.files?.length} totalChars=${report.totalChars} processed=${report.processed} skipped=${report.skipped}`);
+
+    let pdfBuffer: Buffer;
+    try {
+      pdfBuffer = await generateInventoryPdf(report);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[inventory-save] pdf-gen failed:", message, e instanceof Error ? e.stack : "");
+      return NextResponse.json({ error: `Gagal membuat PDF inventaris: ${message}` }, { status: 500 });
+    }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     // writeMatterFile resolves folderPath (a sharing link) to the matter's own
     // drive and auto-creates the AI/ folder. The subfolder is part of the filename.
-    const webUrl = await writeMatterFile(folderPath, `AI/document_inventory_${timestamp}.pdf`, pdfBuffer, "application/pdf");
+    let webUrl: string;
+    try {
+      webUrl = await writeMatterFile(folderPath, `AI/document_inventory_${timestamp}.pdf`, pdfBuffer, "application/pdf");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[inventory-save] sharepoint write failed:", message, e instanceof Error ? e.stack : "");
+      return NextResponse.json({ error: `Gagal menyimpan ke SharePoint: ${message}` }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true, webUrl });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Gagal menyimpan ke SharePoint";
+    const message = e instanceof Error ? e.message : "Gagal menyimpan inventaris";
     console.error("[inventory-save] Error:", message, e instanceof Error ? e.stack : "");
     return NextResponse.json({ error: message }, { status: 500 });
   }

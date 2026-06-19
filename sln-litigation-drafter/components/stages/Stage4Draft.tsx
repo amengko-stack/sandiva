@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import type { DraftVersion } from "@/types";
 
 const MAX_REVISIONS = 5;
@@ -260,6 +261,25 @@ export default function Stage4Draft() {
       )}
 
       {/* ── Draft display panel ────────────────────────────────────────── */}
+      <ErrorBoundary
+        fallback={() => (
+          <div style={{ background: "var(--bg-draft)", border: "1px solid var(--error)", borderRadius: 4, marginBottom: 24, padding: 16 }}>
+            <p style={{ color: "var(--error)", fontSize: 13, marginBottom: 10 }}>
+              Gagal menampilkan draf — muat ulang halaman. Teks draf yang valid ditampilkan di bawah ini:
+            </p>
+            <textarea
+              readOnly
+              value={displayText}
+              style={{
+                width: "100%", minHeight: 300, padding: "12px 14px",
+                background: "var(--bg-input)", border: "1px solid var(--border-color)", borderRadius: 4,
+                color: "var(--text-primary)", fontSize: 13, lineHeight: 1.7,
+                fontFamily: "Georgia, 'Times New Roman', serif", resize: "vertical", boxSizing: "border-box",
+              }}
+            />
+          </div>
+        )}
+      >
       <div style={{ background: "var(--bg-draft)", border: "1px solid var(--border-color)", borderRadius: 4, marginBottom: 24 }}>
         <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>
@@ -304,6 +324,7 @@ export default function Stage4Draft() {
           )}
         </pre>
       </div>
+      </ErrorBoundary>
 
       {/* ── Version history strip ─────────────────────────────────────── */}
       {state.draftVersions.length > 0 && (
