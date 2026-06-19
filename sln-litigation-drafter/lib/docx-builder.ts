@@ -13,6 +13,12 @@ import {
   TabStopPosition,
   LevelFormat,
   LineRuleType,
+  Table,
+  TableRow,
+  TableCell,
+  WidthType,
+  ShadingType,
+  VerticalAlign,
 } from "docx";
 import { getClaimTypeLabel } from "@/config/documentTypes";
 
@@ -32,6 +38,145 @@ function sanitizeForXml(text: string): string {
   return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
 }
 
+// ─── Section-group header patterns (displayed as bold divider rows in Daftar Isi)
+const SECTION_GROUP_RE = /^(DALAM EKSEPSI|DALAM POKOK PERKARA|DALAM REKONVENSI|PETITUM|PERMOHONAN)(\b.*)?$/;
+// ─── Individual sub-heading patterns: roman numerals or capital-letter sections
+const HEADING_ITEM_RE = /^((?:I{1,3}V?|VI{0,3}|IX|X{1,2})\.\s+\S|[A-Z]\.\s+\S)/;
+
+interface TocEntry {
+  kind: "group" | "item";
+  label: string;
+  counter?: string; // roman/letter number for items
+}
+
+function extractTocEntries(text: string): TocEntry[] {
+  const entries: TocEntry[] = [];
+  let itemSeq = 0;
+  let currentGroup: string | null = null;
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line.trim()) continue;
+
+    const groupMatch = SECTION_GROUP_RE.exec(line.trim());
+    if (groupMatch) {
+      currentGroup = line.trim();
+      entries.push({ kind: "group", label: currentGroup });
+      itemSeq = 0;
+      continue;
+    }
+
+    if (currentGroup && HEADING_ITEM_RE.test(line)) {
+      itemSeq++;
+      const numMatch = /^((?:I{1,3}V?|VI{0,3}|IX|X{1,2})|[A-Z])\./.exec(line);
+      const counter = numMatch ? numMatch[1] + "." : String(itemSeq) + ".";
+      const title = line.replace(/^(?:(?:I{1,3}V?|VI{0,3}|IX|X{1,2})|[A-Z])\.\s+/, "").trim();
+      entries.push({ kind: "item", label: title, counter });
+    }
+  }
+  return entries;
+}
+
+const CELL_BORDER = {
+  top:    { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+  bottom: { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+  left:   { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+  right:  { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+};
+
+function tocCell(
+  text: string,
+  opts: {
+    bold?: boolean;
+    italic?: boolean;
+    colSpan?: number;
+    align?: (typeof AlignmentType)[keyof typeof AlignmentType];
+    shaded?: boolean;
+    width?: number;
+  } = {}
+): TableCell {
+  const { bold, italic, colSpan, align, shaded, width = 1000 } = opts;
+  return new TableCell({
+    columnSpan: colSpan,
+    width: { size: width, type: WidthType.DXA },
+    shading: shaded
+      ? { type: ShadingType.CLEAR, color: "auto", fill: "E8E8E8" }
+      : { type: ShadingType.CLEAR, color: "auto", fill: "FFFFFF" },
+    margins: { top: 60, bottom: 60, left: 120, right: 120 },
+    borders: CELL_BORDER,
+    verticalAlign: VerticalAlign.CENTER,
+    children: [
+      new Paragraph({
+        alignment: align ?? AlignmentType.LEFT,
+        children: [
+          new TextRun({ text, bold, italics: italic, font: "Calibri Light", size: 20 }),
+        ],
+      }),
+    ],
+  });
+}
+
+function buildDaftarIsiTable(entries: TocEntry[]): (Table | Paragraph)[] {
+  // Header row
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children: [
+      tocCell("NO.",    { bold: true, align: AlignmentType.CENTER, shaded: true, width: 600 }),
+      tocCell("URAIAN", { bold: true, align: AlignmentType.CENTER, shaded: true, width: 6200 }),
+      tocCell("HAL.",   { bold: true, align: AlignmentType.CENTER, shaded: true, width: 800 }),
+    ],
+  });
+
+  const dataRows: TableRow[] = entries.map((e) => {
+    if (e.kind === "group") {
+      return new TableRow({
+        children: [
+          tocCell(e.label, { bold: true, colSpan: 3, shaded: true, width: 7600 }),
+        ],
+      });
+    }
+    return new TableRow({
+      children: [
+        tocCell(e.counter ?? "",  { align: AlignmentType.CENTER, width: 600 }),
+        tocCell(e.label,          { width: 6200 }),
+        tocCell("",               { align: AlignmentType.CENTER, width: 800 }),
+      ],
+    });
+  });
+
+  const table = new Table({
+    width: { size: 7600, type: WidthType.DXA },
+    borders: {
+      top:              { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+      bottom:           { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+      left:             { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+      right:            { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+      insideVertical:   { style: BorderStyle.SINGLE, size: 4, color: "AAAAAA" },
+    },
+    rows: [headerRow, ...dataRows],
+  });
+
+  const note = new Paragraph({
+    spacing: { before: 80, after: 240 },
+    children: [
+      new TextRun({
+        text: "Nomor halaman agar diisi manual setelah dokumen final.",
+        italics: true,
+        font: "Calibri Light",
+        size: 18,
+        color: "888888",
+      }),
+    ],
+  });
+
+  return [table, note];
+}
+
+// Document types for which Daftar Isi is relevant
+const TOC_DOC_TYPES = /jawaban|gugatan|kesimpulan/i;
+const TOC_MIN_ENTRIES = 3;
+
 export async function buildLitigationDocx(
   text: string,
   meta: DocxMeta,
@@ -41,7 +186,43 @@ export async function buildLitigationDocx(
   if (clean.length !== text.length) {
     console.warn(`[docx-builder] stripped ${text.length - clean.length} XML-invalid control chars from draft`);
   }
-  const children = buildChildren(clean);
+
+  // Build Daftar Isi block before splitting children, so we can splice it in
+  // at the right position (after the kepala surat block, before the first H1 section).
+  let tocBlock: (Table | Paragraph)[] = [];
+  if (TOC_DOC_TYPES.test(meta.docType)) {
+    const tocEntries = extractTocEntries(clean);
+    if (tocEntries.length >= TOC_MIN_ENTRIES) {
+      tocBlock = buildDaftarIsiTable(tocEntries);
+    }
+  }
+
+  // Find line index of first H1 in the source text so we can split children.
+  // buildChildren processes lines in the same order, so paragraph count up to
+  // that line matches the paragraph index to splice at.
+  let spliceAt = -1;
+  if (tocBlock.length > 0) {
+    const lines = clean.split("\n");
+    let paraCount = 0;
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      if (
+        /^(I{1,3}V?|VI{0,3}|IX|X{1,2})\.\s+\S/.test(line) ||
+        /^(DALAM EKSEPSI|DALAM POKOK PERKARA|DALAM REKONVENSI|PETITUM|PERMOHONAN)/.test(line.trim())
+      ) {
+        spliceAt = paraCount;
+        break;
+      }
+      paraCount++;
+    }
+  }
+
+  const bodyParagraphs: (Paragraph | Table)[] = buildChildren(clean);
+  if (tocBlock.length > 0) {
+    const insertAt = spliceAt >= 0 ? spliceAt : 0;
+    bodyParagraphs.splice(insertAt, 0, ...tocBlock);
+  }
+  const children = bodyParagraphs;
 
   // Append internal citation checklist on a new page when provided
   if (appendix) {
