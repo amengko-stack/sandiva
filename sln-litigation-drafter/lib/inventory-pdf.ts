@@ -46,7 +46,7 @@ function formatChars(n?: number): string {
 
 export async function generateInventoryPdf(report: ExtractReport): Promise<Buffer> {
   const chunks: Buffer[] = [];
-  const doc = new PDFDocument({ margin: 50, size: "A4" });
+  const doc = new PDFDocument({ margin: 50, size: "A4", bufferPages: true });
   doc.on("data", (chunk: Buffer) => chunks.push(chunk));
 
   await new Promise<void>((resolve, reject) => {
@@ -176,8 +176,8 @@ export async function generateInventoryPdf(report: ExtractReport): Promise<Buffe
     }
 
     // ── Footer ───────────────────────────────────────────────────────────────
-    const pageCount = doc.bufferedPageRange().count;
-    for (let i = 0; i < pageCount; i++) {
+    const { start: pageStart, count: pageCount } = doc.bufferedPageRange();
+    for (let i = pageStart; i < pageStart + pageCount; i++) {
       doc.switchToPage(i);
       doc.fontSize(7).font("Helvetica").fillColor("#aaa")
         .text(
