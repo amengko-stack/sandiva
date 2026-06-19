@@ -11,6 +11,8 @@ import {
   PageNumber,
   TabStopType,
   TabStopPosition,
+  LevelFormat,
+  LineRuleType,
 } from "docx";
 import { getClaimTypeLabel } from "@/config/documentTypes";
 
@@ -53,7 +55,7 @@ export async function buildLitigationDocx(
             text: "LAMPIRAN INTERNAL — DAFTAR SITASI UNTUK VERIFIKASI — JANGAN DISERTAKAN DALAM BERKAS YANG DIFILING",
             bold: true,
             color: "C0392B",
-            font: "Arial",
+            font: "Calibri Light",
             size: 20,
           }),
         ],
@@ -63,9 +65,28 @@ export async function buildLitigationDocx(
   }
 
   const doc = new Document({
+    numbering: {
+      config: [
+        {
+          reference: "sln-bullet",
+          levels: [
+            {
+              level: 0,
+              format: LevelFormat.BULLET,
+              text: "-",
+              alignment: AlignmentType.LEFT,
+              style: {
+                run: { font: "Calibri Light", size: 22 },
+                paragraph: { indent: { left: 720, hanging: 360 } },
+              },
+            },
+          ],
+        },
+      ],
+    },
     styles: {
       default: {
-        document: { run: { font: "Arial", size: 22 } },
+        document: { run: { font: "Calibri Light", size: 22 } },
       },
       paragraphStyles: [
         {
@@ -73,7 +94,7 @@ export async function buildLitigationDocx(
           name: "Heading 1",
           basedOn: "Normal",
           next: "Normal",
-          run: { size: 24, bold: true, font: "Arial", color: "1F3864" },
+          run: { size: 22, bold: true, font: "Calibri Light" },
           paragraph: {
             spacing: { before: 360, after: 120 },
             outlineLevel: 0,
@@ -84,7 +105,7 @@ export async function buildLitigationDocx(
           name: "Heading 2",
           basedOn: "Normal",
           next: "Normal",
-          run: { size: 22, bold: true, font: "Arial", color: "2E5090" },
+          run: { size: 22, bold: true, font: "Calibri Light" },
           paragraph: {
             spacing: { before: 240, after: 80 },
             outlineLevel: 1,
@@ -97,7 +118,7 @@ export async function buildLitigationDocx(
         properties: {
           page: {
             size: { width: 11906, height: 16838 },
-            margin: { top: 1440, right: 1440, bottom: 1440, left: 1800 },
+            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
           },
         },
         headers: {
@@ -116,7 +137,7 @@ export async function buildLitigationDocx(
                   new TextRun({
                     text: `SANDIVA LEGAL NETWORK  |  ${meta.docType.toUpperCase()} — ${getClaimTypeLabel(meta.claimType).toUpperCase()}  |  RAHASIA`,
                     size: 16,
-                    font: "Arial",
+                    font: "Calibri Light",
                     color: "888888",
                   }),
                 ],
@@ -146,14 +167,14 @@ export async function buildLitigationDocx(
                   new TextRun({
                     text: `Ref: ${meta.ref}`,
                     size: 16,
-                    font: "Arial",
+                    font: "Calibri Light",
                     color: "888888",
                   }),
                   new TextRun({ text: "\t", size: 16 }),
                   new TextRun({
                     text: "Halaman ",
                     size: 16,
-                    font: "Arial",
+                    font: "Calibri Light",
                     color: "888888",
                   }),
                   // Page number must be run content: PageNumber.CURRENT inside
@@ -164,7 +185,7 @@ export async function buildLitigationDocx(
                   new TextRun({
                     children: [PageNumber.CURRENT],
                     size: 16,
-                    font: "Arial",
+                    font: "Calibri Light",
                     color: "888888",
                   }),
                 ],
@@ -206,9 +227,8 @@ function buildChildren(text: string): Paragraph[] {
             new TextRun({
               text: line,
               bold: true,
-              size: 24,
-              font: "Arial",
-              color: "1F3864",
+              size: 22,
+              font: "Calibri Light",
             }),
           ],
         })
@@ -222,7 +242,7 @@ function buildChildren(text: string): Paragraph[] {
           heading: HeadingLevel.HEADING_2,
           spacing: { before: 240, after: 80 },
           children: [
-            new TextRun({ text: line, bold: true, size: 22, font: "Arial" }),
+            new TextRun({ text: line, bold: true, size: 22, font: "Calibri Light" }),
           ],
         })
       );
@@ -242,7 +262,7 @@ function buildChildren(text: string): Paragraph[] {
             new TextRun({
               text: line.trim(),
               bold: line.trim().toUpperCase() === line.trim(),
-              font: "Arial",
+              font: "Calibri Light",
               size: 22,
             }),
           ],
@@ -265,15 +285,9 @@ function buildChildren(text: string): Paragraph[] {
     if (/^[-•]\s+/.test(line)) {
       children.push(
         new Paragraph({
+          numbering: { reference: "sln-bullet", level: 0 },
           spacing: { before: 40, after: 40 },
-          indent: { left: 720, hanging: 360 },
-          children: [
-            new TextRun({
-              text: "•  " + line.replace(/^[-•]\s+/, ""),
-              font: "Arial",
-              size: 22,
-            }),
-          ],
+          children: parseInline(line.replace(/^[-•]\s+/, "")),
         })
       );
       continue;
@@ -289,7 +303,7 @@ function buildChildren(text: string): Paragraph[] {
               bold: true,
               italics: true,
               color: "1A5276",
-              font: "Arial",
+              font: "Calibri Light",
               size: 20,
             }),
           ],
@@ -301,7 +315,7 @@ function buildChildren(text: string): Paragraph[] {
     children.push(
       new Paragraph({
         alignment: AlignmentType.JUSTIFIED,
-        spacing: { before: 60, after: 80, line: 288 },
+        spacing: { before: 60, after: 80, line: 276, lineRule: LineRuleType.AUTO },
         children: parseInline(line),
       })
     );
@@ -319,26 +333,26 @@ function parseInline(text: string): TextRun[] {
   while ((m = regex.exec(text)) !== null) {
     if (m.index > last) {
       runs.push(
-        new TextRun({ text: text.slice(last, m.index), font: "Arial", size: 22 })
+        new TextRun({ text: text.slice(last, m.index), font: "Calibri Light", size: 22 })
       );
     }
     if (m[1]) {
       runs.push(
-        new TextRun({ text: m[1], bold: true, font: "Arial", size: 22 })
+        new TextRun({ text: m[1], bold: true, font: "Calibri Light", size: 22 })
       );
     } else if (m[2]) {
       runs.push(
-        new TextRun({ text: m[2], italics: true, font: "Arial", size: 22 })
+        new TextRun({ text: m[2], italics: true, font: "Calibri Light", size: 22 })
       );
     }
     last = regex.lastIndex;
   }
   if (last < text.length) {
     runs.push(
-      new TextRun({ text: text.slice(last), font: "Arial", size: 22 })
+      new TextRun({ text: text.slice(last), font: "Calibri Light", size: 22 })
     );
   }
   return runs.length
     ? runs
-    : [new TextRun({ text, font: "Arial", size: 22 })];
+    : [new TextRun({ text, font: "Calibri Light", size: 22 })];
 }
