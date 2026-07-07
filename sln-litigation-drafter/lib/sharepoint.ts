@@ -7,12 +7,23 @@ import { MODELS } from "@/config/models";
 // Token — plain fetch, no Azure SDK
 // ---------------------------------------------------------------------------
 let _cachedToken: { token: string; expiresAt: number } | null = null;
+// Dedup concurrent token requests: with CONCURRENCY=3 extraction batches a
+// cold start otherwise fires several simultaneous token round-trips.
+let _tokenInFlight: Promise<string> | null = null;
 
 async function getGraphToken(): Promise<string> {
   const now = Date.now();
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
     return _cachedToken.token;
   }
+  if (_tokenInFlight) return _tokenInFlight;
+  _tokenInFlight = fetchGraphToken(now).finally(() => {
+    _tokenInFlight = null;
+  });
+  return _tokenInFlight;
+}
+
+async function fetchGraphToken(now: number): Promise<string> {
   const tenantId = process.env.AZURE_TENANT_ID!;
   const params = new URLSearchParams({
     grant_type: "client_credentials",

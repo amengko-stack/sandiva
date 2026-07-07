@@ -129,7 +129,7 @@ export default function Stage5Output() {
     }
 
     fetchCitations().then((items) => {
-      const appendix = items.length >= 0 ? buildCitationAppendix(items) : undefined;
+      const appendix = items.length > 0 ? buildCitationAppendix(items) : undefined;
       triggerAutoSave(appendix);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,39 +147,44 @@ export default function Stage5Output() {
   }
 
   async function downloadDocx() {
-    const appendix = citations ? buildCitationAppendix(citations) : undefined;
-    const res = await fetch("/api/docx", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        draftText: state.draftText,
-        ref: state.ref,
-        docType: state.docTypeId || "draf",
-        claimType: state.claimType || "",
-        citationAppendix: appendix,
-      }),
-    });
+    try {
+      const appendix = citations ? buildCitationAppendix(citations) : undefined;
+      const res = await fetch("/api/docx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          draftText: state.draftText,
+          ref: state.ref,
+          docType: state.docTypeId || "draf",
+          claimType: state.claimType || "",
+          citationAppendix: appendix,
+        }),
+      });
 
-    if (!res.ok) {
-      const bodyText = await res.text().catch(() => "");
-      console.error(`[stage5] /api/docx status=${res.status} draftChars=${state.draftText.length} body=${bodyText.slice(0, 1000)}`);
-      let detail = bodyText.slice(0, 300);
-      try { detail = (JSON.parse(bodyText) as { error?: string }).error ?? detail; } catch {}
-      alert(`Gagal mengunduh file (${res.status}): ${detail}`);
-      return;
+      if (!res.ok) {
+        const bodyText = await res.text().catch(() => "");
+        console.error(`[stage5] /api/docx status=${res.status} draftChars=${state.draftText.length} body=${bodyText.slice(0, 1000)}`);
+        let detail = bodyText.slice(0, 300);
+        try { detail = (JSON.parse(bodyText) as { error?: string }).error ?? detail; } catch {}
+        alert(`Gagal mengunduh file (${res.status}): ${detail}`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${state.ref?.replace(/\//g, "-") || "draf-sln"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      // Session blob cleanup happens on "Buat Draf Baru" (and the daily cron) —
+      // clearing here would break citation retries and stage back-navigation.
+    } catch (e: unknown) {
+      console.error("[stage5] download failed:", e);
+      alert(`Gagal mengunduh file: ${e instanceof Error ? e.message : "masalah jaringan"}`);
     }
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${state.ref?.replace(/\//g, "-") || "draf-sln"}.docx`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    clearSession();
   }
 
   async function approveForMemory() {

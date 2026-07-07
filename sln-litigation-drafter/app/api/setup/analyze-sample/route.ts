@@ -104,8 +104,8 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e);
-    const stack = e instanceof Error ? e.stack : undefined;
-    console.error(`[analyze-sample][step=${step}]`, message, stack);
-    return NextResponse.json({ error: message, step, stack }, { status: 500 });
+    // Stack traces stay in the server logs — never in the response body.
+    console.error(`[analyze-sample][step=${step}]`, message, e instanceof Error ? e.stack : "");
+    return NextResponse.json({ error: message, step }, { status: 500 });
   }
 }

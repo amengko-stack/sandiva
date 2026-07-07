@@ -174,6 +174,7 @@ export default function AddDocumentsModal({
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let ocrSeen = 0;
 
       const updateRow = (name: string, patch: Partial<ExtractLogEntry>) =>
         setExtractLog((log) => log.map((r) => (r.name === name ? { ...r, ...patch } : r)));
@@ -199,6 +200,7 @@ export default function AddDocumentsModal({
               method: msg.method as string,
             });
           } else if (msg.type === "ocr_required") {
+            ocrSeen++;
             updateRow(msg.name as string, { status: "perlu_ocr" });
           } else if (msg.type === "error") {
             updateRow(msg.name as string, { status: "gagal", reason: msg.reason as string });
@@ -210,7 +212,9 @@ export default function AddDocumentsModal({
             dispatch({ type: "SET_ALL_FILES", files: [...state.allFiles, ...addedEntries] });
             dispatch({ type: "SET_DOC_MAP", map: [...state.docMap, ...addedMap] });
             dispatch({ type: "MARK_FILES_ADDED", ids: added.map((a) => a.id) });
-            const ocrCount = extractLog.filter((r) => r.status === "perlu_ocr").length;
+            // Counted locally during the stream — the extractLog state in this
+            // closure is stale (captured before the run seeded it).
+            const ocrCount = ocrSeen;
             setSummary({
               count: added.length,
               addedChars: msg.addedChars as number,

@@ -458,8 +458,15 @@ export default function Stage2Files() {
           if (!line.startsWith("data: ")) continue;
           const jsonStr = line.slice(6).trim();
           if (!jsonStr) continue;
+          let ev: Record<string, unknown>;
           try {
-            const ev = JSON.parse(jsonStr) as Record<string, unknown>;
+            ev = JSON.parse(jsonStr) as Record<string, unknown>;
+          } catch {
+            // Malformed SSE line (split chunk / keep-alive) — skip the line,
+            // never abort an hours-long extraction over it.
+            continue;
+          }
+          {
             if (ev.type === "start") {
               const logIdx = (ev.index as number) + prependLog.length;
               localLog = localLog.map((entry, i) =>
@@ -577,8 +584,6 @@ export default function Stage2Files() {
             } else if (ev.error) {
               throw new Error(ev.error as string);
             }
-          } catch (inner) {
-            if (inner instanceof Error && inner.message !== "Unexpected token") throw inner;
           }
         }
       }

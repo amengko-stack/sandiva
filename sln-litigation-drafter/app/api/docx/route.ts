@@ -30,7 +30,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const filename = `${(ref || "draf").replace(/\//g, "-")}.docx`;
+    // Quotes/control chars in ref would break the quoted Content-Disposition.
+    const filename = `${(ref || "draf").replace(/[\\/"\x00-\x1f]/g, "-")}.docx`;
 
     return new NextResponse(buffer as unknown as BodyInit, {
       headers: {
