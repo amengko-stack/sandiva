@@ -3,6 +3,18 @@ import type { MemoryLibrary, PatternEntry, StyleExample } from "@/types";
 
 const PREFIX = "litigation-memory";
 
+// sessionId comes from the client and is interpolated into blob keys — reject
+// anything that could escape `sessions/<id>/` or collide with another key.
+export function isValidSessionId(sessionId: unknown): sessionId is string {
+  return typeof sessionId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(sessionId);
+}
+
+// For blob filenames built from docType/claimType: a `/` would nest the key
+// where loadDraftMemory (which reads via path.split("/").pop()) never finds it.
+export function safeFileSegment(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
 export async function readBlobText(path: string): Promise<string | null> {
   try {
     // Blobs are written with access:"private", so they cannot be read by a
@@ -174,7 +186,7 @@ export async function saveApprovedDraft(
   meta: { docType: string; claimType: string; ref: string }
 ): Promise<void> {
   const timestamp = new Date().toISOString().slice(0, 10);
-  const filename = `${meta.docType}_${meta.claimType}_${timestamp}.txt`;
+  const filename = `${safeFileSegment(meta.docType)}_${safeFileSegment(meta.claimType)}_${timestamp}.txt`;
 
   await writeBlobText(`style_examples/${filename}`, draftText);
 

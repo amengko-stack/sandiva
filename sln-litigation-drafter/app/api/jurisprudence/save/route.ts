@@ -9,10 +9,28 @@ export async function POST(req: NextRequest) {
       entries: JurisprudenceEntry[];
       sourceFile?: { name: string; base64: string; mime: string };
     };
+    if (!Array.isArray(entries)) {
+      return NextResponse.json({ error: "entries wajib berupa array" }, { status: 400 });
+    }
+    // These entries feed the citation checker's authoritative "terverifikasi"
+    // override — reject malformed ones instead of stamping them verified.
+    const wellFormed = entries.filter(
+      (e) =>
+        e &&
+        typeof e.nomor === "string" && e.nomor.trim().length > 0 &&
+        typeof e.kaidah === "string" &&
+        Array.isArray(e.topik) && e.topik.every((t) => typeof t === "string")
+    );
+    if (wellFormed.length !== entries.length) {
+      return NextResponse.json(
+        { error: "Sebagian entri tidak lengkap (nomor/kaidah/topik) — periksa kembali sebelum menyimpan." },
+        { status: 400 }
+      );
+    }
     const existing = await loadJurisprudenceDb();
     const existingNomor = new Set(existing.map((e) => e.nomor));
     const now = new Date().toISOString();
-    const toAdd = entries
+    const toAdd = wellFormed
       .filter((e) => !existingNomor.has(e.nomor))
       .map((e) => ({ ...e, verified: true, addedAt: now }));
     const merged = [...existing, ...toAdd];

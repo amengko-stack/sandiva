@@ -1,4 +1,7 @@
 let _cachedToken: { token: string; expiresAt: number } | null = null;
+// Dedup concurrent token requests: with batched extraction a cold start can
+// otherwise fire several simultaneous token round-trips.
+let _tokenInFlight: Promise<string> | null = null;
 
 async function graphFetch(path: string, init?: RequestInit): Promise<Response> {
   const token = await getGraphToken();
@@ -23,7 +26,14 @@ async function getGraphToken(): Promise<string> {
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
     return _cachedToken.token;
   }
+  if (_tokenInFlight) return _tokenInFlight;
+  _tokenInFlight = fetchGraphToken(now).finally(() => {
+    _tokenInFlight = null;
+  });
+  return _tokenInFlight;
+}
 
+async function fetchGraphToken(now: number): Promise<string> {
   const tenantId = process.env.AZURE_TENANT_ID!;
   const params = new URLSearchParams({
     grant_type: "client_credentials",
@@ -83,7 +93,6 @@ async function resolveFolderRef(matterFolderPath: string): Promise<FolderRef> {
 
   if (isSharingLink(matterFolderPath)) {
     const shareId = encodeSharingUrl(matterFolderPath);
-    const token = await getGraphToken();
     const res = await graphFetchAbsolute(
       `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem?$select=id,parentReference`,
       undefined
@@ -149,12 +158,17 @@ export async function uploadFileToSharePoint(
 // Encode each path segment but KEEP the "/" separators so Graph treats them as
 // folder boundaries (auto-creating parents). encodeURIComponent on the whole
 // string would turn "AI/x.json" into "AI%2Fx.json" — a single bad filename.
+// Also rejects "." / ".." segments: encodeURIComponent passes them through
+// unchanged, so a client-supplied filename like "../../x" would otherwise
+// escape the intended folder with the app's tenant-wide credentials.
 function encodeRelPath(relPath: string): string {
-  return relPath
-    .split("/")
-    .filter(Boolean)
-    .map(encodeURIComponent)
-    .join("/");
+  const segments = relPath.split("/").filter(Boolean);
+  for (const seg of segments) {
+    if (seg === "." || seg === "..") {
+      throw new Error(`Path tidak valid: segmen "${seg}" tidak diizinkan (${relPath})`);
+    }
+  }
+  return segments.map(encodeURIComponent).join("/");
 }
 
 export async function writeMatterFile(
@@ -198,10 +212,18 @@ export async function writeMatterFile(
   return (data as { webUrl?: string }).webUrl || "";
 }
 
+// Returns null ONLY for a true 404 (file doesn't exist yet). Any other Graph
+// failure (401 token expiry, 429 throttling, 5xx) throws — callers that do
+// read-modify-write (the jurisprudence DB) must never mistake a transient
+// error for an empty file, or they overwrite the whole dataset.
 export async function readSiteFileText(relPath: string): Promise<string | null> {
-  const encoded = relPath.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  const encoded = encodeRelPath(relPath);
   const res = await graphFetch(`/drive/root:/${encoded}:/content`);
-  if (res.status === 404 || !res.ok) return null;
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Graph read error ${res.status} for ${relPath}: ${text.slice(0, 300)}`);
+  }
   return res.text();
 }
 
@@ -212,7 +234,6 @@ export async function listAiFolder(
   let res: Response;
 
   if (ref.kind === "drive") {
-    const token = await getGraphToken();
     // List children named "AI" under the matter folder, then list AI's children
     const aiChildUrl = `https://graph.microsoft.com/v1.0/drives/${ref.driveId}/items/${ref.itemId}:/AI:/children`;
     res = await graphFetchAbsolute(aiChildUrl);
@@ -223,8 +244,20 @@ export async function listAiFolder(
 
   if (res.status === 404) return [];
   if (!res.ok) return [];
-  const data = await res.json() as { value?: { name: string; "@microsoft.graph.downloadUrl": string; lastModifiedDateTime: string }[] };
-  const items = data.value ?? [];
+
+  type AiItem = { name: string; "@microsoft.graph.downloadUrl": string; lastModifiedDateTime: string };
+  const items: AiItem[] = [];
+  // Graph pages drive children (default 200/page) — follow @odata.nextLink so
+  // check-session's "latest file" sort sees the whole folder, not page 1.
+  let data = await res.json() as { value?: AiItem[]; "@odata.nextLink"?: string };
+  items.push(...(data.value ?? []));
+  while (data["@odata.nextLink"]) {
+    const nextRes = await graphFetchAbsolute(data["@odata.nextLink"]);
+    if (!nextRes.ok) break;
+    data = await nextRes.json() as { value?: AiItem[]; "@odata.nextLink"?: string };
+    items.push(...(data.value ?? []));
+  }
+
   return items.map((i) => ({
     name: i.name,
     downloadUrl: i["@microsoft.graph.downloadUrl"] ?? "",

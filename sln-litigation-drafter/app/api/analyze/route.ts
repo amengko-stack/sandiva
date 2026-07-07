@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeCase } from "@/src/analyzer";
-import { loadMemoryLibrary, buildMemoryContext, readBlobText } from "@/lib/blob";
+import { loadMemoryLibrary, buildMemoryContext, readBlobText, isValidSessionId } from "@/lib/blob";
 
 export const maxDuration = 300;
 
@@ -8,15 +8,14 @@ export async function POST(req: NextRequest) {
   try {
     const { sessionId, docTypeId, practiceAreaId, claimType } = await req.json();
 
-    if (!sessionId) {
-      return NextResponse.json({ error: "sessionId wajib diisi" }, { status: 400 });
+    if (!isValidSessionId(sessionId)) {
+      return NextResponse.json({ error: "sessionId tidak valid" }, { status: 400 });
     }
 
     const blobKey = `sessions/${sessionId}/extracted_text.json`;
     console.log(`[analyze] READ blob: sessionId=${sessionId} key=${blobKey}`);
     const combinedText = await readBlobText(blobKey);
     console.log(`[analyze] READ result: sessionId=${sessionId} found=${combinedText !== null} chars=${combinedText?.length ?? 0}`);
-    console.log(`[analyze] READ head=${JSON.stringify((combinedText ?? "").slice(0, 200))}`);
     if (!combinedText || combinedText.length < 50) {
       return NextResponse.json(
         { error: "Belum ada dokumen dengan teks yang dapat dianalisis — selesaikan ekstraksi atau OCR terlebih dahulu." },

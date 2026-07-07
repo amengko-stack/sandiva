@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeBlobText } from "@/lib/blob";
+import { writeBlobText, isValidSessionId } from "@/lib/blob";
 import type { StructuredAssessment } from "@/types";
 
 export const maxDuration = 30;
@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
       sessionId: string;
       assessment: StructuredAssessment;
     };
-    if (!sessionId || !assessment) {
+    if (!isValidSessionId(sessionId) || !assessment) {
       return NextResponse.json({ error: "sessionId dan assessment wajib diisi" }, { status: 400 });
     }
     await writeBlobText(

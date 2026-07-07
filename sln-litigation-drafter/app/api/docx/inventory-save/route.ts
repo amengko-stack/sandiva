@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readBlobText } from "@/lib/blob";
+import { readBlobText, isValidSessionId } from "@/lib/blob";
 import { generateInventoryPdf } from "@/lib/inventory-pdf";
 import { writeMatterFile } from "@/lib/graph-client";
 import type { ExtractReport } from "@/types";
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       folderPath: string;
     };
 
-    if (!sessionId || !folderPath) {
+    if (!isValidSessionId(sessionId) || !folderPath) {
       return NextResponse.json({ error: "sessionId dan folderPath wajib diisi" }, { status: 400 });
     }
 

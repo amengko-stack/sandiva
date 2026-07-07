@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readBlobText } from "@/lib/blob";
+import { readBlobText, isValidSessionId } from "@/lib/blob";
 import { generateInventoryPdf } from "@/lib/inventory-pdf";
 import type { ExtractReport } from "@/types";
 
@@ -9,8 +9,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const sessionId = searchParams.get("sessionId");
 
-  if (!sessionId) {
-    return NextResponse.json({ error: "sessionId wajib diisi" }, { status: 400 });
+  if (!isValidSessionId(sessionId)) {
+    return NextResponse.json({ error: "sessionId tidak valid" }, { status: 400 });
   }
 
   const raw = await readBlobText(`sessions/${sessionId}/report.json`);
