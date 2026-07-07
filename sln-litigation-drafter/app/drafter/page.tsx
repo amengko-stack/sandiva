@@ -13,6 +13,7 @@ import Stage5Output from "@/components/stages/Stage5Output";
 export default function DrafterPage() {
   const { state, dispatch, goToStage } = useWorkflow();
   const [resumeData, setResumeData] = useState<GlobalResumeData | null>(null);
+  const [resumeCheckFailed, setResumeCheckFailed] = useState(false);
   const hasChecked = useRef(false);
 
   useEffect(() => {
@@ -29,7 +30,10 @@ export default function DrafterPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ folderPath: last.folderPath }),
     })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`check-session ${r.status}`);
+        return r.json();
+      })
       .then((data) => {
         if (data.found) {
           setResumeData({
@@ -39,13 +43,33 @@ export default function DrafterPage() {
           } as GlobalResumeData);
         }
       })
-      .catch(() => {});
+      .catch((e) => {
+        // The resume banner is the rescue path for lost sessions — failing to
+        // check must not be invisible.
+        console.warn("[drafter] check-session gagal:", e);
+        setResumeCheckFailed(true);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleResume(data: GlobalResumeData) {
     dispatch({ type: "SET_SESSION_ID", id: data.savedSessionId });
     dispatch({ type: "SET_FOLDER", folderPath: data.savedFolderPath });
+    // Restore the Stage-1 selection — Stage 4's draft request and the sidebar
+    // are blind without docTypeId/claimType/pihak/ref.
+    if (data.docTypeId) {
+      dispatch({
+        type: "SET_SELECTION",
+        practiceAreaId: data.practiceAreaId ?? "",
+        docTypeId: data.docTypeId,
+        claimType: data.claimType ?? null,
+        pihak: data.pihak ?? null,
+      });
+    } else if (data.pihak) {
+      dispatch({ type: "SET_PIHAK", pihak: data.pihak });
+    }
+    if (data.ref) dispatch({ type: "SET_REF", ref: data.ref });
+    if (data.partiesStrategy) dispatch({ type: "SET_PARTIES_STRATEGY", value: data.partiesStrategy });
     if (data.allFiles?.length) {
       dispatch({ type: "SET_ALL_FILES", files: data.allFiles });
     }
@@ -92,6 +116,18 @@ export default function DrafterPage() {
         padding: "36px 40px",
       }}
     >
+      {resumeCheckFailed && !resumeData && (
+        <div style={{
+          padding: "10px 16px",
+          border: "1px solid var(--border-color)",
+          borderRadius: 4,
+          marginBottom: 16,
+          fontSize: 13,
+          color: "var(--text-muted)",
+        }}>
+          Tidak dapat memeriksa sesi sebelumnya (masalah jaringan/server). Muat ulang halaman untuk mencoba lagi.
+        </div>
+      )}
       {resumeData && (
         <GlobalResumeBanner
           data={resumeData}

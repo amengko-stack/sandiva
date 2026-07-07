@@ -223,6 +223,22 @@ export default function Stage2Files() {
         content: JSON.stringify({ files: result.files, timestamp: new Date().toISOString() }),
       }, "daftar file");
 
+      // Session selection metadata — check-session reads this so a resumed
+      // session gets back its document type, claim type, and reference.
+      saveMatterFile({
+        folderPath: link,
+        filename: `AI/session_meta_${ts()}.json`,
+        content: JSON.stringify({
+          sessionId: state.sessionId,
+          docTypeId: state.docTypeId,
+          practiceAreaId: state.practiceAreaId,
+          claimType: state.claimType,
+          pihak: state.pihak,
+          ref: state.ref,
+          timestamp: new Date().toISOString(),
+        }),
+      }, "metadata sesi");
+
       // Background session continuity check
       fetch("/api/sharepoint/check-session", {
         method: "POST",

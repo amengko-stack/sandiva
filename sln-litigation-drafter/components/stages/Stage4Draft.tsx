@@ -19,12 +19,19 @@ export default function Stage4Draft() {
   const { state, dispatch, goToStage } = useWorkflow();
   const draftRef = useRef<HTMLPreElement>(null);
   const [streamError, setStreamError] = useState("");
+  // A partial draft restored after a refresh mid-stream: nothing will finish
+  // it — offer an explicit regenerate instead of a dead spinner.
+  const [interrupted, setInterrupted] = useState(false);
 
   // Revision panel state
   const [checkedItems, setCheckedItems] = useState<boolean[]>([]);
   const [freeformInstructions, setFreeformInstructions] = useState("");
-  const [pendingInstructions, setPendingInstructions] = useState("");
   const [viewingVersion, setViewingVersion] = useState<number | null>(null);
+
+  // Guard against double-fire (StrictMode remounts) and abort the stream when
+  // the drafter navigates away so it stops appending into global state.
+  const hasFiredDraft = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Sync checkedItems length when critiqueItems change
   useEffect(() => {
@@ -32,9 +39,23 @@ export default function Stage4Draft() {
   }, [state.critiqueItems.length]);
 
   useEffect(() => {
-    if (state.draftText === "" && !state.isDraftStreaming && !state.draftComplete) {
+    if (
+      state.draftText === "" &&
+      !state.isDraftStreaming &&
+      !state.draftComplete &&
+      !hasFiredDraft.current
+    ) {
+      hasFiredDraft.current = true;
       startStreaming();
+    } else if (state.draftText !== "" && !state.draftComplete && !state.isDraftStreaming) {
+      setInterrupted(true);
     }
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      hasFiredDraft.current = false;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -46,12 +67,16 @@ export default function Stage4Draft() {
   async function startStreaming(revisionInstructions?: string, currentDraft?: string) {
     dispatch({ type: "SET_DRAFT_STREAMING", value: true });
     setStreamError("");
+    setInterrupted(false);
     setViewingVersion(null);
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
 
     try {
       const res = await fetch("/api/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortRef.current.signal,
         body: JSON.stringify({
           docTypeId: state.docTypeId,
           practiceAreaId: state.practiceAreaId,
@@ -77,6 +102,9 @@ export default function Stage4Draft() {
       const decoder = new TextDecoder();
       let buffer = "";
       let fullDraft = "";
+      // A stream that ends without done/error (Vercel timeout, dropped
+      // connection) must not leave the spinner running forever.
+      let sawTerminalEvent = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -90,53 +118,69 @@ export default function Stage4Draft() {
           if (!line.startsWith("data: ")) continue;
           const jsonStr = line.slice(6).trim();
           if (!jsonStr) continue;
+          let event: { chunk?: string; done?: boolean; stopReason?: string; error?: string };
           try {
-            const event = JSON.parse(jsonStr);
-            if (event.chunk) {
-              fullDraft += event.chunk;
-              dispatch({ type: "APPEND_DRAFT", chunk: event.chunk });
-            } else if (event.done) {
-              console.log(`[stage4] draft done stopReason=${event.stopReason ?? "(not sent)"} draftChars=${fullDraft.length}`);
-              dispatch({ type: "SET_DRAFT_STREAMING", value: false });
-              if (event.stopReason === "end_turn") {
-                dispatch({ type: "SET_DRAFT_COMPLETE", value: true });
-                // Save version snapshot to SharePoint (fire-and-forget)
-                const versionNumber = state.draftVersions.length + 1;
-                const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-                const filename = `Drafts/${(state.ref || "draf").replace(/\//g, "-")}_v${versionNumber}_${ts}.docx`;
-                if (state.folderPath) {
-                  fireAndForget("/api/sharepoint-save", {
-                    draftText: fullDraft,
-                    ref: state.ref,
-                    docType: state.docTypeId,
-                    claimType: state.claimType,
-                    folderPath: state.folderPath,
-                    filename,
-                  });
-                }
-                const newVersion: DraftVersion = {
-                  version: versionNumber,
-                  text: fullDraft,
-                  critiqueItems: [],
-                  instructions: pendingInstructions,
-                  timestamp: new Date().toISOString(),
-                };
-                dispatch({ type: "ADD_DRAFT_VERSION", version: newVersion });
-                dispatch({ type: "SET_DRAFT_VERSION", version: versionNumber });
-                setPendingInstructions("");
-                runCritique(fullDraft);
-              } else {
-                setStreamError(
-                  `Draf belum lengkap (stop_reason=${event.stopReason ?? "tidak diketahui"}) — kritik tidak dijalankan. Coba buat ulang draf.`
-                );
+            event = JSON.parse(jsonStr);
+          } catch {
+            continue; // one malformed line must never kill the stream handling
+          }
+          if (event.chunk) {
+            fullDraft += event.chunk;
+            dispatch({ type: "APPEND_DRAFT", chunk: event.chunk });
+          } else if (event.done) {
+            sawTerminalEvent = true;
+            console.log(`[stage4] draft done stopReason=${event.stopReason ?? "(not sent)"} draftChars=${fullDraft.length}`);
+            dispatch({ type: "SET_DRAFT_STREAMING", value: false });
+            if (event.stopReason === "end_turn") {
+              dispatch({ type: "SET_DRAFT_COMPLETE", value: true });
+              // Save version snapshot to SharePoint (fire-and-forget)
+              const versionNumber = state.draftVersions.length + 1;
+              const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+              const filename = `Drafts/${(state.ref || "draf").replace(/\//g, "-")}_v${versionNumber}_${ts}.docx`;
+              if (state.folderPath) {
+                fireAndForget("/api/sharepoint-save", {
+                  draftText: fullDraft,
+                  ref: state.ref,
+                  docType: state.docTypeId,
+                  claimType: state.claimType,
+                  folderPath: state.folderPath,
+                  filename,
+                });
               }
-            } else if (event.error) {
-              throw new Error(event.error);
+              const newVersion: DraftVersion = {
+                version: versionNumber,
+                text: fullDraft,
+                critiqueItems: [],
+                instructions: revisionInstructions ?? "",
+                timestamp: new Date().toISOString(),
+              };
+              dispatch({ type: "ADD_DRAFT_VERSION", version: newVersion });
+              dispatch({ type: "SET_DRAFT_VERSION", version: versionNumber });
+              runCritique(fullDraft);
+            } else {
+              setStreamError(
+                `Draf belum lengkap (stop_reason=${event.stopReason ?? "tidak diketahui"}) — kritik tidak dijalankan. Coba buat ulang draf.`
+              );
             }
-          } catch {}
+          } else if (event.error) {
+            sawTerminalEvent = true;
+            throw new Error(event.error);
+          }
         }
       }
+
+      if (!sawTerminalEvent) {
+        dispatch({ type: "SET_DRAFT_STREAMING", value: false });
+        setStreamError(
+          "Koneksi terputus sebelum draf selesai (kemungkinan batas waktu server). Coba buat ulang draf."
+        );
+      }
     } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        // Deliberate abort (navigation/remount) — not an error.
+        dispatch({ type: "SET_DRAFT_STREAMING", value: false });
+        return;
+      }
       setStreamError(e instanceof Error ? e.message : "Terjadi kesalahan saat membuat draf");
       dispatch({ type: "SET_DRAFT_STREAMING", value: false });
     }
@@ -180,16 +224,16 @@ export default function Stage4Draft() {
     if (parts.length === 0) return;
     const combined = parts.join("\n\n");
 
-    setPendingInstructions(combined);
     const prevDraft = state.draftText;
     dispatch({ type: "RESET_DRAFT" });
     setFreeformInstructions("");
     setCheckedItems([]);
-    await new Promise((r) => setTimeout(r, 0));
     startStreaming(combined, prevDraft);
   }
 
-  const atRevisionCap = state.draftVersions.length >= MAX_REVISIONS;
+  // draftVersions includes the initial draft (v1), so the revision count is
+  // length - 1.
+  const atRevisionCap = state.draftVersions.length - 1 >= MAX_REVISIONS;
   const canRevise =
     !atRevisionCap &&
     !state.isDraftStreaming &&
@@ -222,7 +266,7 @@ export default function Stage4Draft() {
           <div style={{ display: "flex", gap: 10 }}>
             <button
               onClick={() => {
-                dispatch({ type: "RESET_DRAFT" });
+                dispatch({ type: "RESET_ALL_DRAFTS" });
                 setCheckedItems([]);
                 setFreeformInstructions("");
                 setViewingVersion(null);
@@ -246,6 +290,22 @@ export default function Stage4Draft() {
           </div>
         )}
       </div>
+
+      {/* ── Interrupted-draft banner ───────────────────────────────────── */}
+      {interrupted && !state.isDraftStreaming && !state.draftComplete && (
+        <div style={{ padding: 16, background: "rgba(91,155,213,0.08)", border: "1px solid rgba(91,155,213,0.35)", borderRadius: 4, fontSize: 13, color: "var(--text-primary)", marginBottom: 16 }}>
+          Penyusunan draf terputus (halaman dimuat ulang di tengah proses). Draf parsial ditampilkan di bawah.
+          <button
+            onClick={() => {
+              dispatch({ type: "RESET_DRAFT" });
+              startStreaming();
+            }}
+            style={{ marginLeft: 12, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500 }}
+          >
+            Buat ulang draf
+          </button>
+        </div>
+      )}
 
       {/* ── Error banner ───────────────────────────────────────────────── */}
       {streamError && (

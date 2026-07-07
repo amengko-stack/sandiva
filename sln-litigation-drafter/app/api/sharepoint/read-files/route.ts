@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
 import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
-import { readBlobText, writeBlobText } from "@/lib/blob";
+import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { formatDocBlock } from "@/lib/extract-format";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
 
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       appendToExisting?: boolean;
     };
 
-  if (!files?.length || !sessionId) {
+  if (!files?.length || !isValidSessionId(sessionId)) {
     return new Response(
       JSON.stringify({ error: "files dan sessionId wajib diisi" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
@@ -81,6 +81,8 @@ export async function POST(req: NextRequest) {
       const enqueue = (data: object) =>
         controller.enqueue(encoder.encode(sse(data)));
 
+      const isBlank = (s: string) => s.replace(/\s+/g, "").length === 0;
+
       const processFile = async (i: number) => {
         const file = sorted[i];
         const entry = mapById.get(file.id);
@@ -95,7 +97,10 @@ export async function POST(req: NextRequest) {
 
           // Cache: valid when fileModifiedAt matches AND under 7 days old
           const cached = await readExtractionCache(file.path, currentModifiedAt, category);
-          if (cached) {
+          if (cached && isBlank(cached.content)) {
+            // Stale empty cache entry — fall through to fresh extraction.
+            console.log(`[read-files] cache-hit empty → fall through name=${file.name}`);
+          } else if (cached) {
             cacheHits++;
             processed++;
             totalChars += cached.content.length;
@@ -120,6 +125,16 @@ export async function POST(req: NextRequest) {
               extractionMode: "Perlu OCR", status: "perlu_ocr",
             };
             enqueue({ type: "ocr_required", name: file.name, category, index: i, total });
+            return;
+          }
+
+          // A blank extraction must never be reported "selesai" — the file
+          // would silently contribute zero text to the analysis.
+          if (isBlank(content)) {
+            const reason = "Tidak ada teks yang dapat diekstrak — file kemungkinan kosong atau rusak. Konversi ke .docx atau PDF lalu coba lagi.";
+            skipped++;
+            reportFiles[i] = { name: file.name, category, documentType, extractionMode: "—", status: "gagal", reason };
+            enqueue({ type: "error", name: file.name, category, reason, index: i, total });
             return;
           }
 
@@ -212,9 +227,15 @@ export async function POST(req: NextRequest) {
         enqueue({ type: "complete", processed, skipped, totalChars, cacheHits, ocrRequired });
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : "Stream error";
-        enqueue({ error: msg });
+        try {
+          enqueue({ error: msg });
+        } catch {
+          // Controller already closed/errored (client disconnected) — nothing to send.
+        }
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {}
       }
     },
   });

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listAiFolder } from "@/lib/graph-client";
-import type { CaseAnalysis, InterviewAnswer } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, PartiesStrategy } from "@/types";
 
 export const maxDuration = 30;
 
@@ -32,6 +32,14 @@ type CheckSessionResponse = {
   resumeAtSubstep?: "3A" | "3B" | "3C";
   stage2Resume?: Stage2Resume;
   allFiles?: unknown[];
+  // Session selection metadata (AI/session_meta_*.json) — without docTypeId a
+  // resumed session would request drafts with no document type.
+  docTypeId?: string;
+  practiceAreaId?: string | null;
+  claimType?: string | null;
+  ref?: string;
+  pihak?: string;
+  partiesStrategy?: PartiesStrategy;
 };
 
 async function downloadJson(url: string): Promise<unknown> {
@@ -68,6 +76,39 @@ export async function POST(req: NextRequest) {
     const progressFile = latestFile(files, "extraction_progress_");
     const categorizationFile = latestFile(files, "categorization_");
     const fileListFile = latestFile(files, "file_list_");
+
+    // ── Session selection metadata + parties (for a full-fidelity resume) ────
+    const metaFile = latestFile(files, "session_meta_");
+    const partiesFile = latestFile(files, "parties_strategy_");
+    const metaData = metaFile
+      ? (await downloadJson(metaFile.downloadUrl)) as {
+          docTypeId?: string;
+          practiceAreaId?: string | null;
+          claimType?: string | null;
+          ref?: string;
+          pihak?: string | null;
+        } | null
+      : null;
+    const partiesData = partiesFile
+      ? (await downloadJson(partiesFile.downloadUrl)) as (PartiesStrategy & { ref?: string }) | null
+      : null;
+    const sessionMeta = {
+      docTypeId: metaData?.docTypeId,
+      practiceAreaId: metaData?.practiceAreaId ?? null,
+      claimType: metaData?.claimType ?? null,
+      ref: metaData?.ref ?? partiesData?.ref,
+      pihak: partiesData?.pihak ?? metaData?.pihak ?? undefined,
+      partiesStrategy: partiesData?.pihak
+        ? {
+            pihak: partiesData.pihak,
+            clientNoun: partiesData.clientNoun ?? "",
+            lawanNoun: partiesData.lawanNoun ?? "",
+            clientIdentities: partiesData.clientIdentities ?? [],
+            lawanIdentities: partiesData.lawanIdentities ?? [],
+            strategi: partiesData.strategi ?? "",
+          }
+        : undefined,
+    };
 
     const hasAnyArtifact = !!(analysisFile || progressFile || categorizationFile || fileListFile);
     if (!hasAnyArtifact) {
@@ -128,6 +169,7 @@ export async function POST(req: NextRequest) {
         latestTimestamp,
         stage2Resume,
         allFiles,
+        ...sessionMeta,
       } satisfies CheckSessionResponse);
     }
 
@@ -146,7 +188,10 @@ export async function POST(req: NextRequest) {
     if (hasInterview) resumeAtSubstep = "3C";
     else if (hasKronologi) resumeAtSubstep = "3B";
 
-    const resumeAtStage: 3 | 4 = hasAssessment ? 4 : 3;
+    // Never resume straight into Stage 4 without the document type — the
+    // draft request would run with docTypeId null and produce a generic
+    // document. Older sessions without session_meta_ resume at Stage 3.
+    const resumeAtStage: 3 | 4 = hasAssessment && sessionMeta.docTypeId ? 4 : 3;
 
     const latestTimestamp = [analysisFile, kronoFile, interviewFile, assessmentFile]
       .filter(Boolean)
@@ -164,6 +209,7 @@ export async function POST(req: NextRequest) {
       resumeAtSubstep,
       stage2Resume,
       allFiles,
+      ...sessionMeta,
     } satisfies CheckSessionResponse);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Gagal memeriksa sesi sebelumnya";

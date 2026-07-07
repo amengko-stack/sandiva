@@ -1,6 +1,6 @@
 "use client";
 
-import type { CaseAnalysis, InterviewAnswer, FileEntry, DocMapEntry } from "@/types";
+import type { CaseAnalysis, InterviewAnswer, FileEntry, DocMapEntry, PartiesStrategy } from "@/types";
 
 export type GlobalStage2Resume = {
   type: "file_list" | "categorization" | "extraction_progress";
@@ -25,6 +25,14 @@ export type GlobalResumeData = {
   resumeAtSubstep?: "3A" | "3B" | "3C";
   stage2Resume?: GlobalStage2Resume;
   allFiles?: FileEntry[];
+  // Session selection metadata (from AI/session_meta_*.json) — required to
+  // resume into Stage 4 with the correct document type.
+  docTypeId?: string;
+  practiceAreaId?: string | null;
+  claimType?: string | null;
+  ref?: string;
+  pihak?: string;
+  partiesStrategy?: PartiesStrategy;
   savedSessionId: string;
   savedFolderPath: string;
 };
@@ -33,7 +41,8 @@ export type GlobalResumeData = {
 // strategic_assessment → Stage 4, interview → 3C, kronologi → 3B, analysis → 3A,
 // extraction_progress → 2C, categorization → 2B, file_list → 2B (uncategorized)
 export function resolveResumeLabel(data: GlobalResumeData): string {
-  if (data.strategicAssessment) return "Stage 4 (Pembuatan Draf)";
+  if (data.strategicAssessment && data.docTypeId) return "Stage 4 (Pembuatan Draf)";
+  if (data.strategicAssessment) return "Stage 3C (Asesmen Strategis)";
   if (data.interviewAnswers?.length) return "Stage 3C (Asesmen Strategis)";
   if (data.kronologi) return "Stage 3B (Wawancara Klien)";
   if (data.analysis) return "Stage 3A (Kronologi)";
@@ -44,8 +53,10 @@ export function resolveResumeLabel(data: GlobalResumeData): string {
 }
 
 export function resolveResumeStage(data: GlobalResumeData): 1 | 2 | 3 | 4 {
-  if (data.strategicAssessment) return 4;
-  if (data.analysis || data.kronologi || data.interviewAnswers?.length) return 3;
+  // Stage 4 immediately fires a draft request — never land there without the
+  // document type or the draft would be generated with docTypeId null.
+  if (data.strategicAssessment && data.docTypeId) return 4;
+  if (data.strategicAssessment || data.analysis || data.kronologi || data.interviewAnswers?.length) return 3;
   if (data.stage2Resume) return 2;
   return 1;
 }

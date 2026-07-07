@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
-import { readBlobText, writeBlobText } from "@/lib/blob";
+import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
 import { formatDocBlock } from "@/lib/extract-format";
 import type { DocCategory, ExtractReport } from "@/types";
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     files: SelectedOcrFile[];
   };
 
-  if (!sessionId || !files?.length) {
+  if (!isValidSessionId(sessionId) || !files?.length) {
     return NextResponse.json({ error: "sessionId dan files wajib diisi" }, { status: 400 });
   }
 
@@ -105,24 +105,27 @@ export async function POST(req: NextRequest) {
       }
 
       results.push({ name: targetName, replacesName: file.replacesName, status: "selesai", charCount: content.length, method: extractionMethod });
+
+      // Persist after EVERY successful file — extraction here can involve
+      // Claude OCR calls, and a maxDuration kill mid-loop must not discard
+      // the (paid-for) files already completed.
+      const blobKey = `sessions/${sessionId}/extracted_text.json`;
+      const combined = existingText + appended;
+      console.log(`[read-files] WROTE blob (ocr-recheck): sessionId=${sessionId} key=${blobKey} chars=${combined.length}`);
+      await writeBlobText(blobKey, combined);
+      if (report) {
+        await writeBlobText(`sessions/${sessionId}/report.json`, JSON.stringify(report));
+      }
     } catch (e: unknown) {
       results.push({ name: targetName, replacesName: file.replacesName, status: "gagal", reason: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  if (appended) {
-    // Re-assemble the full combined document: previously-extracted text + the
-    // newly-OCR'd files. Append, never overwrite-and-lose the originals.
-    const blobKey = `sessions/${sessionId}/extracted_text.json`;
-    const combined = existingText + appended;
-    console.log(`[read-files] WROTE blob (ocr-recheck): sessionId=${sessionId} key=${blobKey} chars=${combined.length}`);
-    await writeBlobText(blobKey, combined);
-    if (report) {
-      report.totalChars += addedChars;
-      report.processed += addedProcessed;
-      report.ocrRequired = Math.max(0, (report.ocrRequired ?? 0) - clearedOcr);
-      await writeBlobText(`sessions/${sessionId}/report.json`, JSON.stringify(report));
-    }
+  if (report && appended) {
+    report.totalChars += addedChars;
+    report.processed += addedProcessed;
+    report.ocrRequired = Math.max(0, (report.ocrRequired ?? 0) - clearedOcr);
+    await writeBlobText(`sessions/${sessionId}/report.json`, JSON.stringify(report));
   }
 
   return NextResponse.json({ results });

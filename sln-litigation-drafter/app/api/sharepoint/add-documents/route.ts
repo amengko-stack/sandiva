@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
 import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
-import { readBlobText, writeBlobText } from "@/lib/blob";
+import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { formatDocBlock } from "@/lib/extract-format";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
 
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       ref?: string;
     };
 
-  if (!files?.length || !sessionId) {
+  if (!files?.length || !isValidSessionId(sessionId)) {
     return new Response(
       JSON.stringify({ error: "files dan sessionId wajib diisi" }),
       { status: 400, headers: { "Content-Type": "application/json" } }

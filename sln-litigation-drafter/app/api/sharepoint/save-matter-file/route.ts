@@ -16,6 +16,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "folderPath, filename, dan content wajib diisi" }, { status: 400 });
     }
 
+    // The app's Graph credentials are tenant-wide; this route is the only one
+    // that takes a client-supplied target path. Constrain writes to the AI/
+    // and Drafts/ working folders and reject path tricks.
+    const SAFE_TARGET_RE = /^(AI|Drafts)\/[A-Za-z0-9 ._()À-ɏ-]+$/;
+    if (!SAFE_TARGET_RE.test(filename) || filename.includes("..")) {
+      return NextResponse.json(
+        { error: "filename harus berada di folder AI/ atau Drafts/ tanpa karakter khusus" },
+        { status: 400 }
+      );
+    }
+
     const webUrl = await writeMatterFile(folderPath, filename, content, mimeType);
     return NextResponse.json({ ok: true, webUrl });
   } catch (e: unknown) {
