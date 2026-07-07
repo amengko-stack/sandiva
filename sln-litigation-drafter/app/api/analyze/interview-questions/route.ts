@@ -57,7 +57,10 @@ PENTING: Kembalikan HANYA JSON array of strings yang valid — tanpa markdown, t
     });
     const message = await interviewStream.finalMessage();
 
-    const text = message.content[0].type === "text" ? message.content[0].text : "";
+    if (message.stop_reason === "refusal") {
+      throw new Error("Model menolak memproses permintaan ini. Coba lagi.");
+    }
+    const text = message.content.find((b) => b.type === "text")?.text ?? "";
     console.log(
       `[interview] stop_reason=${message.stop_reason} rawLen=${text.length} ` +
       `head=${JSON.stringify(text.slice(0, 150))} tail=${JSON.stringify(text.slice(-150))}`

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { getSystemPrompt } from "@/src/prompts";
+import { getSystemPrompt, isSupportedDocType } from "@/src/prompts";
 import { loadDraftMemory, buildMemoryContext } from "@/lib/blob";
 import type { CaseAnalysis, InterviewAnswer, JurisprudenceEntry, PartiesStrategy } from "@/types";
 import { MODELS } from "@/config/models";
@@ -46,6 +46,19 @@ export async function POST(req: NextRequest) {
       selectedJurisprudence?: JurisprudenceEntry[];
       partiesStrategy?: PartiesStrategy | null;
     };
+
+    if (!isSupportedDocType(docTypeId)) {
+      return new Response(
+        JSON.stringify({ error: `Jenis dokumen tidak dikenal: ${String(docTypeId)}` }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (!caseAnalysis || typeof caseAnalysis !== "object") {
+      return new Response(
+        JSON.stringify({ error: "caseAnalysis wajib diisi — selesaikan Stage 3 terlebih dahulu" }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     // Budget allocation: 1 full best-match style example (docType+claimType →
     // docType → recency), examples 2-3 at 8K chars, full conventions.
@@ -174,10 +187,14 @@ ${currentDraft}`
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : "Stream error";
           console.error("[draft] stream error:", msg);
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`)
-          );
-          controller.close();
+          try {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`)
+            );
+            controller.close();
+          } catch {
+            // Controller already closed/errored (client disconnected).
+          }
         }
       },
     });

@@ -7,12 +7,23 @@ import { MODELS } from "@/config/models";
 // Token — plain fetch, no Azure SDK
 // ---------------------------------------------------------------------------
 let _cachedToken: { token: string; expiresAt: number } | null = null;
+// Dedup concurrent token requests: with CONCURRENCY=3 extraction batches a
+// cold start otherwise fires several simultaneous token round-trips.
+let _tokenInFlight: Promise<string> | null = null;
 
 async function getGraphToken(): Promise<string> {
   const now = Date.now();
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
     return _cachedToken.token;
   }
+  if (_tokenInFlight) return _tokenInFlight;
+  _tokenInFlight = fetchGraphToken(now).finally(() => {
+    _tokenInFlight = null;
+  });
+  return _tokenInFlight;
+}
+
+async function fetchGraphToken(now: number): Promise<string> {
   const tenantId = process.env.AZURE_TENANT_ID!;
   const params = new URLSearchParams({
     grant_type: "client_credentials",
@@ -38,6 +49,32 @@ async function graphFetch(path: string): Promise<Response> {
   return fetch(`https://graph.microsoft.com/v1.0${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+async function graphFetchAbsolute(url: string): Promise<Response> {
+  const token = await getGraphToken();
+  return fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+// Graph pages children listings (default 200/page). Follow @odata.nextLink or
+// large matter folders silently lose every file past page 1.
+async function collectPages(
+  firstRes: Response,
+  context: string
+): Promise<GraphItem[]> {
+  const items: GraphItem[] = [];
+  let data = (await firstRes.json()) as { value?: GraphItem[]; "@odata.nextLink"?: string };
+  items.push(...(data.value ?? []));
+  while (data["@odata.nextLink"]) {
+    const res = await graphFetchAbsolute(data["@odata.nextLink"]);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Graph list page error ${res.status} [${context}]: ${text.slice(0, 300)}`);
+    }
+    data = (await res.json()) as { value?: GraphItem[]; "@odata.nextLink"?: string };
+    items.push(...(data.value ?? []));
+  }
+  return items;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,8 +188,7 @@ async function listChildren(siteId: string, path: string): Promise<GraphItem[]> 
     const text = await res.text();
     throw new Error(`Graph list error ${res.status} [${path}]: ${text}`);
   }
-  const data = await res.json();
-  return data.value ?? [];
+  return collectPages(res, path);
 }
 
 async function downloadFile(siteId: string, path: string): Promise<ArrayBuffer>;
@@ -175,33 +211,72 @@ async function downloadFile(siteIdOrShareId: string, path?: string): Promise<Arr
 async function extractText(bytes: Buffer, ext: string): Promise<string> {
   if (ext === "txt") return bytes.toString("utf-8");
 
-  if (ext === "docx" || ext === "doc") {
+  if (ext === "docx") {
     const result = await mammoth.extractRawText({ buffer: bytes });
     return result.value.trim();
   }
 
-  // PDF — Claude document API
+  if (ext === "doc") {
+    // mammoth only reads .docx (OOXML) — a legacy .doc yields empty/garbage
+    // text that would flow into the analysis as a silently missing document.
+    throw new Error(
+      "Format .doc (Word 97–2003) tidak didukung — simpan ulang sebagai .docx di Word/SharePoint lalu ekstrak ulang."
+    );
+  }
+
+  // PDF — local text-layer extraction first: complete (no output-token cap),
+  // fast, and free. Only scanned PDFs fall back to Claude.
+  const { text: localText, pagesRead } = await extractPdfTextPaged(bytes, Number.MAX_SAFE_INTEGER);
+  const avgPerPage = pagesRead > 0 ? localText.length / pagesRead : 0;
+  if (avgPerPage >= SCANNED_CHARS_PER_PAGE) {
+    return localText.trim();
+  }
+
+  // Scanned PDF (no text layer) — Claude document OCR. max_tokens truncates
+  // long documents, so continue while stop_reason === "max_tokens" instead of
+  // silently returning a cut-off text.
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  console.log(`[model] stage=ekstraksi-pdf model=${MODELS.extraction}`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const response = await (anthropic.messages.create as any)({
-    model: MODELS.extraction,
-    max_tokens: 8000,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "document",
-            source: { type: "base64", media_type: "application/pdf", data: bytes.toString("base64") },
-          },
-          { type: "text", text: "Extract and return the complete text of this document. Do not summarize or truncate." },
-        ],
-      },
-    ],
-  });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (response.content as any[]).filter((b: any) => b.type === "text").map((b: any) => b.text as string).join("\n").trim();
+  console.log(`[model] stage=ekstraksi-pdf model=${MODELS.extraction} pages=${pagesRead}`);
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: "user",
+      content: [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: bytes.toString("base64") },
+        },
+        { type: "text", text: "Extract and return the complete text of this document. Do not summarize or truncate." },
+      ],
+    },
+  ];
+  const MAX_EXTRACTION_CALLS = 4;
+  const parts: string[] = [];
+  let truncated = false;
+  for (let call = 0; call < MAX_EXTRACTION_CALLS; call++) {
+    const response = await anthropic.messages.create({
+      model: MODELS.extraction,
+      max_tokens: 8000,
+      messages,
+    });
+    const chunk = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { type: "text"; text: string }).text)
+      .join("\n");
+    parts.push(chunk);
+    truncated = response.stop_reason === "max_tokens";
+    if (!truncated) break;
+    messages.push({ role: "assistant", content: chunk });
+    messages.push({
+      role: "user",
+      content: "Lanjutkan ekstraksi teks tepat dari titik terakhir berhenti. Jangan ulangi teks yang sudah dikeluarkan.",
+    });
+  }
+  let text = parts.join("").trim();
+  if (truncated) {
+    console.warn(`[extractText] PDF OCR still truncated after ${MAX_EXTRACTION_CALLS} calls (${text.length} chars)`);
+    text += "\n[CATATAN: dokumen sangat panjang — ekstraksi belum mencakup seluruh isi dokumen]";
+  }
+  return text;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,8 +290,7 @@ async function listChildrenByDriveItem(driveId: string, itemId: string): Promise
     const text = await res.text();
     throw new Error(`Graph list error ${res.status} [driveItem ${itemId}]: ${text}`);
   }
-  const data = await res.json();
-  return data.value ?? [];
+  return collectPages(res, `driveItem ${itemId}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -594,13 +668,3 @@ export async function extractWithTier(
   };
 }
 
-export async function readMultipleFiles(
-  files: FileEntry[]
-): Promise<{ name: string; content: string }[]> {
-  const results = [];
-  for (const file of files) {
-    const content = await readFileContent(file.path);
-    results.push({ name: file.name, content });
-  }
-  return results;
-}

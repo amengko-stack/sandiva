@@ -5,6 +5,7 @@ import {
   useContext,
   useReducer,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -151,6 +152,12 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       return { ...state, draftText: state.draftText + action.chunk };
 
     case "RESET_DRAFT":
+      // Clears the working draft for a revision/regeneration. Version history
+      // is intentionally KEPT — it feeds "Riwayat Revisi" and the
+      // MAX_REVISIONS cost cap; use RESET_ALL_DRAFTS to wipe it.
+      return { ...state, draftText: "", draftComplete: false, critiqueItems: [] };
+
+    case "RESET_ALL_DRAFTS":
       return { ...state, draftText: "", draftComplete: false, critiqueItems: [], draftVersions: [], draftVersion: 0 };
 
     case "SET_DRAFT_STREAMING":
@@ -198,7 +205,13 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       return { ...state, error: action.error };
 
     case "HYDRATE":
-      return { ...action.state };
+      // In-flight streams never survive a reload: restoring isDraftStreaming
+      // as true would freeze Stage 4 on a spinner no code path can clear.
+      return {
+        ...action.state,
+        isDraftStreaming: false,
+        isCritiqueLoading: false,
+      };
 
     case "RESET":
       return { ...initialState, sessionId: newSessionId(), selectedJurisprudence: [], partiesStrategy: null, addedFileIds: [] };
@@ -232,26 +245,63 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
     setHydrated(true);
   }, []);
 
+  // Persistence is throttled: during draft streaming the state changes once
+  // per SSE chunk, and serializing the full workflow state (files + analysis
+  // + draft text) on every chunk janks the UI. Latest state lives in a ref;
+  // writes happen at most every 800ms plus a flush on pagehide.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warnedQuota = useRef(false);
+  const flushPersist = useRef(() => {});
+  flushPersist.current = () => {
+    if (persistTimer.current !== null) {
+      clearTimeout(persistTimer.current);
+      persistTimer.current = null;
+    }
+    const s = stateRef.current;
+    try {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
+    } catch (e) {
+      // A silently-failed write means refresh loses progress — say so once.
+      if (!warnedQuota.current) {
+        warnedQuota.current = true;
+        console.warn(
+          "[workflow] Gagal menyimpan state sesi ke sessionStorage (kemungkinan kuota penuh) — refresh dapat kehilangan progres.",
+          e
+        );
+      }
+    }
+    // Persist sessionId + folderPath to localStorage (survives browser close)
+    if (s.folderPath) {
+      try {
+        const record: LastSessionRecord = {
+          sessionId: s.sessionId,
+          folderPath: s.folderPath,
+          timestamp: new Date().toISOString(),
+        };
+        localStorage.setItem(matterKey(s.folderPath), JSON.stringify(record));
+        localStorage.setItem(LAST_MATTER_KEY, s.folderPath);
+      } catch {}
+    }
+  };
+
   useEffect(() => {
     // Don't persist until the saved session has been loaded, otherwise the
     // initial `initialState` would clobber the stored session before HYDRATE runs.
     if (!hydrated) return;
-    try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
-    } catch {}
-    // Persist sessionId + folderPath to localStorage (survives browser close)
-    if (state.folderPath) {
-      try {
-        const record: LastSessionRecord = {
-          sessionId: state.sessionId,
-          folderPath: state.folderPath,
-          timestamp: new Date().toISOString(),
-        };
-        localStorage.setItem(matterKey(state.folderPath), JSON.stringify(record));
-        localStorage.setItem(LAST_MATTER_KEY, state.folderPath);
-      } catch {}
-    }
+    if (persistTimer.current !== null) return; // a write is already scheduled
+    persistTimer.current = setTimeout(() => {
+      persistTimer.current = null;
+      flushPersist.current();
+    }, 800);
   }, [state, hydrated]);
+
+  useEffect(() => {
+    const onPageHide = () => flushPersist.current();
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, []);
 
   function goToStage(stage: Stage) {
     dispatch({ type: "SET_STAGE", stage });

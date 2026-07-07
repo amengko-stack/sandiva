@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeBlobText } from "@/lib/blob";
+import { writeBlobText, isValidSessionId } from "@/lib/blob";
 import type { InterviewAnswer } from "@/types";
 
 export const maxDuration = 30;
@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
       answers: InterviewAnswer[];
       pihak?: string;
     };
-    if (!sessionId || !answers) {
+    if (!isValidSessionId(sessionId) || !answers) {
       return NextResponse.json({ error: "sessionId dan answers wajib diisi" }, { status: 400 });
     }
     await writeBlobText(

@@ -24,8 +24,13 @@ export default function Sidebar() {
 
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.href = "/login";
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      // Even if the request fails, leave the app — the middleware will
+      // redirect back here if the session is somehow still valid.
+      window.location.href = "/login";
+    }
   }
 
   return (

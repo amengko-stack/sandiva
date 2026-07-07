@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeBlobText } from "@/lib/blob";
+import { writeBlobText, isValidSessionId } from "@/lib/blob";
 import type { JurisprudenceEntry } from "@/types";
 
 export async function POST(req: NextRequest) {
@@ -8,8 +8,8 @@ export async function POST(req: NextRequest) {
       sessionId: string;
       entries: JurisprudenceEntry[];
     };
-    if (!sessionId) {
-      return NextResponse.json({ error: "sessionId wajib diisi" }, { status: 400 });
+    if (!isValidSessionId(sessionId)) {
+      return NextResponse.json({ error: "sessionId tidak valid" }, { status: 400 });
     }
     await writeBlobText(
       `sessions/${sessionId}/jurisprudence_selected.json`,

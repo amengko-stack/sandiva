@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeBlobText } from "@/lib/blob";
+import { writeBlobText, isValidSessionId } from "@/lib/blob";
 import type { PartiesStrategy } from "@/types";
 
 export const maxDuration = 30;
@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
       sessionId: string;
       partiesStrategy: PartiesStrategy;
     };
-    if (!sessionId || !partiesStrategy) {
+    if (!isValidSessionId(sessionId) || !partiesStrategy) {
       return NextResponse.json({ error: "sessionId dan partiesStrategy wajib diisi" }, { status: 400 });
     }
     await writeBlobText(

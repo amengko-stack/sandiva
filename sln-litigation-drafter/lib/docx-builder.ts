@@ -41,7 +41,13 @@ function sanitizeForXml(text: string): string {
 // ─── Section-group header patterns (displayed as bold divider rows in Daftar Isi)
 const SECTION_GROUP_RE = /^(DALAM EKSEPSI|DALAM POKOK PERKARA|DALAM REKONVENSI|PETITUM|PERMOHONAN)(\b.*)?$/;
 // ─── Individual sub-heading patterns: roman numerals or capital-letter sections
-const HEADING_ITEM_RE = /^((?:I{1,3}V?|VI{0,3}|IX|X{1,2})\.\s+\S|[A-Z]\.\s+\S)/;
+// Roman pattern covers I–XXXIX ((?=[IVX]) forbids the empty match) — the old
+// alternation missed XI–XVIII, so sections 11+ lost their heading style.
+const ROMAN = "(?=[IVX])X{0,3}(?:IX|IV|V?I{0,3})";
+const HEADING_ITEM_RE = new RegExp(`^((?:${ROMAN})\\.\\s+\\S|[A-Z]\\.\\s+\\S)`);
+const HEADING_COUNTER_RE = new RegExp(`^((?:${ROMAN})|[A-Z])\\.`);
+const HEADING_STRIP_RE = new RegExp(`^(?:(?:${ROMAN})|[A-Z])\\.\\s+`);
+const H1_ROMAN_RE = new RegExp(`^(?:${ROMAN})\\.\\s+\\S`);
 
 interface TocEntry {
   kind: "group" | "item";
@@ -68,9 +74,9 @@ function extractTocEntries(text: string): TocEntry[] {
 
     if (currentGroup && HEADING_ITEM_RE.test(line)) {
       itemSeq++;
-      const numMatch = /^((?:I{1,3}V?|VI{0,3}|IX|X{1,2})|[A-Z])\./.exec(line);
+      const numMatch = HEADING_COUNTER_RE.exec(line);
       const counter = numMatch ? numMatch[1] + "." : String(itemSeq) + ".";
-      const title = line.replace(/^(?:(?:I{1,3}V?|VI{0,3}|IX|X{1,2})|[A-Z])\.\s+/, "").trim();
+      const title = line.replace(HEADING_STRIP_RE, "").trim();
       entries.push({ kind: "item", label: title, counter });
     }
   }
@@ -207,7 +213,7 @@ export async function buildLitigationDocx(
     for (const raw of lines) {
       const line = raw.trimEnd();
       if (
-        /^(I{1,3}V?|VI{0,3}|IX|X{1,2})\.\s+\S/.test(line) ||
+        H1_ROMAN_RE.test(line) ||
         /^(DALAM EKSEPSI|DALAM POKOK PERKARA|DALAM REKONVENSI|PETITUM|PERMOHONAN)/.test(line.trim())
       ) {
         spliceAt = paraCount;
@@ -395,7 +401,7 @@ function buildChildren(text: string): Paragraph[] {
     }
 
     if (
-      /^(I{1,3}V?|VI{0,3}|IX|X{1,2})\.\s+\S/.test(line) ||
+      H1_ROMAN_RE.test(line) ||
       /^(DALAM EKSEPSI|DALAM POKOK PERKARA|DALAM REKONVENSI|PETITUM|PERMOHONAN)/.test(
         line.trim()
       )

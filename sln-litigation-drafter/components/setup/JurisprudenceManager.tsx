@@ -4,6 +4,9 @@ import type { JurisprudenceEntry } from "@/types";
 
 type ParseMessage =
   | { type: "progress"; chunk: number; total: number; entriesFound: number; running: number; file: string }
+  | { type: "entries"; entries: JurisprudenceEntry[] }
+  | { type: "chunk_error"; chunk: number; total: number; file: string; message: string }
+  | { type: "warning"; message: string }
   | { type: "done"; entries: JurisprudenceEntry[] }
   | { type: "error"; message: string };
 
@@ -47,10 +50,14 @@ export default function JurisprudenceManager() {
         return;
       }
 
-      // Read NDJSON stream line by line.
+      // Read NDJSON stream line by line. Entries also arrive incrementally so
+      // a server timeout mid-run still leaves the completed chunks usable.
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      const collected: JurisprudenceEntry[] = [];
+      let sawDone = false;
+      const failedChunks: string[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -64,8 +71,16 @@ export default function JurisprudenceManager() {
           try { msg = JSON.parse(line) as ParseMessage; } catch { continue; }
           if (msg.type === "progress") {
             setProgress(`Memproses bagian ${msg.chunk} dari ${msg.total} — ${msg.running} putusan ditemukan sejauh ini...`);
+          } else if (msg.type === "entries") {
+            collected.push(...(msg.entries ?? []));
+            setPendingEntries([...collected]);
+          } else if (msg.type === "chunk_error") {
+            failedChunks.push(`bagian ${msg.chunk}/${msg.total} (${msg.file}): ${msg.message}`);
+          } else if (msg.type === "warning") {
+            setError(msg.message);
           } else if (msg.type === "done") {
-            setPendingEntries(msg.entries ?? []);
+            sawDone = true;
+            setPendingEntries(msg.entries?.length ? msg.entries : [...collected]);
             setProgress(null);
             if (fileInputRef.current) fileInputRef.current.value = "";
           } else if (msg.type === "error") {
@@ -73,6 +88,17 @@ export default function JurisprudenceManager() {
             setProgress(null);
           }
         }
+      }
+
+      if (!sawDone && collected.length > 0) {
+        setError("Koneksi terputus sebelum proses selesai — hasil parsial di bawah tetap dapat disimpan.");
+      }
+      if (failedChunks.length > 0) {
+        setError((prev) =>
+          [prev, `${failedChunks.length} bagian gagal diproses: ${failedChunks[0]}${failedChunks.length > 1 ? ` (+${failedChunks.length - 1} lainnya)` : ""}`]
+            .filter(Boolean)
+            .join(" | ")
+        );
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload gagal");
