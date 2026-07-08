@@ -10,3 +10,31 @@ export function formatDocBlock(meta: ExtractionMetadata, content: string): strin
     `${content}\n\n`
   );
 }
+
+export interface DocBlock {
+  fileName: string;
+  category: string;
+  content: string;
+}
+
+// Inverse of formatDocBlock: split the combined session text back into
+// per-document blocks. A header only counts when the `[Metadata: ...]` line
+// follows it directly, so `=== ... ===` strings inside document content can't
+// create phantom documents.
+export function splitDocBlocks(combined: string): DocBlock[] {
+  const blocks: DocBlock[] = [];
+  const headerRe = /^=== (.+?) ===\r?\n\[Metadata: ([^\]]*)\]\r?\n/gm;
+  const matches = Array.from(combined.matchAll(headerRe));
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const start = (m.index ?? 0) + m[0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index! : combined.length;
+    const catMatch = /kategori=([^;]+)/.exec(m[2]);
+    blocks.push({
+      fileName: m[1],
+      category: catMatch ? catMatch[1].trim() : "—",
+      content: combined.slice(start, end).trim(),
+    });
+  }
+  return blocks;
+}

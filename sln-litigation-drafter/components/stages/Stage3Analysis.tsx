@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import AddDocumentsModal from "@/components/AddDocumentsModal";
+import ReviewTablePanel from "@/components/ReviewTablePanel";
 import type { CaseAnalysis, InterviewAnswer, PartiesStrategy, StructuredAssessment, RelevantJurisprudence, JurisprudenceEntry } from "@/types";
 
 // Parse a stored assessment string: structured JSON from the new flow, or
@@ -457,6 +458,9 @@ export default function Stage3Analysis() {
         <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
           <button onClick={() => goToStage(2)} style={btnSecondary}>← Kembali</button>
           <button onClick={confirm3A} style={btnPrimary}>Konfirmasi Kronologi →</button>
+        </div>
+        <div style={{ marginTop: 24 }}>
+          <ReviewTablePanel />
         </div>
         {actionRow}
         {addDocsModal}

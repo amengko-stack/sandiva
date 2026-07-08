@@ -69,6 +69,7 @@ const initialState: WorkflowState = {
   docMap: [],
   selectedFiles: [],
   caseAnalysis: null,
+  reviewTable: [],
   interviewAnswers: [],
   strategicAssessment: "",
   userCorrections: "",
@@ -139,6 +140,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "SET_CASE_ANALYSIS":
       return { ...state, caseAnalysis: action.analysis };
 
+    case "SET_REVIEW_TABLE":
+      return { ...state, reviewTable: action.rows };
+
     case "SET_INTERVIEW_ANSWERS":
       return { ...state, interviewAnswers: action.answers };
 
@@ -198,8 +202,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
 
     case "CLEAR_ANALYSIS":
       // Force Stage 3A re-analysis with the full document set while preserving
-      // the drafter's interview answers and party identities/strategy.
-      return { ...state, caseAnalysis: null, strategicAssessment: "" };
+      // the drafter's interview answers and party identities/strategy. The
+      // review table is document-derived, so it must regenerate too.
+      return { ...state, caseAnalysis: null, strategicAssessment: "", reviewTable: [] };
 
     case "SET_ERROR":
       return { ...state, error: action.error };
@@ -207,8 +212,11 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "HYDRATE":
       // In-flight streams never survive a reload: restoring isDraftStreaming
       // as true would freeze Stage 4 on a spinner no code path can clear.
+      // Fields added after a deploy may be missing from older snapshots —
+      // default them so components never see undefined.
       return {
         ...action.state,
+        reviewTable: action.state.reviewTable ?? [],
         isDraftStreaming: false,
         isCritiqueLoading: false,
       };

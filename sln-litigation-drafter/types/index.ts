@@ -107,6 +107,23 @@ export interface InterviewAnswer {
   answer: string;
 }
 
+// One row of the document review table (Vault-style structured extraction).
+// Each row corresponds to one source document; `status` distinguishes a
+// successful extraction from a per-document failure so nothing is silently
+// dropped from the diligence overview.
+export interface ReviewTableRow {
+  fileName: string;
+  category: DocCategory | "—";
+  jenisDokumen: string; // Perjanjian, Putusan, Surat, Bukti Transaksi, ...
+  tanggal: string;      // date or period the document covers, or "—"
+  paraPihak: string;    // parties named in this document
+  nilai: string;        // monetary values / amounts, or "—"
+  poinKunci: string;    // key terms / obligations / content, 1–2 sentences
+  relevansi: string;    // why this document matters to the case, 1 sentence
+  status: "selesai" | "gagal";
+  reason?: string;      // failure reason when status === "gagal"
+}
+
 export interface DraftMeta {
   ref: string;
   docTypeId: string;
@@ -168,6 +185,7 @@ export interface WorkflowState {
   docMap: DocMapEntry[];
   selectedFiles: FileEntry[];
   caseAnalysis: CaseAnalysis | null;
+  reviewTable: ReviewTableRow[];
   interviewAnswers: InterviewAnswer[];
   strategicAssessment: string;
   userCorrections: string;
@@ -205,6 +223,7 @@ export type WorkflowAction =
   | { type: "UPDATE_DOC_MAP_ENTRY"; fileId: string; patch: Partial<DocMapEntry> }
   | { type: "SET_SELECTED_FILES"; files: FileEntry[] }
   | { type: "SET_CASE_ANALYSIS"; analysis: CaseAnalysis }
+  | { type: "SET_REVIEW_TABLE"; rows: ReviewTableRow[] }
   | { type: "SET_INTERVIEW_ANSWERS"; answers: InterviewAnswer[] }
   | { type: "SET_STRATEGIC_ASSESSMENT"; text: string }
   | { type: "SET_USER_CORRECTIONS"; text: string }
