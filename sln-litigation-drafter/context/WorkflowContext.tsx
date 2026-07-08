@@ -70,6 +70,7 @@ const initialState: WorkflowState = {
   selectedFiles: [],
   caseAnalysis: null,
   reviewTable: [],
+  chronology: null,
   interviewAnswers: [],
   strategicAssessment: "",
   userCorrections: "",
@@ -143,6 +144,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "SET_REVIEW_TABLE":
       return { ...state, reviewTable: action.rows };
 
+    case "SET_CHRONOLOGY":
+      return { ...state, chronology: action.data };
+
     case "SET_INTERVIEW_ANSWERS":
       return { ...state, interviewAnswers: action.answers };
 
@@ -203,8 +207,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
     case "CLEAR_ANALYSIS":
       // Force Stage 3A re-analysis with the full document set while preserving
       // the drafter's interview answers and party identities/strategy. The
-      // review table is document-derived, so it must regenerate too.
-      return { ...state, caseAnalysis: null, strategicAssessment: "", reviewTable: [] };
+      // review table and chronology are document-derived, so they must
+      // regenerate too.
+      return { ...state, caseAnalysis: null, strategicAssessment: "", reviewTable: [], chronology: null };
 
     case "SET_ERROR":
       return { ...state, error: action.error };
@@ -217,6 +222,7 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       return {
         ...action.state,
         reviewTable: action.state.reviewTable ?? [],
+        chronology: action.state.chronology ?? null,
         isDraftStreaming: false,
         isCritiqueLoading: false,
       };

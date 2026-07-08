@@ -107,6 +107,30 @@ export interface InterviewAnswer {
   answer: string;
 }
 
+// One dated event in the litigation chronology, anchored to its source
+// document by filename and a short verbatim quote so every entry is checkable.
+export interface ChronologyEvent {
+  id: string;            // `${docIndex}-${eventIndex}`, assigned server-side
+  tanggalISO: string | null; // "YYYY-MM-DD" | "YYYY-MM" | "YYYY" | null (undated)
+  tanggalTeks: string;   // the date as written in the document
+  peristiwa: string;     // what happened
+  pelaku: string;        // actor(s), or "—"
+  sumber: string;        // source document filename
+  kutipan: string;       // short verbatim supporting quote from the document
+}
+
+// A cross-document inconsistency the conflict pass flagged for the lawyer.
+export interface ChronologyConflict {
+  eventIds: string[];
+  jenis: "tanggal_bertentangan" | "fakta_bertentangan" | "duplikat";
+  penjelasan: string;
+}
+
+export interface ChronologyData {
+  events: ChronologyEvent[];
+  conflicts: ChronologyConflict[];
+}
+
 // One row of the document review table (Vault-style structured extraction).
 // Each row corresponds to one source document; `status` distinguishes a
 // successful extraction from a per-document failure so nothing is silently
@@ -186,6 +210,7 @@ export interface WorkflowState {
   selectedFiles: FileEntry[];
   caseAnalysis: CaseAnalysis | null;
   reviewTable: ReviewTableRow[];
+  chronology: ChronologyData | null;
   interviewAnswers: InterviewAnswer[];
   strategicAssessment: string;
   userCorrections: string;
@@ -224,6 +249,7 @@ export type WorkflowAction =
   | { type: "SET_SELECTED_FILES"; files: FileEntry[] }
   | { type: "SET_CASE_ANALYSIS"; analysis: CaseAnalysis }
   | { type: "SET_REVIEW_TABLE"; rows: ReviewTableRow[] }
+  | { type: "SET_CHRONOLOGY"; data: ChronologyData | null }
   | { type: "SET_INTERVIEW_ANSWERS"; answers: InterviewAnswer[] }
   | { type: "SET_STRATEGIC_ASSESSMENT"; text: string }
   | { type: "SET_USER_CORRECTIONS"; text: string }
