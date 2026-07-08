@@ -79,6 +79,7 @@ const initialState: WorkflowState = {
   draftComplete: false,
   critiqueItems: [],
   isCritiqueLoading: false,
+  factCheck: [],
   draftVersions: [],
   draftVersion: 0,
   ref: "",
@@ -163,10 +164,11 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       // Clears the working draft for a revision/regeneration. Version history
       // is intentionally KEPT — it feeds "Riwayat Revisi" and the
       // MAX_REVISIONS cost cap; use RESET_ALL_DRAFTS to wipe it.
-      return { ...state, draftText: "", draftComplete: false, critiqueItems: [] };
+      // factCheck belongs to the cleared draft text, so it goes too.
+      return { ...state, draftText: "", draftComplete: false, critiqueItems: [], factCheck: [] };
 
     case "RESET_ALL_DRAFTS":
-      return { ...state, draftText: "", draftComplete: false, critiqueItems: [], draftVersions: [], draftVersion: 0 };
+      return { ...state, draftText: "", draftComplete: false, critiqueItems: [], factCheck: [], draftVersions: [], draftVersion: 0 };
 
     case "SET_DRAFT_STREAMING":
       return { ...state, isDraftStreaming: action.value };
@@ -179,6 +181,9 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
 
     case "SET_CRITIQUE_LOADING":
       return { ...state, isCritiqueLoading: action.value };
+
+    case "SET_FACT_CHECK":
+      return { ...state, factCheck: action.items };
 
     case "ADD_DRAFT_VERSION":
       return { ...state, draftVersions: [...state.draftVersions, action.version] };
@@ -223,6 +228,7 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
         ...action.state,
         reviewTable: action.state.reviewTable ?? [],
         chronology: action.state.chronology ?? null,
+        factCheck: action.state.factCheck ?? [],
         isDraftStreaming: false,
         isCritiqueLoading: false,
       };

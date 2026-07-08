@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
-import type { DraftVersion } from "@/types";
+import type { DraftVersion, FactCheckItem } from "@/types";
 
 const MAX_REVISIONS = 5;
 
@@ -27,6 +27,11 @@ export default function Stage4Draft() {
   const [checkedItems, setCheckedItems] = useState<boolean[]>([]);
   const [freeformInstructions, setFreeformInstructions] = useState("");
   const [viewingVersion, setViewingVersion] = useState<number | null>(null);
+
+  // Fact-check state (results live in workflow state; loading/error are local)
+  const [factLoading, setFactLoading] = useState(false);
+  const [factError, setFactError] = useState("");
+  const [showSupported, setShowSupported] = useState(false);
 
   // Guard against double-fire (StrictMode remounts) and abort the stream when
   // the drafter navigates away so it stops appending into global state.
@@ -210,6 +215,42 @@ export default function Stage4Draft() {
     dispatch({ type: "SET_CRITIQUE_LOADING", value: false });
   }
 
+  async function runFactCheck() {
+    if (!state.draftText.trim() || factLoading) return;
+    setFactLoading(true);
+    setFactError("");
+    try {
+      const res = await fetch("/api/draft/fact-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: state.sessionId,
+          draftText: state.draftText,
+          interviewAnswers: state.interviewAnswers,
+          userCorrections: state.userCorrections,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal memverifikasi fakta");
+      dispatch({ type: "SET_FACT_CHECK", items: (data.facts ?? []) as FactCheckItem[] });
+    } catch (e: unknown) {
+      setFactError(e instanceof Error ? e.message : "Terjadi kesalahan saat verifikasi fakta");
+    } finally {
+      setFactLoading(false);
+    }
+  }
+
+  function addFactToRevision(f: FactCheckItem) {
+    const detail =
+      f.status === "bertentangan"
+        ? `bertentangan dengan ${f.sumber ?? "dokumen"}${f.kutipan ? ` ("${f.kutipan}")` : ""}${f.catatan ? ` — ${f.catatan}` : ""}`
+        : f.status === "dari_keterangan_klien"
+        ? "hanya didukung keterangan klien — jangan nyatakan sebagai fakta terbukti dari dokumen"
+        : "tidak didukung dokumen maupun keterangan klien — hapus atau lunakkan";
+    const line = `Perbaiki fakta: "${f.fakta}" — ${detail}.`;
+    setFreeformInstructions((prev) => (prev.trim() ? `${prev}\n${line}` : line));
+  }
+
   async function startRevision() {
     const selectedCritiques = (state.critiqueItems ?? []).filter((_, i) => checkedItems[i]);
     const parts = [
@@ -283,6 +324,13 @@ export default function Stage4Draft() {
               style={btnSecondary}
             >
               {state.isCritiqueLoading ? "Mengkritisi..." : "⚖ Kritisi Ulang"}
+            </button>
+            <button
+              onClick={runFactCheck}
+              disabled={factLoading || !state.draftText.trim() || viewingVersion !== null}
+              style={btnSecondary}
+            >
+              {factLoading ? "Memverifikasi..." : "✓ Verifikasi Fakta"}
             </button>
             <button onClick={() => goToStage(5)} style={btnPrimary}>
               Lanjut ke Output →
@@ -494,6 +542,109 @@ export default function Stage4Draft() {
                   </label>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Fact-check panel ──────────────────────────────────────────── */}
+      {factError && (
+        <div style={{ padding: 12, background: "rgba(192,57,43,0.1)", border: "1px solid var(--error)", borderRadius: 4, color: "var(--error)", fontSize: 13, marginBottom: 16 }}>
+          {factError}
+          <button onClick={runFactCheck} style={{ marginLeft: 10, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>
+            Coba lagi
+          </button>
+        </div>
+      )}
+      {(factLoading || state.factCheck.length > 0) && viewingVersion === null && (
+        <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 4, marginBottom: 24 }}>
+          <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-color)", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.05em", color: "var(--text-primary)" }}>
+              VERIFIKASI FAKTA TERHADAP DOKUMEN
+            </span>
+            {!factLoading && (
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                {state.factCheck.length} fakta diperiksa
+              </span>
+            )}
+          </div>
+          <div style={{ padding: "14px 16px" }}>
+            {factLoading ? (
+              <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                Memeriksa setiap fakta dalam draf terhadap dokumen perkara...
+              </span>
+            ) : (
+              (() => {
+                const groups: { status: FactCheckItem["status"]; label: string; color: string; hint: string }[] = [
+                  { status: "bertentangan", label: "BERTENTANGAN DENGAN DOKUMEN", color: "var(--error)", hint: "dokumen menyatakan hal berbeda — wajib diperbaiki" },
+                  { status: "tidak_ditemukan", label: "TIDAK DITEMUKAN", color: "var(--accent-gold)", hint: "tidak ada dukungan di dokumen maupun keterangan klien" },
+                  { status: "dari_keterangan_klien", label: "DARI KETERANGAN KLIEN", color: "var(--accent-blue)", hint: "sah, tetapi perlu bukti sebelum sidang" },
+                ];
+                const supported = state.factCheck.filter((f) => f.status === "didukung");
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    {groups.map(({ status, label, color, hint }) => {
+                      const items = state.factCheck.filter((f) => f.status === status);
+                      if (items.length === 0) return null;
+                      return (
+                        <div key={status}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color, letterSpacing: "0.05em", marginBottom: 6 }}>
+                            {label} ({items.length}) <span style={{ fontWeight: 400, textTransform: "none", color: "var(--text-muted)" }}>— {hint}</span>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            {items.map((f, i) => (
+                              <div key={i} style={{ padding: "8px 10px", border: `1px solid ${color}`, borderRadius: 4, fontSize: 12, lineHeight: 1.6 }}>
+                                <div style={{ color: "var(--text-primary)" }}>{f.fakta}</div>
+                                {(f.sumber || f.kutipan || f.catatan) && (
+                                  <div style={{ color: "var(--text-muted)", marginTop: 2 }}>
+                                    {f.sumber ? `${f.sumber}` : ""}
+                                    {f.kutipan ? ` — “${f.kutipan}”` : ""}
+                                    {f.catatan ? ` · ${f.catatan}` : ""}
+                                  </div>
+                                )}
+                                <button
+                                  onClick={() => addFactToRevision(f)}
+                                  style={{ marginTop: 4, fontSize: 11, color: "var(--accent-blue)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                                >
+                                  + tambahkan ke instruksi revisi
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {supported.length > 0 && (
+                      <div>
+                        <button
+                          onClick={() => setShowSupported(!showSupported)}
+                          style={{ fontSize: 11, fontWeight: 700, color: "#4a9d6e", letterSpacing: "0.05em", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                        >
+                          {showSupported ? "▾" : "▸"} DIDUKUNG DOKUMEN ({supported.length})
+                        </button>
+                        {showSupported && (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                            {supported.map((f, i) => (
+                              <div key={i} style={{ padding: "8px 10px", border: "1px solid var(--border-color)", borderRadius: 4, fontSize: 12, lineHeight: 1.6 }}>
+                                <div style={{ color: "var(--text-primary)" }}>{f.fakta}</div>
+                                <div style={{ color: "var(--text-muted)", marginTop: 2 }}>
+                                  {f.sumber ?? ""}
+                                  {f.kutipan ? ` — “${f.kutipan}”` : ""}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {state.factCheck.every((f) => f.status === "didukung") && (
+                      <div style={{ fontSize: 12, color: "#4a9d6e" }}>
+                        Semua fakta yang diperiksa didukung dokumen perkara.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             )}
           </div>
         </div>
