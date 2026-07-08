@@ -246,6 +246,11 @@ Panduan per field:
 - buktiKunci: Dokumen mana yang paling krusial dan mengapa
 - kelemahanGaps: Fakta/bukti yang tidak ada tapi seharusnya ada. Apa yang perlu dikonfirmasi?
 - posisiHukum: Rekomendasi posisi hukum terkuat berdasarkan dokumen yang tersedia
+
+PENANDAAN SUMBER (wajib untuk kronologi, analisisElemen, dan buktiKunci):
+setiap fakta material diakhiri penanda [sumber: nama file] memakai nama file persis
+dari header "=== nama file ===" di atas. Fakta tanpa dukungan dokumen ditandai
+[TIDAK DITEMUKAN]. Jangan memberi penanda pada kesimpulan/opini hukum.
 `;
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

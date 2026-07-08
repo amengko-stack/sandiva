@@ -189,6 +189,16 @@ export interface CitationItem {
   note?: string;
 }
 
+// One factual assertion extracted from the draft and checked against the
+// case documents (and the drafter-provided client statements).
+export interface FactCheckItem {
+  fakta: string;   // the assertion as stated in the draft
+  status: "didukung" | "dari_keterangan_klien" | "bertentangan" | "tidak_ditemukan";
+  sumber?: string;  // source filename (didukung / bertentangan)
+  kutipan?: string; // short verbatim quote supporting or contradicting it
+  catatan?: string; // brief note, esp. for bertentangan
+}
+
 export interface DraftVersion {
   version: number;
   text: string;
@@ -219,6 +229,7 @@ export interface WorkflowState {
   draftComplete: boolean;
   critiqueItems: string[];
   isCritiqueLoading: boolean;
+  factCheck: FactCheckItem[];
   draftVersions: DraftVersion[];
   draftVersion: number;
   ref: string;
@@ -260,6 +271,7 @@ export type WorkflowAction =
   | { type: "SET_DRAFT_COMPLETE"; value: boolean }
   | { type: "SET_CRITIQUE"; items: string[] }
   | { type: "SET_CRITIQUE_LOADING"; value: boolean }
+  | { type: "SET_FACT_CHECK"; items: FactCheckItem[] }
   | { type: "ADD_DRAFT_VERSION"; version: DraftVersion }
   | { type: "SET_DRAFT_VERSION"; version: number }
   | { type: "SET_REF"; ref: string }
