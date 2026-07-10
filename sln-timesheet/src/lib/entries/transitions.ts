@@ -13,7 +13,7 @@
 //   - billed -> approved: ONLY via invoice void (admin, audited)
 
 export type EntryStatus = "draft" | "submitted" | "approved" | "billed";
-export type Role = "member" | "partner" | "admin";
+export type Role = "member" | "partner" | "admin" | "accounting";
 
 export interface TransitionContext {
   actor: { id: number; role: Role };

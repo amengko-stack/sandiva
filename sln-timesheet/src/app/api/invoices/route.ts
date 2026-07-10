@@ -19,7 +19,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const auth = requireSession(["partner", "admin"]);
+  const auth = requireSession(["partner", "admin", "accounting"]);
   if (!auth.ok) return auth.response;
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));

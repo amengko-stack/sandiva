@@ -10,7 +10,7 @@ export const maxDuration = 60;
 // Excel export: Matter performance + Utilization + Timesheet Activity
 // (the report shape the firm knows from Prohukum). Partner/admin only.
 export async function GET(req: NextRequest) {
-  const auth = requireSession(["partner", "admin"]);
+  const auth = requireSession(["partner", "admin", "accounting"]);
   if (!auth.ok) return auth.response;
 
   const today = todayJakarta();
@@ -18,6 +18,8 @@ export async function GET(req: NextRequest) {
   const to = req.nextUrl.searchParams.get("to") ?? today;
 
   const [totals, utilization] = await Promise.all([firmTotals(), utilizationThisWeek()]);
+  // Margin derives from confidential cost rates — partners/admins only.
+  const showMargin = auth.session.role === "partner" || auth.session.role === "admin";
 
   const wb = new ExcelJS.Workbook();
   wb.creator = "Sandiva Timesheets";
@@ -34,13 +36,13 @@ export async function GET(req: NextRequest) {
     { header: "WIP", key: "wip", width: 16 },
     { header: "Billed", key: "billed", width: 16 },
     { header: "Agreed fee", key: "feeAmount", width: 16 },
-    { header: "Margin %", key: "margin", width: 10 },
+    ...(showMargin ? [{ header: "Margin %", key: "margin", width: 10 }] : []),
   ];
   totals.perf.forEach((m) =>
     perf.addRow({
       code: m.code, client: m.clientName, title: m.title, fee: m.feeType, cur: m.currency,
       units: m.actualUnits, value: m.valueDelivered, wip: m.wip, billed: m.billed,
-      feeAmount: m.feeAmount ?? "", margin: m.marginPct ?? "",
+      feeAmount: m.feeAmount ?? "", ...(showMargin ? { margin: m.marginPct ?? "" } : {}),
     }),
   );
   perf.getRow(1).font = { bold: true };

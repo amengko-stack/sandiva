@@ -12,8 +12,8 @@ const TOKEN_VERSION = "v1";
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 export const SESSION_COOKIE = "slnts_session";
 
-export type Role = "member" | "partner" | "admin";
-const ROLES: Role[] = ["member", "partner", "admin"];
+export type Role = "member" | "partner" | "admin" | "accounting";
+const ROLES: Role[] = ["member", "partner", "admin", "accounting"];
 
 export interface Session {
   userId: number;

@@ -14,7 +14,7 @@ export interface ShellUser {
   id: number;
   name: string;
   initials: string;
-  role: "member" | "partner" | "admin";
+  role: "member" | "partner" | "admin" | "accounting";
   title: string | null;
 }
 
@@ -24,6 +24,16 @@ function navFor(role: ShellUser["role"], pendingApprovals: number): NavGroup[] {
     { href: "/log-time", label: "Log time" },
     { href: "/timesheet", label: "My timesheet" },
   ];
+  if (role === "accounting")
+    return [
+      {
+        items: [
+          { href: "/", label: "Dashboard" },
+          { href: "/invoices", label: "Invoices" },
+          { href: "/reports", label: "Reports" },
+        ],
+      },
+    ];
   if (role === "member") return [{ items: mine }];
   if (role === "partner")
     return [
@@ -54,6 +64,12 @@ function navFor(role: ShellUser["role"], pendingApprovals: number): NavGroup[] {
 }
 
 function tabsFor(role: ShellUser["role"]): NavItem[] {
+  if (role === "accounting")
+    return [
+      { href: "/", label: "Home" },
+      { href: "/invoices", label: "Invoices" },
+      { href: "/reports", label: "Reports" },
+    ];
   if (role === "member")
     return [
       { href: "/", label: "Home" },

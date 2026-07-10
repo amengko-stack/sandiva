@@ -10,7 +10,7 @@ const bodySchema = z.object({
   initials: z.string().trim().min(2).max(6).toUpperCase(),
   email: z.string().email().max(200),
   password: z.string().min(10, "Temporary password must be at least 10 characters.").max(200),
-  role: z.enum(["member", "partner", "admin"]),
+  role: z.enum(["member", "partner", "admin", "accounting"]),
   title: z.string().trim().max(60).optional(),
   weeklyTargetUnits: z.number().nonnegative().max(80).default(40),
   billingRateIdr: z.number().nonnegative().optional(),

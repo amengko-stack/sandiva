@@ -136,7 +136,7 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
             <div>
               <label className={labelCls}>Role</label>
               <select className={inputCls} value={form.role} onChange={set("role")}>
-                <option value="member">Member</option><option value="partner">Partner</option><option value="admin">Admin</option>
+                <option value="member">Member</option><option value="partner">Partner</option><option value="accounting">Accounting</option><option value="admin">Admin</option>
               </select>
             </div>
             <div><label className={labelCls}>Title (signature)</label><input className={inputCls} value={form.title} onChange={set("title")} placeholder="Associate / Partner" /></div>

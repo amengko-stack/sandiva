@@ -20,7 +20,7 @@ const LINE = "#dbe3e8";
 // signature. This PDF is the ONLY detailed client-facing invoice (Accurate
 // holds just the summary).
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireSession(["partner", "admin"]);
+  const auth = requireSession(["partner", "admin", "accounting"]);
   if (!auth.ok) return auth.response;
 
   const id = Number(params.id);

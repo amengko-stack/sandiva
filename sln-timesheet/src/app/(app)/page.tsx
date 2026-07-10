@@ -17,6 +17,9 @@ export default async function Dashboard() {
   const week = weekOf(today);
   const alerts: BudgetAlert[] = user.role === "member" ? [] : await budgetAlerts();
 
+  // Accounting staff aren't fee earners — give them a billing-focused home.
+  if (user.role === "accounting") return <AccountingDashboard alerts={alerts} />;
+
   const rows = await db()
     .select({
       id: tables.timeEntries.id,
@@ -139,7 +142,7 @@ export default async function Dashboard() {
         </div>
       )}
 
-      {user.role !== "member" && <AskAI />}
+      {(user.role === "partner" || user.role === "admin") && <AskAI />}
 
       <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
@@ -180,6 +183,69 @@ export default async function Dashboard() {
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+// Billing-focused home for the accounting team (not fee earners): outstanding
+// AR, matters ready to invoice, fee-budget alerts — no personal timekeeping,
+// no margin/cost, no Ask-AI.
+async function AccountingDashboard({ alerts }: { alerts: BudgetAlert[] }) {
+  const readyCount = (
+    await db()
+      .selectDistinct({ matterId: tables.timeEntries.matterId })
+      .from(tables.timeEntries)
+      .where(eq(tables.timeEntries.status, "approved"))
+  ).length;
+
+  const invoices = await db()
+    .select({ total: tables.invoices.total, currency: tables.invoices.currency, status: tables.invoices.status, paidAt: tables.invoices.paidAt })
+    .from(tables.invoices);
+  const outstanding = (invoices as any[]).filter((i) => i.status === "issued" && !i.paidAt);
+  const outIdr = outstanding.filter((i) => i.currency === "IDR").reduce((s, i) => s + Number(i.total), 0);
+  const outUsd = outstanding.filter((i) => i.currency === "USD").reduce((s, i) => s + Number(i.total), 0);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <Link href="/invoices" className="rounded-card border border-[var(--gold)] bg-gradient-to-b from-[var(--surface)] to-[var(--gold-soft)] p-4 shadow-sm">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Matters ready to invoice</div>
+          <div className="num mt-2 text-[26px] font-bold">{readyCount}</div>
+          <div className="mt-1 text-xs text-[var(--text-2)]">approved time · tap to bill</div>
+        </Link>
+        <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Outstanding (unpaid)</div>
+          <div className="num mt-2 text-[22px] font-bold">
+            {outIdr > 0 ? fmtMoney(outIdr, "IDR") : outUsd > 0 ? "" : "—"}
+            {outIdr > 0 && outUsd > 0 && " · "}
+            {outUsd > 0 && fmtMoney(outUsd, "USD")}
+          </div>
+          <div className="mt-1 text-xs text-[var(--text-2)]">{outstanding.length} awaiting collection</div>
+        </div>
+        <Link href="/reports" className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-3)]">Reports</div>
+          <div className="mt-2 text-[15px] font-semibold">Billing &amp; utilization →</div>
+          <div className="mt-1 text-xs text-[var(--text-2)]">export to Excel</div>
+        </Link>
+      </div>
+
+      {alerts.length > 0 && (
+        <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+          <header className="flex items-center border-b border-[var(--border)] px-4 py-3">
+            <h2 className="text-sm font-semibold">Fee budget alerts</h2>
+            <span className="flex-1" />
+            <span className="text-xs text-[var(--text-3)]">value delivered vs agreed fee</span>
+          </header>
+          {alerts.map((a) => (
+            <div key={a.matterId} className="flex flex-wrap items-center gap-2.5 border-t border-[var(--border)] px-4 py-2.5 text-[13px]">
+              <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${a.level === "over" ? "bg-burgundy/15 text-burgundy" : "bg-[var(--gold-soft)] text-[var(--gold-ink)]"}`}>{a.pct}% of fee</span>
+              <span className="num font-semibold">{a.code}</span>
+              <span className="min-w-0 flex-1 truncate text-[var(--text-2)]">{a.clientName} · {a.title}</span>
+              <span className="num text-xs text-[var(--text-3)]">{fmtMoney(a.valueDelivered, a.currency)} / {fmtMoney(a.feeAmount, a.currency)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -21,7 +21,7 @@ function isPublicPath(pathname: string): boolean {
 // `slnts-session-v1:<userId>:<role>:<expiresAtMs>` keyed by APP_SESSION_TOKEN)
 // in sync with that file.
 const TOKEN_VERSION = "v1";
-const ROLES = ["member", "partner", "admin"];
+const ROLES = ["member", "partner", "admin", "accounting"];
 const SESSION_COOKIE = "slnts_session";
 
 async function isValidSession(token: string | undefined): Promise<boolean> {

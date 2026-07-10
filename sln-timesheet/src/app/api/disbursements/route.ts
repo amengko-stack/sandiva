@@ -13,7 +13,7 @@ const bodySchema = z.object({
 
 // Disbursements are recorded by partners/admins in the matter's currency.
 export async function POST(req: NextRequest) {
-  const auth = requireSession(["partner", "admin"]);
+  const auth = requireSession(["partner", "admin", "accounting"]);
   if (!auth.ok) return auth.response;
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));

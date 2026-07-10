@@ -15,7 +15,7 @@ const patchSchema = z.object({
   description: z.string().trim().min(3).max(2000).optional(),
 });
 
-async function loadContext(idParam: string, actorId: number, role: "member" | "partner" | "admin") {
+async function loadContext(idParam: string, actorId: number, role: "member" | "partner" | "admin" | "accounting") {
   const id = Number(idParam);
   if (!Number.isInteger(id)) return { error: jsonError("Invalid entry id.") };
   const entry = await db().query.timeEntries.findFirst({ where: eq(tables.timeEntries.id, id) });

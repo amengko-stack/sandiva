@@ -8,7 +8,7 @@ const patchSchema = z.object({ paid: z.boolean() });
 
 // Light AR: mark an invoice collected (Accurate remains the ledger of record).
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = requireSession(["partner", "admin"]);
+  const auth = requireSession(["partner", "admin", "accounting"]);
   if (!auth.ok) return auth.response;
 
   const id = Number(params.id);

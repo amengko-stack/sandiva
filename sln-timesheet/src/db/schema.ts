@@ -16,7 +16,11 @@ import {
 // Enums
 // ---------------------------------------------------------------------------
 
-export const userRole = pgEnum("user_role", ["member", "partner", "admin"]);
+// "accounting" = billing/AR staff, NOT fee earners: can issue invoices, mark
+// paid, view reports (no margin/cost — that stays admin+partner only), but
+// no access to Users & rates (confidential cost rates), Matters/Clients,
+// imports, settings, audit, or Ask-AI.
+export const userRole = pgEnum("user_role", ["member", "partner", "admin", "accounting"]);
 
 export const matterStatus = pgEnum("matter_status", ["active", "closed"]);
 
