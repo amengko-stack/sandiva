@@ -4,6 +4,16 @@ import { sendEmail } from "./index";
 
 const base = () => process.env.APP_BASE_URL ?? "http://localhost:3100";
 
+/** Escape user-controlled strings before HTML interpolation (stored-XSS guard). */
+export function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const shell = (title: string, body: string, cta: { href: string; label: string }) => `
   <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
     <div style="height:4px;background:linear-gradient(90deg,#003D5A,#792C38,#522B4C)"></div>
@@ -24,9 +34,9 @@ export function notifySubmission(args: {
     subject: `Timesheets — ${args.count} ${args.count === 1 ? "entry" : "entries"} awaiting your approval`,
     html: shell(
       "Time submitted for your approval",
-      `<p>Hi ${args.partnerName},</p>
-       <p><b>${args.submitterName}</b> submitted <b>${args.count} ${args.count === 1 ? "entry" : "entries"}</b>
-       on your ${args.matterCodes.length === 1 ? "matter" : "matters"} <b>${args.matterCodes.join(", ")}</b>.</p>`,
+      `<p>Hi ${esc(args.partnerName)},</p>
+       <p><b>${esc(args.submitterName)}</b> submitted <b>${args.count} ${args.count === 1 ? "entry" : "entries"}</b>
+       on your ${args.matterCodes.length === 1 ? "matter" : "matters"} <b>${esc(args.matterCodes.join(", "))}</b>.</p>`,
       { href: `${base()}/approvals`, label: "Review & approve" },
     ),
   }).catch(() => {});
@@ -45,10 +55,10 @@ export function notifySendBack(args: {
     subject: `Timesheets — an entry on ${args.matterCode} was sent back`,
     html: shell(
       "Entry sent back for revision",
-      `<p>Hi ${args.ownerName},</p>
-       <p><b>${args.partnerName}</b> sent back your entry on <b>${args.matterCode}</b>:</p>
-       <p style="color:#48606d">“${args.description}”</p>
-       ${args.note ? `<p><b>Reason:</b> ${args.note}</p>` : ""}`,
+      `<p>Hi ${esc(args.ownerName)},</p>
+       <p><b>${esc(args.partnerName)}</b> sent back your entry on <b>${esc(args.matterCode)}</b>:</p>
+       <p style="color:#48606d">“${esc(args.description)}”</p>
+       ${args.note ? `<p><b>Reason:</b> ${esc(args.note)}</p>` : ""}`,
       { href: `${base()}/timesheet`, label: "Fix & resubmit" },
     ),
   }).catch(() => {});

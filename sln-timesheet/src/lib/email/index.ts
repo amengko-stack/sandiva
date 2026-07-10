@@ -26,11 +26,13 @@ export async function sendEmail(args: { to: string; subject: string; html: strin
 }
 
 export function resetEmailHtml(name: string, resetUrl: string): string {
+  // Escape the (admin-entered) name — stored-XSS guard for email HTML.
+  const safeName = name.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return `
   <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
     <div style="height:4px;background:linear-gradient(90deg,#003D5A,#792C38,#522B4C)"></div>
     <h2 style="color:#003D5A">Reset your Sandiva Timesheets password</h2>
-    <p>Hi ${name},</p>
+    <p>Hi ${safeName},</p>
     <p>Click the button below to set a new password. This link expires in 1 hour and can be used once.</p>
     <p style="margin:24px 0"><a href="${resetUrl}" style="background:#B9B400;color:#20200a;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Set new password</a></p>
     <p style="color:#7A909C;font-size:13px">If you didn't request this, you can ignore this email.</p>
