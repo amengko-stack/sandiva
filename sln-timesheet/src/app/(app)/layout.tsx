@@ -1,0 +1,42 @@
+import { redirect } from "next/navigation";
+import { and, eq, inArray } from "drizzle-orm";
+import { db, tables } from "@/db";
+import { getCurrentUser } from "@/lib/auth/current-user";
+import { AppShell } from "@/components/shell";
+
+export const dynamic = "force-dynamic";
+
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+
+  // Partner nav badge: submitted entries on THEIR engagement matters.
+  let pendingApprovals = 0;
+  if (user.role === "partner") {
+    const myMatters = await db()
+      .select({ id: tables.matters.id })
+      .from(tables.matters)
+      .where(eq(tables.matters.engagementPartnerId, user.id));
+    if (myMatters.length) {
+      const rows = await db()
+        .select({ id: tables.timeEntries.id })
+        .from(tables.timeEntries)
+        .where(
+          and(
+            eq(tables.timeEntries.status, "submitted"),
+            inArray(tables.timeEntries.matterId, myMatters.map((m: { id: number }) => m.id)),
+          ),
+        );
+      pendingApprovals = rows.length;
+    }
+  }
+
+  return (
+    <AppShell
+      user={{ id: user.id, name: user.name, initials: user.initials, role: user.role, title: user.title }}
+      pendingApprovals={pendingApprovals}
+    >
+      {children}
+    </AppShell>
+  );
+}
