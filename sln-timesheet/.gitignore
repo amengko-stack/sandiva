@@ -9,3 +9,8 @@ next-env.d.ts
 .vercel
 .pglite/
 scripts/*.local.ts
+
+.vercel
+.env*
+.env.prod
+.env.*
