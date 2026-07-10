@@ -127,7 +127,23 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   doc.font("Helvetica").fontSize(7.8);
   let feeUnits = 0;
   let feeAmt = 0;
+  const combined = new Set(fees.map((l: any) => l.matterCode).filter(Boolean)).size > 1;
+  let currentMatter: string | null = null;
   for (const l of fees) {
+    // Combined invoice: a matter sub-header row before each group.
+    if (combined && l.matterCode && l.matterCode !== currentMatter) {
+      currentMatter = l.matterCode;
+      if (y + 13 > doc.page.height - 60) {
+        doc.addPage();
+        y = 40;
+        tableHeader();
+        doc.font("Helvetica").fontSize(7.8);
+      }
+      doc.rect(L, y, W, 13).fillAndStroke("#eef2f5", LINE);
+      doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(7.5).text(`Matter ${l.matterCode}`, L + 4, y + 3.5);
+      doc.font("Helvetica").fontSize(7.8);
+      y += 13;
+    }
     const cells = [
       l.date,
       l.description,

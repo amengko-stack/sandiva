@@ -26,6 +26,7 @@ export default async function InvoiceDetailPage({ params }: { params: { id: stri
   const fees = (lines as any[]).filter((l) => l.kind === "fee");
   const disb = (lines as any[]).filter((l) => l.kind === "disbursement");
   const feeUnits = fees.reduce((s, l) => s + Number(l.units ?? 0), 0);
+  const combined = new Set(fees.map((l: any) => l.matterCode).filter(Boolean)).size > 1;
 
   return (
     <div className="flex flex-col gap-4">
@@ -72,7 +73,7 @@ export default async function InvoiceDetailPage({ params }: { params: { id: stri
           <table className="mt-2 w-full border-collapse text-[11.5px]">
             <thead>
               <tr>
-                {["Date", "Service Description", "Lawyer", "Rate / Unit", "Units", "Amount"].map((h) => (
+                {[...(combined ? ["Matter"] : []), "Date", "Service Description", "Lawyer", "Rate / Unit", "Units", "Amount"].map((h) => (
                   <th key={h} className="border border-[#dbe3e8] bg-[#f3f6f8] px-2 py-1.5 text-left text-[10px] uppercase tracking-wide text-[#41535d]">{h}</th>
                 ))}
               </tr>
@@ -80,6 +81,7 @@ export default async function InvoiceDetailPage({ params }: { params: { id: stri
             <tbody>
               {fees.map((l: any) => (
                 <tr key={l.id}>
+                  {combined && <td className="num border border-[#e4eaee] px-2 py-1.5 align-top font-semibold">{l.matterCode}</td>}
                   <td className="num border border-[#e4eaee] px-2 py-1.5 align-top">{l.date}</td>
                   <td className="border border-[#e4eaee] px-2 py-1.5 align-top">{l.description}</td>
                   <td className="border border-[#e4eaee] px-2 py-1.5 align-top">{l.lawyerName}</td>

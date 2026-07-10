@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
 import { canEditEntry } from "@/lib/entries/transitions";
+import { isDelegateOf } from "@/lib/entries/delegation";
 import { WORKCODES } from "@/lib/constants";
 
 const patchSchema = z.object({
@@ -25,6 +26,7 @@ async function loadContext(idParam: string, actorId: number, role: "member" | "p
     actor: { id: actorId, role },
     entry: { userId: entry.userId, status: entry.status },
     matter: { engagementPartnerId: matter.engagementPartnerId, status: matter.status },
+    actorIsDelegateOfOwner: actorId !== entry.userId ? await isDelegateOf(actorId, entry.userId) : false,
   });
   if (!gate.ok) return { error: jsonError(gate.reason, 403) };
   return { entry };

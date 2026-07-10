@@ -170,6 +170,26 @@ export const matterTeam = pgTable(
   }),
 );
 
+// Delegation: `delegate` may enter/manage time ON BEHALF OF `principal`
+// (e.g. a secretary logging a partner's time). Entries still belong to the
+// principal and route to the engagement partner; entered_by records the typist.
+export const delegates = pgTable(
+  "delegates",
+  {
+    id: serial("id").primaryKey(),
+    delegateId: integer("delegate_id")
+      .notNull()
+      .references(() => users.id),
+    principalId: integer("principal_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    pairUnique: uniqueIndex("delegates_pair_unique").on(t.delegateId, t.principalId),
+  }),
+);
+
 // Per-matter negotiated rate override, in the matter's currency.
 export const matterRates = pgTable("matter_rates", {
   id: serial("id").primaryKey(),
@@ -221,6 +241,8 @@ export const timeEntries = pgTable(
     // Prohukum "Transaction ID" — idempotent import dedup.
     prohukumTimeId: text("prohukum_time_id"),
     invoiceId: integer("invoice_id"),
+    // Who actually typed the entry when a delegate logged it (null = the owner).
+    enteredBy: integer("entered_by"),
     updatedBy: integer("updated_by"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -252,9 +274,11 @@ export const disbursements = pgTable("disbursements", {
 // entries requires voiding the invoice (admin, audited).
 export const invoices = pgTable("invoices", {
   id: serial("id").primaryKey(),
-  matterId: integer("matter_id")
-    .notNull()
-    .references(() => matters.id),
+  // Single-matter invoice: matterId set. Combined invoice (several matters of
+  // one client, same currency + same engagement partner): matterId null,
+  // clientId set, per-line matter codes on invoice_lines.
+  matterId: integer("matter_id").references(() => matters.id),
+  clientId: integer("client_id").references(() => clients.id),
   // Accurate owns the official number; required before "Issue & mark billed".
   accurateInvoiceNo: text("accurate_invoice_no").notNull(),
   invoiceDate: date("invoice_date").notNull(),
@@ -270,6 +294,8 @@ export const invoices = pgTable("invoices", {
   // Signatory snapshot = the matter's engagement partner at issue.
   signatory: jsonb("signatory").notNull(),
   status: invoiceStatus("status").notNull().default("issued"),
+  // Light AR: when finance confirms collection (Accurate remains the ledger).
+  paidAt: date("paid_at"),
   issuedBy: integer("issued_by").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -280,6 +306,8 @@ export const invoiceLines = pgTable("invoice_lines", {
     .notNull()
     .references(() => invoices.id),
   kind: text("kind").notNull(), // "fee" | "disbursement"
+  // Snapshot of the matter code — needed to group lines on combined invoices.
+  matterCode: text("matter_code"),
   date: date("date").notNull(),
   description: text("description").notNull(),
   lawyerName: text("lawyer_name"),

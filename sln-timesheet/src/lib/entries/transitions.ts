@@ -2,8 +2,10 @@
 // go through canTransition/canEditEntry; API routes reject anything illegal.
 //
 // draft -> submitted -> approved -> billed
-//   - create/edit/delete draft: owner only
-//   - draft -> submitted: owner (matter must be active)
+//   - create/edit/delete draft: owner, or a registered DELEGATE of the owner
+//     (e.g. a secretary managing a partner's timesheet); the entry still
+//     belongs to the owner and entered_by records the typist
+//   - draft -> submitted: owner or delegate (matter must be active)
 //   - submitted -> approved (with optional write-down): the matter's
 //     ENGAGEMENT PARTNER only (admin never approves timesheets)
 //   - submitted -> draft (send back): engagement partner
@@ -19,6 +21,8 @@ export interface TransitionContext {
   matter: { engagementPartnerId: number; status: "active" | "closed" };
   /** True only when the transition is part of an invoice issue/void flow. */
   viaInvoice?: boolean;
+  /** True when the actor is a registered delegate of the entry's owner. */
+  actorIsDelegateOfOwner?: boolean;
 }
 
 export type TransitionResult = { ok: true } | { ok: false; reason: string };
@@ -30,15 +34,21 @@ export function canCreateEntry(ctx: {
   actor: { id: number };
   matter: { status: "active" | "closed" };
   forUserId: number;
+  actorIsDelegateOfOwner?: boolean;
 }): TransitionResult {
   if (ctx.matter.status === "closed") return no("Matter is closed — no new time can be logged.");
-  if (ctx.actor.id !== ctx.forUserId) return no("You can only log time for yourself.");
+  if (ctx.actor.id !== ctx.forUserId && !ctx.actorIsDelegateOfOwner)
+    return no("You can only log time for yourself or someone you are a delegate for.");
   return ok;
+}
+
+function isOwnerOrDelegate(ctx: TransitionContext): boolean {
+  return ctx.actor.id === ctx.entry.userId || ctx.actorIsDelegateOfOwner === true;
 }
 
 export function canEditEntry(ctx: TransitionContext): TransitionResult {
   if (ctx.entry.status !== "draft") return no("Only draft entries can be edited or deleted.");
-  if (ctx.actor.id !== ctx.entry.userId) return no("Only the owner can edit a draft.");
+  if (!isOwnerOrDelegate(ctx)) return no("Only the owner (or their delegate) can edit a draft.");
   return ok;
 }
 
@@ -50,7 +60,7 @@ export function canTransition(
   if (from !== ctx.entry.status) return no("Entry changed underneath you — reload and retry.");
 
   if (from === "draft" && to === "submitted") {
-    if (ctx.actor.id !== ctx.entry.userId) return no("Only the owner can submit their time.");
+    if (!isOwnerOrDelegate(ctx)) return no("Only the owner (or their delegate) can submit their time.");
     if (ctx.matter.status === "closed") return no("Matter is closed — cannot submit time to it.");
     return ok;
   }

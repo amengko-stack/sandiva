@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { asc, desc } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db, tables } from "@/db";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { UsersScreen } from "./screen";
@@ -42,8 +43,22 @@ export default async function UsersPage() {
     });
   }
 
+  const principalUsers = alias(tables.users, "principal_users");
+  const mappings = await db()
+    .select({
+      id: tables.delegates.id,
+      delegateInitials: tables.users.initials,
+      delegateName: tables.users.name,
+      principalInitials: principalUsers.initials,
+      principalName: principalUsers.name,
+    })
+    .from(tables.delegates)
+    .innerJoin(tables.users, eq(tables.delegates.delegateId, tables.users.id))
+    .innerJoin(principalUsers, eq(tables.delegates.principalId, principalUsers.id));
+
   return (
     <UsersScreen
+      delegates={mappings as any}
       users={users.map((u: any) => ({
         ...u,
         rate: current.get(u.id)

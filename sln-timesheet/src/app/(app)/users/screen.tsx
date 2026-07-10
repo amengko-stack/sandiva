@@ -17,8 +17,18 @@ const labelCls = "mb-1 block text-[11px] font-semibold uppercase tracking-wider 
 const idr = (v: string | null) => (v ? "Rp " + Number(v).toLocaleString("en-US") : "—");
 const usd = (v: string | null) => (v ? "$" + Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 }) : "—");
 
-export function UsersScreen({ users }: { users: UserRow[] }) {
+interface DelegateMapping {
+  id: number;
+  delegateInitials: string;
+  delegateName: string;
+  principalInitials: string;
+  principalName: string;
+}
+
+export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; delegates?: DelegateMapping[] }) {
   const router = useRouter();
+  const [dDelegate, setDDelegate] = useState<number | "">("");
+  const [dPrincipal, setDPrincipal] = useState<number | "">("");
   const [adding, setAdding] = useState(false);
   const [rateFor, setRateFor] = useState<UserRow | null>(null);
   const [historyFor, setHistoryFor] = useState<number | null>(null);
@@ -48,6 +58,25 @@ export function UsersScreen({ users }: { users: UserRow[] }) {
     if (!res.ok) return setError(data.error ?? "Could not add user.");
     setAdding(false);
     router.refresh();
+  }
+
+  async function addDelegate() {
+    setError(null);
+    if (!dDelegate || !dPrincipal) return setError("Pick who logs, and for whom.");
+    const res = await fetch("/api/delegates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delegateId: dDelegate, principalId: dPrincipal }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error ?? "Could not add the mapping.");
+    setDDelegate(""); setDPrincipal("");
+    router.refresh();
+  }
+
+  async function removeDelegate(id: number) {
+    const res = await fetch(`/api/delegates?id=${id}`, { method: "DELETE" });
+    if (res.ok) router.refresh();
   }
 
   async function toggleActive(u: UserRow) {
@@ -135,6 +164,34 @@ export function UsersScreen({ users }: { users: UserRow[] }) {
           </div>
         </div>
       )}
+
+      <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+        <header className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-4 py-3">
+          <h2 className="text-sm font-semibold">Delegates</h2>
+          <span className="text-xs text-[var(--text-3)]">who may enter time on someone else&apos;s behalf</span>
+          <span className="flex-1" />
+          <select value={dDelegate} onChange={(e) => setDDelegate(Number(e.target.value) || "")} className="rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1.5 text-xs font-semibold">
+            <option value="">Who logs…</option>
+            {users.filter((u) => u.active).map((u) => <option key={u.id} value={u.id}>{u.initials} · {u.name}</option>)}
+          </select>
+          <span className="text-xs text-[var(--text-3)]">for</span>
+          <select value={dPrincipal} onChange={(e) => setDPrincipal(Number(e.target.value) || "")} className="rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1.5 text-xs font-semibold">
+            <option value="">Whose time…</option>
+            {users.filter((u) => u.active).map((u) => <option key={u.id} value={u.id}>{u.initials} · {u.name}</option>)}
+          </select>
+          <button onClick={addDelegate} className="rounded-lg bg-[var(--gold)] px-3 py-1.5 text-xs font-semibold text-[#20200a]">Add</button>
+        </header>
+        {delegates.map((d) => (
+          <div key={d.id} className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-4 py-2 text-[13px]">
+            <b>{d.delegateInitials}</b> {d.delegateName}
+            <span className="text-[var(--text-3)]">logs for</span>
+            <b>{d.principalInitials}</b> {d.principalName}
+            <span className="flex-1" />
+            <button onClick={() => removeDelegate(d.id)} className="rounded-md border border-[var(--border-strong)] px-2 py-0.5 text-xs font-semibold hover:border-burgundy hover:text-burgundy">Remove</button>
+          </div>
+        ))}
+        {delegates.length === 0 && <p className="px-4 py-3 text-[13px] text-[var(--text-3)]">No delegate mappings yet.</p>}
+      </section>
 
       <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
         <div className="overflow-x-auto">

@@ -9,10 +9,28 @@ interface Entry { id: number; matterId: number; date: string; units: string; wor
 export function ApprovalsScreen({ initials, matters, entries }: { initials: string; matters: Matter[]; entries: Entry[] }) {
   const router = useRouter();
   const [edits, setEdits] = useState<Record<number, { billedUnits: string; noCharge: boolean }>>({});
+  const [bulkPct, setBulkPct] = useState<Record<number, string>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const edit = (id: number, e: Entry) => edits[id] ?? { billedUnits: Number(e.units).toFixed(2), noCharge: false };
+
+  /** Fill every entry's billed units with actual x (1 - pct/100); review then approve. */
+  function applyBulk(matterId: number, list: Entry[]) {
+    const pct = Number(bulkPct[matterId]);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return setToast("Write-down % must be 0–100.");
+    setEdits((s) => {
+      const next = { ...s };
+      for (const e of list) {
+        next[e.id] = {
+          billedUnits: (Math.round(Number(e.units) * (1 - pct / 100) * 100) / 100).toFixed(2),
+          noCharge: pct === 100,
+        };
+      }
+      return next;
+    });
+    setToast(`Applied ${pct}% write-down to ${list.length} entries — review, then approve.`);
+  }
 
   async function approve(list: Entry[]) {
     setBusy(true);
@@ -72,6 +90,25 @@ export function ApprovalsScreen({ initials, matters, entries }: { initials: stri
             <h2 className="text-sm font-semibold">{matter.code} · {matter.title}</h2>
             <span className="text-xs text-[var(--text-3)]">{matter.clientName} · {matter.currency}</span>
             <span className="flex-1" />
+            <span className="flex items-center gap-1 text-xs text-[var(--text-2)]">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                placeholder="%"
+                value={bulkPct[matter.id] ?? ""}
+                onChange={(e) => setBulkPct((s) => ({ ...s, [matter.id]: e.target.value }))}
+                className="num w-[58px] rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-1.5 py-1 text-xs"
+                title="Bulk write-down percentage"
+              />
+              <button
+                onClick={() => applyBulk(matter.id, list)}
+                className="rounded-md border border-[var(--border-strong)] px-2 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]"
+                title="Fill every entry with actual × (1 − %)"
+              >
+                Write down all
+              </button>
+            </span>
             <button
               onClick={() => approve(list)}
               disabled={busy}

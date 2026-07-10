@@ -31,6 +31,40 @@ describe("create / edit drafts", () => {
   });
 });
 
+describe("delegation", () => {
+  const SECRETARY = { id: 50, role: "member" as const };
+
+  it("delegate can create for their principal; stranger cannot", () => {
+    expect(
+      canCreateEntry({ actor: SECRETARY, matter: { status: "active" }, forUserId: MEMBER.id, actorIsDelegateOfOwner: true }).ok,
+    ).toBe(true);
+    expect(
+      canCreateEntry({ actor: SECRETARY, matter: { status: "active" }, forUserId: MEMBER.id, actorIsDelegateOfOwner: false }).ok,
+    ).toBe(false);
+  });
+
+  it("delegate can edit and submit the principal's draft", () => {
+    const c = ctx({ actor: SECRETARY, actorIsDelegateOfOwner: true });
+    expect(canEditEntry(c).ok).toBe(true);
+    expect(canTransition("draft", "submitted", c).ok).toBe(true);
+  });
+
+  it("delegation does NOT grant approval rights", () => {
+    const c = ctx({
+      actor: SECRETARY,
+      entry: { userId: MEMBER.id, status: "submitted" },
+      actorIsDelegateOfOwner: true,
+    });
+    expect(canTransition("submitted", "approved", c).ok).toBe(false);
+  });
+
+  it("closed matter still blocks delegates", () => {
+    expect(
+      canCreateEntry({ actor: SECRETARY, matter: { status: "closed" }, forUserId: MEMBER.id, actorIsDelegateOfOwner: true }).ok,
+    ).toBe(false);
+  });
+});
+
 describe("submit", () => {
   it("owner submits own draft", () => {
     expect(canTransition("draft", "submitted", ctx()).ok).toBe(true);

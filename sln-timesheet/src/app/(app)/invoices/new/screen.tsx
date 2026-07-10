@@ -4,12 +4,14 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface MatterInfo {
-  id: number; code: string; title: string; currency: "IDR" | "USD";
+  ids: number[]; code: string; title: string; currency: "IDR" | "USD";
   clientName: string; clientCode: string; up: string; partnerName: string; partnerTitle: string;
+  combined: boolean;
 }
 interface Priced {
   id: number; lawyerName: string; date: string; workcode: string; description: string;
   actualUnits: number; billableUnits: number; noCharge: boolean; rate: number | null; amount: number | null; unresolved: boolean;
+  matterCode: string;
 }
 interface Disb { id: number; date: string; description: string; amount: number }
 
@@ -74,7 +76,7 @@ export function AssembleScreen({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        matterId: matter.id,
+        matterIds: matter.ids,
         entryIds: chosen.map((e) => e.id),
         disbursementIds: chosenDisb.map((d) => d.id),
         ppnRate: Number(ppn) || 0,
@@ -95,7 +97,7 @@ export function AssembleScreen({
     const res = await fetch("/api/disbursements", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ matterId: matter.id, date: disbForm.date, description: disbForm.description, amount: Number(disbForm.amount) }),
+      body: JSON.stringify({ matterId: matter.ids[0], date: disbForm.date, description: disbForm.description, amount: Number(disbForm.amount) }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setError(data.error ?? "Could not add disbursement.");
@@ -141,6 +143,7 @@ export function AssembleScreen({
             {entries.map((e) => (
               <label key={e.id} className={`flex cursor-pointer flex-wrap items-center gap-2.5 border-t border-[var(--border)] px-4 py-2.5 hover:bg-[var(--surface-2)] ${e.unresolved && !e.noCharge ? "bg-burgundy/5" : ""}`}>
                 <input type="checkbox" checked={selEntries.has(e.id)} onChange={() => setSelEntries((s) => { const n = new Set(s); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; })} className="h-[16px] w-[16px] accent-[var(--navy)]" />
+                {matter.combined && <span className="num flex-none rounded bg-[var(--surface-3)] px-1.5 text-[10.5px] font-bold text-[var(--text-2)]">{e.matterCode}</span>}
                 <span className="num text-xs text-[var(--text-3)]">{e.date}</span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">{e.description}</span>
                 <span className="text-xs text-[var(--text-3)]">{e.lawyerName}</span>

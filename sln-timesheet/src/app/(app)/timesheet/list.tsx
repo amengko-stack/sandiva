@@ -5,7 +5,21 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { EntryRow, type EntryRowData } from "@/components/entry-row";
 
-export function TimesheetList({ entries }: { entries: EntryRowData[] }) {
+interface Principal {
+  id: number;
+  name: string;
+  initials: string;
+}
+
+export function TimesheetList({
+  entries,
+  principals = [],
+  viewingFor = null,
+}: {
+  entries: EntryRowData[];
+  principals?: Principal[];
+  viewingFor?: Principal | null;
+}) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<number>>(
     () => new Set(entries.filter((e) => e.status === "draft").map((e) => e.id)),
@@ -62,9 +76,35 @@ export function TimesheetList({ entries }: { entries: EntryRowData[] }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {principals.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[12px] font-semibold text-[var(--text-2)]">Timesheet of</span>
+          <a
+            href="/timesheet"
+            className={`rounded-full border px-2.5 py-1 text-[11.5px] font-semibold ${!viewingFor ? "border-[var(--navy)] bg-[var(--navy)] text-white" : "border-[var(--border-strong)] text-[var(--text-2)]"}`}
+          >
+            Me
+          </a>
+          {principals.map((p) => (
+            <a
+              key={p.id}
+              href={`/timesheet?for=${p.id}`}
+              className={`rounded-full border px-2.5 py-1 text-[11.5px] font-semibold ${viewingFor?.id === p.id ? "border-plum bg-plum text-white" : "border-[var(--border-strong)] text-[var(--text-2)]"}`}
+            >
+              {p.initials} · {p.name}
+            </a>
+          ))}
+        </div>
+      )}
+      {viewingFor && (
+        <p className="rounded-card border border-plum/30 bg-plum/5 px-4 py-2.5 text-[12.5px] font-medium text-plum">
+          You are managing <b>{viewingFor.name}</b>&apos;s timesheet as their delegate — entries belong to them
+          and the audit trail records you as the typist.
+        </p>
+      )}
       <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
         <header className="flex items-center border-b border-[var(--border)] px-4 py-3">
-          <h2 className="text-sm font-semibold">My timesheet</h2>
+          <h2 className="text-sm font-semibold">{viewingFor ? `${viewingFor.name}'s timesheet` : "My timesheet"}</h2>
           <span className="flex-1" />
           <span className="text-xs text-[var(--text-3)]">{entries.length} entries</span>
         </header>

@@ -28,8 +28,23 @@ interface MatterOption {
 
 const QUICK_UNITS = [0.25, 0.5, 1, 2, 4];
 
-export function LogTimeForm({ today, edit }: { today: string; edit: EditEntry | null }) {
+interface Principal {
+  id: number;
+  name: string;
+  initials: string;
+}
+
+export function LogTimeForm({
+  today,
+  edit,
+  principals = [],
+}: {
+  today: string;
+  edit: EditEntry | null;
+  principals?: Principal[];
+}) {
   const router = useRouter();
+  const [forUserId, setForUserId] = useState<number | "me">("me");
   const [matterId, setMatterId] = useState<number | null>(edit?.matterId ?? null);
   const [search, setSearch] = useState(edit?.matterLabel ?? "");
   const [options, setOptions] = useState<MatterOption[]>([]);
@@ -78,7 +93,15 @@ export function LogTimeForm({ today, edit }: { today: string; edit: EditEntry | 
     if (!u || u <= 0) return setError("Enter a Unit value (1 unit = 1 hour).");
     if (description.trim().length < 3) return setError("Add a description — it appears on the client invoice.");
     setBusy(true);
-    const payload = { matterId, date, units: u, workcode, description: description.trim(), force };
+    const payload = {
+      matterId,
+      date,
+      units: u,
+      workcode,
+      description: description.trim(),
+      force,
+      ...(forUserId !== "me" && !edit ? { forUserId } : {}),
+    };
     const res = edit
       ? await fetch(`/api/entries/${edit.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       : await fetch("/api/entries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -102,6 +125,31 @@ export function LogTimeForm({ today, edit }: { today: string; edit: EditEntry | 
         <h2 className="text-sm font-semibold">{edit ? "Edit draft entry" : "Log time"}</h2>
       </header>
       <div className="flex flex-col gap-4 p-4">
+        {principals.length > 0 && !edit && (
+          <div>
+            <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-2)]">
+              Log time for
+            </label>
+            <select
+              value={forUserId}
+              onChange={(e) => setForUserId(e.target.value === "me" ? "me" : Number(e.target.value))}
+              className="w-full max-w-[320px] rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2.5 text-base outline-none focus:border-[var(--navy)]"
+            >
+              <option value="me">Myself</option>
+              {principals.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.initials} · {p.name} (as delegate)
+                </option>
+              ))}
+            </select>
+            {forUserId !== "me" && (
+              <p className="mt-1 text-xs text-plum">
+                The entry belongs to them and routes to their matter&apos;s engagement partner; the audit
+                trail records you as the typist.
+              </p>
+            )}
+          </div>
+        )}
         <div ref={boxRef} className="relative">
           <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-2)]">Matter</label>
           <input

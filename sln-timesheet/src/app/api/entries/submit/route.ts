@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
 import { canTransition } from "@/lib/entries/transitions";
+import { isDelegateOf } from "@/lib/entries/delegation";
 import { notifySubmission } from "@/lib/email/notify";
 
 const bodySchema = z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) });
@@ -28,13 +29,22 @@ export async function POST(req: NextRequest) {
 
   const submitted: number[] = [];
   const partnerIds = new Set<number>();
+  const delegateCache = new Map<number, boolean>();
   for (const entry of entries) {
     const matter = matterById.get(entry.matterId) as any;
     if (!matter) continue;
+    let isDelegate = false;
+    if (entry.userId !== auth.session.userId) {
+      if (!delegateCache.has(entry.userId)) {
+        delegateCache.set(entry.userId, await isDelegateOf(auth.session.userId, entry.userId));
+      }
+      isDelegate = delegateCache.get(entry.userId)!;
+    }
     const gate = canTransition("draft", "submitted", {
       actor: { id: auth.session.userId, role: auth.session.role },
       entry: { userId: entry.userId, status: entry.status },
       matter: { engagementPartnerId: matter.engagementPartnerId, status: matter.status },
+      actorIsDelegateOfOwner: isDelegate,
     });
     if (gate.ok) {
       submitted.push(entry.id);

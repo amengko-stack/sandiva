@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
 import { canCreateEntry } from "@/lib/entries/transitions";
+import { isDelegateOf } from "@/lib/entries/delegation";
 import { WORKCODES } from "@/lib/constants";
 
 const bodySchema = z.object({
@@ -12,6 +13,8 @@ const bodySchema = z.object({
   units: z.number().positive().max(24),
   workcode: z.enum(WORKCODES),
   description: z.string().trim().min(3, "Add a description — it appears on the client invoice.").max(2000),
+  // Delegates may log on behalf of a principal.
+  forUserId: z.number().int().positive().optional(),
   // Set true to save despite the duplicate warning.
   force: z.boolean().optional(),
 });
@@ -26,10 +29,15 @@ export async function POST(req: NextRequest) {
   const matter = await db().query.matters.findFirst({ where: eq(tables.matters.id, parsed.data.matterId) });
   if (!matter) return jsonError("Matter not found.", 404);
 
+  const forUserId = parsed.data.forUserId ?? auth.session.userId;
+  const isDelegate =
+    forUserId !== auth.session.userId && (await isDelegateOf(auth.session.userId, forUserId));
+
   const gate = canCreateEntry({
     actor: { id: auth.session.userId },
     matter: { status: matter.status },
-    forUserId: auth.session.userId,
+    forUserId,
+    actorIsDelegateOfOwner: isDelegate,
   });
   if (!gate.ok) return jsonError(gate.reason);
 
@@ -38,7 +46,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.data.force) {
     const dup = await db().query.timeEntries.findFirst({
       where: and(
-        eq(tables.timeEntries.userId, auth.session.userId),
+        eq(tables.timeEntries.userId, forUserId),
         eq(tables.timeEntries.matterId, matter.id),
         eq(tables.timeEntries.date, parsed.data.date),
         eq(tables.timeEntries.units, (Math.round(parsed.data.units * 100) / 100).toFixed(2)),
@@ -55,13 +63,14 @@ export async function POST(req: NextRequest) {
   const [entry] = await db()
     .insert(tables.timeEntries)
     .values({
-      userId: auth.session.userId,
+      userId: forUserId,
       matterId: matter.id,
       date: parsed.data.date,
       units: (Math.round(parsed.data.units * 100) / 100).toFixed(2),
       workcode: parsed.data.workcode,
       description: parsed.data.description,
       status: "draft",
+      enteredBy: isDelegate ? auth.session.userId : null,
       updatedBy: auth.session.userId,
     })
     .returning();
