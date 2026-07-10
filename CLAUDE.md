@@ -73,9 +73,10 @@ Copy `.env.local.example` to `.env.local`:
 
 ```
 APP_PASSWORD=            # Shared login password
-APP_SESSION_TOKEN=       # HMAC-SHA256 of password (see .env.local.example for command)
+APP_SESSION_TOKEN=       # Random secret that SIGNS session cookies (not derived from the password)
+CRON_SECRET=             # Bearer secret for /api/cron/cleanup-sessions (Vercel Cron)
 ANTHROPIC_API_KEY=       # Required for all AI stages
-BLOB_READ_WRITE_TOKEN=   # Vercel Blob — stores drafts, memory, jurisprudence
+BLOB_READ_WRITE_TOKEN=   # Vercel Blob — stores drafts, memory, jurisprudence, session workspace
 BLOB_BASE_URL=           # Vercel Blob public URL
 AZURE_TENANT_ID=         # SharePoint read/write via Microsoft Graph
 AZURE_CLIENT_ID=
@@ -92,16 +93,31 @@ SHAREPOINT_SITE_ID=
 | Stage | Description | Models used |
 |-------|-------------|-------------|
 | 1 | SharePoint file selection | — |
-| 2A | File inventory display | — |
+| 2A | File inventory display (navigable folder tree — `FileEntry.folder`) | — |
 | 2B | Document categorization (KRITIS/PENDUKUNG/REFERENSI) | Haiku |
 | 2C | Structured case extraction → `CaseAnalysis` | Sonnet |
+| 3 | Analysis panels: review table + chronology (see below) | Sonnet |
 | 3A | Kronologi synthesis | Opus |
-| 3B | Client interview question generation | Sonnet |
+| 3B | Parties/strategy step (`PartiesStrategy`), then interview question generation | Sonnet |
 | 3C | Strategic assessment (3C: kekuatan/kelemahan/risiko) | Opus |
-| 4 | Draft generation (streaming SSE) + critique pass | Opus + Sonnet |
+| 4 | Draft generation (streaming SSE) + critique pass + fact-check | Opus + Sonnet |
 | 5 | Review/revision loop | Opus |
 
 **Model tiering** is centralized in `config/models.ts` (`MODELS` const). Change models there, not at call sites.
+
+**Authentication**: Signed, expiring session cookies (`sln_session`, format `v1.<expiresAtMs>.<hmac>`, HMAC keyed by `APP_SESSION_TOKEN`, 7-day TTL). Verification exists in **two places that must stay in sync**: `lib/auth.ts` (Node, for route handlers) and `middleware.ts` (Edge runtime, Web Crypto re-implementation). `middleware.ts` gates everything except `PUBLIC_PATHS` (`/login`, auth routes, cron). Rotating `APP_SESSION_TOKEN` invalidates all sessions.
+
+**Session workspace** (Vercel Blob): per-workflow state lives under `sessions/<sessionId>/` — `extracted_text.json` (Stage 2 extraction output, formatted as `=== filename ===` blocks; parse with `splitDocBlocks()` in `lib/extract-format.ts`), `report.json`, `review_table.json`, `chronology.json`, `interview.json`, `strategic_assessment.json`, `parties_strategy.json`, `jurisprudence_selected.json`. Client-supplied `sessionId` is interpolated into blob keys — always validate with `isValidSessionId()` from `lib/blob.ts`. `/api/cron/cleanup-sessions` (CRON_SECRET bearer auth) deletes expired session blobs.
+
+**Document review table** (`app/api/analyze/review-table/`): Vault-style per-document structured extraction (jenisDokumen, tanggal, paraPihak, nilai, poinKunci, relevansi). Streams NDJSON progress rows; per-document failures become `status: "gagal"` rows rather than being silently dropped.
+
+**Cross-document chronology** (`app/api/analyze/chronology/`): extracts dated events per document (each anchored to source filename + verbatim quote), then a conflict pass flags cross-document inconsistencies (`tanggal_bertentangan`/`fakta_bertentangan`/`duplikat`). NDJSON streaming.
+
+**Cost/time rails**: the per-document routes (review table, chronology) cap docs per run (60), concurrency (3), per-doc chars, and abort after 3 consecutive API errors. `lib/json-repair.ts` (`repairTruncatedJson`) salvages truncated model JSON. Long Claude calls use `stream().finalMessage()` instead of blocking `create()` — blocking Opus calls hit SDK timeouts.
+
+**Fact-to-source traceability**: Stage 2C analysis annotates material facts with `[sumber: nama file]` anchors; the draft system prompt (`src/prompts.ts`) instructs the model to use them for evidence references (P-1/T-1) but never copy them into the final document. `app/api/draft/fact-check/` extracts factual assertions from a draft and verifies each against `extracted_text.json` → `didukung` / `dari_keterangan_klien` / `bertentangan` / `tidak_ditemukan`, with source file + verbatim quote.
+
+**Prompt-injection boundaries**: every system prompt that touches case documents declares document content as DATA (often authored by the opposing party) and instructs the model to ignore embedded instructions. Preserve this framing when writing new analysis prompts.
 
 **Draft generation** (`app/api/draft/route.ts`): streams SSE with up to 3 continuation calls if `stop_reason === "max_tokens"`. Continuation appends accumulated text as an assistant turn + user "continue" message (assistant prefill is rejected on Opus 4.8).
 
@@ -109,9 +125,11 @@ SHAREPOINT_SITE_ID=
 
 **Jurisprudence DB** (Vercel Blob): Indonesian court decisions stored as `JurisprudenceEntry[]`. `app/api/jurisprudence/relevant/` uses Claude to rank relevance; selected entries are injected into the draft system prompt as a `=== YURISPRUDENSI RELEVAN ===` block.
 
-**Citation guardrails** (`app/api/citations/extract/`): validates legal citations in generated drafts.
+**Citation guardrails**: the base system prompt forbids citing MA (Supreme Court) decision numbers unless they appear in the firm's verified citation list or the case documents — otherwise the model must emit a `[VERIFIKASI: …]` placeholder. `app/api/citations/extract/` extracts and verifies citations from generated drafts in Stage 5.
 
-**Authentication**: Cookie-based shared password. `app/api/auth/login/route.ts` compares `APP_SESSION_TOKEN`; all API routes check for the session cookie.
+**Adding documents mid-workflow**: `app/api/sharepoint/add-documents/` ("Tambah Dokumen") lets the user pull in more SharePoint files after Stage 2 without restarting; `PERLU_OCR` files are counted and surfaced with reasons rather than dropped.
+
+**DOCX output** (`lib/docx-builder.ts`): matches SLN house style — Calibri Light 11pt, plain bold headings, 1-inch margins, dash bullets — and includes a Daftar Isi table for Jawaban/Gugatan/Kesimpulan.
 
 **Document types** and Indonesian legal claim types (`pmh`, `wanprestasi`, `kepailitan`, etc.) are defined in `config/documentTypes.ts`. Each claim type maps to a structured `ELEMENT_MAP` entry in `src/analyzer.ts` with the specific legal elements Claude should extract.
 
