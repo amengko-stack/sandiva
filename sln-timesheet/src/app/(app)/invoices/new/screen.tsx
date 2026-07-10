@@ -33,9 +33,10 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 }
 
 export function AssembleScreen({
-  matter, entries, disbursements, defaultPpn, today,
+  matter, entries, disbursements, defaultPpn, today, budget = null,
 }: {
   matter: MatterInfo; entries: Priced[]; disbursements: Disb[]; defaultPpn: number; today: string;
+  budget?: { pct: number; level: "amber" | "over" } | null;
 }) {
   const router = useRouter();
   const [selEntries, setSelEntries] = useState<Set<number>>(new Set(entries.map((e) => e.id)));
@@ -110,6 +111,16 @@ export function AssembleScreen({
         <button onClick={() => router.push("/invoices")} className="rounded-lg border border-[var(--border-strong)] px-3 py-1.5 text-xs font-semibold hover:bg-[var(--surface-2)]">← Back</button>
         <h2 className="text-[15px] font-semibold">Assemble invoice · {matter.code}</h2>
         <span className="text-xs text-[var(--text-3)]">{matter.clientName} · {matter.currency}</span>
+        {budget && (
+          <span
+            className={`num rounded-full px-2 py-0.5 text-[10.5px] font-bold ${
+              budget.level === "over" ? "bg-burgundy/15 text-burgundy" : "bg-[var(--gold-soft)] text-[var(--gold-ink)]"
+            }`}
+            title="Value delivered vs agreed fee for this matter"
+          >
+            {budget.level === "over" ? "OVER FEE BUDGET" : "near fee budget"} · {budget.pct}%
+          </span>
+        )}
       </div>
 
       {unresolved.length > 0 && (

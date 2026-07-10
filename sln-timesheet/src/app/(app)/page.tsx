@@ -6,6 +6,8 @@ import { todayJakarta } from "@/lib/api";
 import { weekOf, DAY_LABELS } from "@/lib/entries/week";
 import { EntryRow, type EntryRowData } from "@/components/entry-row";
 import { AskAI } from "@/components/ask-ai";
+import { budgetAlerts, type BudgetAlert } from "@/lib/reports/aggregate";
+import { fmtMoney } from "@/lib/billing/firm";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,7 @@ export default async function Dashboard() {
   const user = (await getCurrentUser())!;
   const today = todayJakarta();
   const week = weekOf(today);
+  const alerts: BudgetAlert[] = user.role === "member" ? [] : await budgetAlerts();
 
   const rows = await db()
     .select({
@@ -107,6 +110,34 @@ export default async function Dashboard() {
           );
         })}
       </div>
+
+      {alerts.length > 0 && (
+        <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+          <header className="flex items-center border-b border-[var(--border)] px-4 py-3">
+            <h2 className="text-sm font-semibold">Fee budget alerts</h2>
+            <span className="flex-1" />
+            <span className="text-xs text-[var(--text-3)]">value delivered vs agreed fee</span>
+          </header>
+          {alerts.map((a) => (
+            <div key={a.matterId} className="flex flex-wrap items-center gap-2.5 border-t border-[var(--border)] px-4 py-2.5 text-[13px]">
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${
+                  a.level === "over" ? "bg-burgundy/15 text-burgundy" : "bg-[var(--gold-soft)] text-[var(--gold-ink)]"
+                }`}
+              >
+                {a.pct}% of fee
+              </span>
+              <span className="num font-semibold">{a.code}</span>
+              <span className="min-w-0 flex-1 truncate text-[var(--text-2)]">
+                {a.clientName} · {a.title}
+              </span>
+              <span className="num text-xs text-[var(--text-3)]">
+                {fmtMoney(a.valueDelivered, a.currency)} / {fmtMoney(a.feeAmount, a.currency)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {user.role !== "member" && <AskAI />}
 

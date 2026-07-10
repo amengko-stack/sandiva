@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
 import { canTransition } from "@/lib/entries/transitions";
+import { notifySubmission } from "@/lib/email/notify";
 
 const bodySchema = z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) });
 
@@ -44,13 +45,36 @@ export async function POST(req: NextRequest) {
 
   await db()
     .update(tables.timeEntries)
-    .set({ status: "submitted", updatedBy: auth.session.userId, updatedAt: new Date() })
+    // Resubmitting clears any previous send-back reason.
+    .set({ status: "submitted", sendbackNote: null, updatedBy: auth.session.userId, updatedAt: new Date() })
     .where(inArray(tables.timeEntries.id, submitted));
 
   const partners = await db()
-    .select({ initials: tables.users.initials })
+    .select({ id: tables.users.id, initials: tables.users.initials, name: tables.users.name, email: tables.users.email })
     .from(tables.users)
     .where(inArray(tables.users.id, [...partnerIds]));
+
+  // Notify each engagement partner about their share (fire-and-forget).
+  const submitter = await db().query.users.findFirst({ where: eq(tables.users.id, auth.session.userId) });
+  if (submitter) {
+    for (const partner of partners as any[]) {
+      const theirMatters = matters.filter(
+        (m: any) => m.engagementPartnerId === partner.id && entries.some((e: any) => e.matterId === m.id && submitted.includes(e.id)),
+      );
+      const theirCount = entries.filter(
+        (e: any) => submitted.includes(e.id) && theirMatters.some((m: any) => m.id === e.matterId),
+      ).length;
+      if (theirCount > 0) {
+        notifySubmission({
+          partnerEmail: partner.email,
+          partnerName: partner.name,
+          submitterName: submitter.name,
+          count: theirCount,
+          matterCodes: theirMatters.map((m: any) => m.matterCode),
+        });
+      }
+    }
+  }
 
   return NextResponse.json({
     ok: true,

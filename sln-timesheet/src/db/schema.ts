@@ -65,6 +65,8 @@ export const users = pgTable(
       .notNull()
       .default("40"),
     active: boolean("active").notNull().default(true),
+    // Admin-created accounts must set their own password on first login.
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
     accurateItemNo: text("accurate_item_no"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
@@ -208,6 +210,9 @@ export const timeEntries = pgTable(
     workcode: text("workcode").notNull(),
     description: text("description").notNull(),
     status: entryStatus("status").notNull().default("draft"),
+    // Engagement partner's reason when sending an entry back; shown to the
+    // owner while draft, cleared on resubmit.
+    sendbackNote: text("sendback_note"),
     // Historical rows imported from Prohukum keep their original pricing and
     // are never re-resolved against today's rates.
     isHistorical: boolean("is_historical").notNull().default(false),

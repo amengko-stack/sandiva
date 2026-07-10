@@ -29,9 +29,18 @@ export default async function UsersPage() {
     .from(tables.userRates)
     .orderBy(desc(tables.userRates.effectiveFrom));
 
-  // Current rate per user = newest effectiveFrom row.
+  // Current rate per user = newest effectiveFrom row; full history for the viewer.
   const current = new Map<number, (typeof rates)[number]>();
-  for (const r of rates as any[]) if (!current.has(r.userId)) current.set(r.userId, r);
+  const historyByUser = new Map<number, any[]>();
+  for (const r of rates as any[]) {
+    if (!current.has(r.userId)) current.set(r.userId, r);
+    (historyByUser.get(r.userId) ?? historyByUser.set(r.userId, []).get(r.userId)!).push({
+      billingRateIdr: r.billingRateIdr,
+      billingRateUsd: r.billingRateUsd,
+      costRateIdr: r.costRateIdr,
+      effectiveFrom: r.effectiveFrom,
+    });
+  }
 
   return (
     <UsersScreen
@@ -45,6 +54,7 @@ export default async function UsersPage() {
               effectiveFrom: current.get(u.id)!.effectiveFrom,
             }
           : null,
+        rateHistory: historyByUser.get(u.id) ?? [],
       }))}
     />
   );

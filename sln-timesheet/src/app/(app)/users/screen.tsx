@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 
+interface RateRow { billingRateIdr: string | null; billingRateUsd: string | null; costRateIdr: string | null; effectiveFrom: string }
 interface UserRow {
   id: number; name: string; initials: string; email: string; role: string;
   title: string | null; weeklyTargetUnits: string; active: boolean;
-  rate: { billingRateIdr: string | null; billingRateUsd: string | null; costRateIdr: string | null; effectiveFrom: string } | null;
+  rate: RateRow | null;
+  rateHistory: RateRow[];
 }
 
 const inputCls =
@@ -19,6 +21,7 @@ export function UsersScreen({ users }: { users: UserRow[] }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [rateFor, setRateFor] = useState<UserRow | null>(null);
+  const [historyFor, setHistoryFor] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "", initials: "", email: "", password: "", role: "member", title: "",
@@ -44,6 +47,18 @@ export function UsersScreen({ users }: { users: UserRow[] }) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setError(data.error ?? "Could not add user.");
     setAdding(false);
+    router.refresh();
+  }
+
+  async function toggleActive(u: UserRow) {
+    setError(null);
+    const res = await fetch(`/api/users/${u.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: !u.active }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error ?? "Update failed.");
     router.refresh();
   }
 
@@ -133,22 +148,61 @@ export function UsersScreen({ users }: { users: UserRow[] }) {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-t border-[var(--border)]">
-                  <td className="px-4 py-2">
-                    <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface-3)] align-middle text-[9px] font-bold text-[var(--text-2)]">{u.initials}</span>
-                    {u.name}
-                  </td>
-                  <td className="px-2 py-2 capitalize">{u.title ?? u.role}</td>
-                  <td className="num px-2 py-2 text-right">{idr(u.rate?.billingRateIdr ?? null)}</td>
-                  <td className="num px-2 py-2 text-right">{usd(u.rate?.billingRateUsd ?? null)}</td>
-                  <td className="num px-2 py-2 text-right font-semibold text-plum">{idr(u.rate?.costRateIdr ?? null)}</td>
-                  <td className="num px-2 py-2 text-right">{Number(u.weeklyTargetUnits)}</td>
-                  <td className="px-2 py-2 text-right">
-                    <button onClick={() => { setRateFor(u); setError(null); }} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
-                      New rate
-                    </button>
-                  </td>
-                </tr>
+                <Fragment key={u.id}>
+                  <tr className={`border-t border-[var(--border)] ${u.active ? "" : "opacity-50"}`}>
+                    <td className="px-4 py-2">
+                      <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface-3)] align-middle text-[9px] font-bold text-[var(--text-2)]">{u.initials}</span>
+                      {u.name}
+                      {!u.active && <span className="ml-2 rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-3)]">inactive</span>}
+                    </td>
+                    <td className="px-2 py-2 capitalize">{u.title ?? u.role}</td>
+                    <td className="num px-2 py-2 text-right">{idr(u.rate?.billingRateIdr ?? null)}</td>
+                    <td className="num px-2 py-2 text-right">{usd(u.rate?.billingRateUsd ?? null)}</td>
+                    <td className="num px-2 py-2 text-right font-semibold text-plum">{idr(u.rate?.costRateIdr ?? null)}</td>
+                    <td className="num px-2 py-2 text-right">{Number(u.weeklyTargetUnits)}</td>
+                    <td className="px-2 py-2 text-right">
+                      <span className="inline-flex gap-1.5">
+                        <button onClick={() => setHistoryFor(historyFor === u.id ? null : u.id)} className="rounded-md border border-[var(--border-strong)] px-2 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]" title="Rate history">
+                          {historyFor === u.id ? "▴" : "▾"} {u.rateHistory.length}
+                        </button>
+                        <button onClick={() => { setRateFor(u); setError(null); }} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
+                          New rate
+                        </button>
+                        <button
+                          onClick={() => toggleActive(u)}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${u.active ? "border-[var(--border-strong)] hover:border-burgundy hover:text-burgundy" : "border-good text-good hover:bg-good/10"}`}
+                        >
+                          {u.active ? "Deactivate" : "Reactivate"}
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                  {historyFor === u.id && (
+                    <tr className="border-t border-[var(--border)] bg-[var(--surface-2)]">
+                      <td colSpan={7} className="px-6 py-2">
+                        <table className="w-full text-[12px]">
+                          <thead>
+                            <tr className="text-left text-[10px] uppercase tracking-wider text-[var(--text-3)]">
+                              <th className="py-1">Effective from</th><th className="py-1 text-right">Billing IDR</th>
+                              <th className="py-1 text-right">Billing USD</th><th className="py-1 text-right text-plum">Cost IDR</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {u.rateHistory.map((r, i) => (
+                              <tr key={i} className={i === 0 ? "font-semibold" : "text-[var(--text-2)]"}>
+                                <td className="num py-1">{r.effectiveFrom}{i === 0 && " (current)"}</td>
+                                <td className="num py-1 text-right">{idr(r.billingRateIdr)}</td>
+                                <td className="num py-1 text-right">{usd(r.billingRateUsd)}</td>
+                                <td className="num py-1 text-right text-plum">{idr(r.costRateIdr)}</td>
+                              </tr>
+                            ))}
+                            {u.rateHistory.length === 0 && <tr><td colSpan={4} className="py-1 text-[var(--text-3)]">No rates yet — entries on this user flag as “no rate”.</td></tr>}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

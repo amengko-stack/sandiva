@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { budgetAlerts } from "@/lib/reports/aggregate";
 import { MattersScreen } from "./screen";
 
 export const dynamic = "force-dynamic";
@@ -30,5 +31,8 @@ export default async function MattersPage() {
     .from(tables.users)
     .where(eq(tables.users.role, "partner"));
 
-  return <MattersScreen matters={matters as any} partners={partners as any} />;
+  const alerts = await budgetAlerts();
+  const budgetByMatter = Object.fromEntries(alerts.map((a) => [a.matterId, { pct: a.pct, level: a.level }]));
+
+  return <MattersScreen matters={matters as any} partners={partners as any} budgets={budgetByMatter} />;
 }

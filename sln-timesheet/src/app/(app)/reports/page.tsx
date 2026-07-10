@@ -1,27 +1,101 @@
 import { redirect } from "next/navigation";
+import { and, eq, gte, lte } from "drizzle-orm";
+import { db, tables } from "@/db";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { firmTotals, utilizationThisWeek } from "@/lib/reports/aggregate";
 import { fmtMoney } from "@/lib/billing/firm";
 import { FEE_TYPE_LABEL } from "@/lib/constants";
+import { todayJakarta } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
-export default async function ReportsPage() {
+export default async function ReportsPage({ searchParams }: { searchParams: { from?: string; to?: string } }) {
   const user = (await getCurrentUser())!;
   if (user.role === "member") redirect("/");
+
+  const today = todayJakarta();
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  const from = iso.test(searchParams.from ?? "") ? searchParams.from! : today.slice(0, 8) + "01";
+  const to = iso.test(searchParams.to ?? "") ? searchParams.to! : today;
 
   const [totals, utilization] = await Promise.all([firmTotals(), utilizationThisWeek()]);
   const showMargin = user.role === "partner" || user.role === "admin";
 
+  // Period summary — units in the selected range, by fee earner and by matter.
+  const period = await db()
+    .select({
+      units: tables.timeEntries.units,
+      status: tables.timeEntries.status,
+      who: tables.users.initials,
+      whoName: tables.users.name,
+      code: tables.matters.matterCode,
+      clientName: tables.clients.name,
+    })
+    .from(tables.timeEntries)
+    .innerJoin(tables.users, eq(tables.timeEntries.userId, tables.users.id))
+    .innerJoin(tables.matters, eq(tables.timeEntries.matterId, tables.matters.id))
+    .innerJoin(tables.clients, eq(tables.matters.clientId, tables.clients.id))
+    .where(and(gte(tables.timeEntries.date, from), lte(tables.timeEntries.date, to)));
+  const sumBy = (key: (r: any) => string, label: (r: any) => string) => {
+    const m = new Map<string, { label: string; units: number; n: number }>();
+    for (const r of period as any[]) {
+      const k = key(r);
+      const cur = m.get(k) ?? { label: label(r), units: 0, n: 0 };
+      cur.units += Number(r.units);
+      cur.n++;
+      m.set(k, cur);
+    }
+    return [...m.values()].sort((a, b) => b.units - a.units).slice(0, 12);
+  };
+  const byEarner = sumBy((r) => r.who, (r) => `${r.who} · ${r.whoName}`);
+  const byMatter = sumBy((r) => r.code, (r) => `${r.code} · ${r.clientName}`);
+  const periodUnits = (period as any[]).reduce((s, r) => s + Number(r.units), 0);
+
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2.5">
-        <p className="text-[12.5px] text-[var(--text-3)]">Firm-wide totals in IDR (USD via settings FX rate — reports only, never billing).</p>
+      <form className="flex flex-wrap items-center gap-2.5" method="get">
+        <label className="text-[12px] font-semibold text-[var(--text-2)]">Period</label>
+        <input type="date" name="from" defaultValue={from} className="rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-sm" />
+        <span className="text-[var(--text-3)]">→</span>
+        <input type="date" name="to" defaultValue={to} className="rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-2.5 py-1.5 text-sm" />
+        <button type="submit" className="rounded-lg border border-[var(--border-strong)] px-3 py-1.5 text-xs font-semibold hover:bg-[var(--surface-2)]">Apply</button>
         <span className="flex-1" />
-        <a href="/api/reports/export" className="rounded-lg border border-[var(--border-strong)] px-3 py-1.5 text-xs font-semibold hover:bg-[var(--surface-2)]">
+        <a href={`/api/reports/export?from=${from}&to=${to}`} className="rounded-lg border border-[var(--border-strong)] px-3 py-1.5 text-xs font-semibold hover:bg-[var(--surface-2)]">
           ⬇ Export Excel
         </a>
-      </div>
+      </form>
+
+      <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
+        <header className="flex items-center border-b border-[var(--border)] px-4 py-3">
+          <h2 className="text-sm font-semibold">Period summary</h2>
+          <span className="flex-1" />
+          <span className="num text-xs text-[var(--text-3)]">{from} → {to} · {periodUnits.toFixed(2)} units · {period.length} entries</span>
+        </header>
+        <div className="grid gap-0 sm:grid-cols-2">
+          <div className="border-r border-[var(--border)]">
+            <p className="px-4 pt-3 text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-3)]">By fee earner</p>
+            {byEarner.map((r) => (
+              <div key={r.label} className="flex justify-between gap-2 px-4 py-1.5 text-[13px]">
+                <span className="truncate">{r.label}</span>
+                <span className="num font-semibold">{r.units.toFixed(2)}</span>
+              </div>
+            ))}
+            {byEarner.length === 0 && <p className="px-4 py-2 text-[13px] text-[var(--text-3)]">No entries in this period.</p>}
+            <div className="pb-2" />
+          </div>
+          <div>
+            <p className="px-4 pt-3 text-[10.5px] font-bold uppercase tracking-wider text-[var(--text-3)]">By matter</p>
+            {byMatter.map((r) => (
+              <div key={r.label} className="flex justify-between gap-2 px-4 py-1.5 text-[13px]">
+                <span className="truncate">{r.label}</span>
+                <span className="num font-semibold">{r.units.toFixed(2)}</span>
+              </div>
+            ))}
+            {byMatter.length === 0 && <p className="px-4 py-2 text-[13px] text-[var(--text-3)]">No entries in this period.</p>}
+            <div className="pb-2" />
+          </div>
+        </div>
+      </section>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">

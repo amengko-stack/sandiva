@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, tables } from "@/db";
@@ -9,6 +10,13 @@ export const dynamic = "force-dynamic";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+
+  // Admin-created accounts must set their own password before using the app.
+  // middleware.ts forwards the pathname as x-pathname.
+  if (user.mustChangePassword) {
+    const path = headers().get("x-pathname") ?? "";
+    if (!path.startsWith("/account")) redirect("/account");
+  }
 
   // Partner nav badge: submitted entries on THEIR engagement matters.
   let pendingApprovals = 0;

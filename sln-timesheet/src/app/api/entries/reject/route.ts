@@ -4,10 +4,15 @@ import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
 import { canTransition } from "@/lib/entries/transitions";
+import { notifySendBack } from "@/lib/email/notify";
 
-const bodySchema = z.object({ id: z.number().int().positive() });
+const bodySchema = z.object({
+  id: z.number().int().positive(),
+  note: z.string().trim().max(500).optional(),
+});
 
-// Send a submitted entry back to draft — engagement partner only.
+// Send a submitted entry back to draft — engagement partner only. The note
+// (reason) is stored on the entry, shown to the owner, and emailed.
 export async function POST(req: NextRequest) {
   const auth = requireSession(["partner"]);
   if (!auth.ok) return auth.response;
@@ -27,10 +32,24 @@ export async function POST(req: NextRequest) {
   });
   if (!gate.ok) return jsonError(gate.reason, 403);
 
+  const note = parsed.data.note || null;
   await db()
     .update(tables.timeEntries)
-    .set({ status: "draft", updatedBy: auth.session.userId, updatedAt: new Date() })
+    .set({ status: "draft", sendbackNote: note, updatedBy: auth.session.userId, updatedAt: new Date() })
     .where(eq(tables.timeEntries.id, entry.id));
+
+  const owner = await db().query.users.findFirst({ where: eq(tables.users.id, entry.userId) });
+  const partner = await db().query.users.findFirst({ where: eq(tables.users.id, auth.session.userId) });
+  if (owner && partner) {
+    notifySendBack({
+      ownerEmail: owner.email,
+      ownerName: owner.name,
+      partnerName: partner.name,
+      matterCode: matter.matterCode,
+      description: entry.description,
+      note,
+    });
+  }
 
   return NextResponse.json({ ok: true });
 }

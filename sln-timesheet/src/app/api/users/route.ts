@@ -43,6 +43,8 @@ export async function POST(req: NextRequest) {
       role: d.role,
       title: d.title,
       weeklyTargetUnits: String(d.weeklyTargetUnits),
+      // Temp password from the admin — force the new user to set their own.
+      mustChangePassword: true,
     })
     .returning();
 

@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/current-user";
 import { priceEntries } from "@/lib/billing/resolve";
 import { getSettings } from "@/lib/billing/firm";
 import { todayJakarta } from "@/lib/api";
+import { budgetAlerts } from "@/lib/reports/aggregate";
 import { AssembleScreen } from "./screen";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,8 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: {
     .from(tables.disbursements)
     .where(and(eq(tables.disbursements.matterId, matterId), isNull(tables.disbursements.invoiceId)));
 
+  const alert = (await budgetAlerts()).find((a) => a.matterId === matterId) ?? null;
+
   return (
     <AssembleScreen
       matter={{
@@ -45,6 +48,7 @@ export default async function NewInvoicePage({ searchParams }: { searchParams: {
       disbursements={(disbursements as any[]).map((d) => ({ id: d.id, date: d.date, description: d.description, amount: Number(d.amount) }))}
       defaultPpn={settings.defaultPpnRate}
       today={todayJakarta()}
+      budget={alert ? { pct: alert.pct, level: alert.level } : null}
     />
   );
 }

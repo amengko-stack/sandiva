@@ -51,6 +51,14 @@ DATABASE_URL="postgres://...neon..." npx tsx scripts/seed.ts admin@sandiva.co "<
 4. **Settings**: confirm firm profile/bank block and the current PPN rate.
 5. Announce cutover: from that day, all time is logged here — Prohukum retired.
 
+## Logo drop-in (pending)
+
+The app currently renders a CSS wordmark. To use the real Sandiva mark, add:
+
+- `public/logo.svg` — app chrome (sidebar/login)
+- `public/icon-512.png` + `public/icon-192.png` — PWA icons (then list them in
+  `public/manifest.json` `icons[]`) and the invoice PDF (pdfkit embeds PNG)
+
 ## Notes
 
 - The weekly reminder cron (Fri 09:00 UTC = 16:00 WIB) is configured in

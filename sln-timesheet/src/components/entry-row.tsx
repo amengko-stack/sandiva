@@ -10,6 +10,7 @@ export interface EntryRowData {
   clientName: string;
   currency: string;
   partnerInitials: string;
+  sendbackNote?: string | null;
 }
 
 const PILL: Record<EntryRowData["status"], string> = {
@@ -31,6 +32,11 @@ export function EntryRow({ entry, children }: { entry: EntryRowData; children?: 
         {entry.status}
       </span>
       <div className="order-last w-full min-w-0">
+        {entry.status === "draft" && entry.sendbackNote && (
+          <p className="mb-1 rounded-md border border-burgundy/30 bg-burgundy/5 px-2 py-1 text-[12px] font-medium text-burgundy">
+            Sent back: {entry.sendbackNote}
+          </p>
+        )}
         <div className="text-[13.5px]">{entry.description}</div>
         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-[var(--text-3)]">
           <span className="truncate">

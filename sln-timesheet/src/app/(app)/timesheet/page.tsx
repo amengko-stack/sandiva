@@ -16,6 +16,7 @@ export default async function TimesheetPage() {
       workcode: tables.timeEntries.workcode,
       description: tables.timeEntries.description,
       status: tables.timeEntries.status,
+      sendbackNote: tables.timeEntries.sendbackNote,
       matterCode: tables.matters.matterCode,
       matterTitle: tables.matters.title,
       clientName: tables.clients.name,

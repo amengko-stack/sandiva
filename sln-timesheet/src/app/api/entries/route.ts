@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
@@ -12,6 +12,8 @@ const bodySchema = z.object({
   units: z.number().positive().max(24),
   workcode: z.enum(WORKCODES),
   description: z.string().trim().min(3, "Add a description — it appears on the client invoice.").max(2000),
+  // Set true to save despite the duplicate warning.
+  force: z.boolean().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -30,6 +32,25 @@ export async function POST(req: NextRequest) {
     forUserId: auth.session.userId,
   });
   if (!gate.ok) return jsonError(gate.reason);
+
+  // Duplicate guard: same person + matter + date + units usually means a
+  // double entry. The client re-sends with force:true to save anyway.
+  if (!parsed.data.force) {
+    const dup = await db().query.timeEntries.findFirst({
+      where: and(
+        eq(tables.timeEntries.userId, auth.session.userId),
+        eq(tables.timeEntries.matterId, matter.id),
+        eq(tables.timeEntries.date, parsed.data.date),
+        eq(tables.timeEntries.units, (Math.round(parsed.data.units * 100) / 100).toFixed(2)),
+      ),
+    });
+    if (dup) {
+      return NextResponse.json(
+        { duplicate: true, existingDescription: dup.description },
+        { status: 409 },
+      );
+    }
+  }
 
   const [entry] = await db()
     .insert(tables.timeEntries)

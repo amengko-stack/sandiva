@@ -71,19 +71,26 @@ export function LogTimeForm({ today, edit }: { today: string; edit: EditEntry | 
     setOpen(false);
   }
 
-  async function save() {
+  async function save(force = false) {
     setError(null);
     if (!matterId) return setError("Search and select a matter first.");
     const u = parseFloat(units);
     if (!u || u <= 0) return setError("Enter a Unit value (1 unit = 1 hour).");
     if (description.trim().length < 3) return setError("Add a description — it appears on the client invoice.");
     setBusy(true);
-    const payload = { matterId, date, units: u, workcode, description: description.trim() };
+    const payload = { matterId, date, units: u, workcode, description: description.trim(), force };
     const res = edit
       ? await fetch(`/api/entries/${edit.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       : await fetch("/api/entries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const data = await res.json().catch(() => ({}));
     setBusy(false);
+    if (res.status === 409 && data.duplicate) {
+      const ok = window.confirm(
+        `Looks like a duplicate — you already logged ${u} units on this matter for ${date}:\n\n"${data.existingDescription}"\n\nSave anyway?`,
+      );
+      if (ok) return save(true);
+      return;
+    }
     if (!res.ok) return setError(data.error ?? "Could not save the entry.");
     router.push("/timesheet");
     router.refresh();
@@ -212,7 +219,7 @@ export function LogTimeForm({ today, edit }: { today: string; edit: EditEntry | 
 
         <div className="flex gap-2.5 border-t border-[var(--border)] pt-4">
           <button
-            onClick={save}
+            onClick={() => save()}
             disabled={busy}
             className="rounded-lg bg-[var(--gold)] px-4 py-2.5 font-semibold text-[#20200a] hover:brightness-105 disabled:opacity-60"
           >

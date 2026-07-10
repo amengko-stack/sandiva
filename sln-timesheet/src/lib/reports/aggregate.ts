@@ -138,6 +138,38 @@ export async function matterPerformance(): Promise<MatterPerf[]> {
   return out;
 }
 
+export interface BudgetAlert {
+  matterId: number;
+  code: string;
+  title: string;
+  clientName: string;
+  currency: "IDR" | "USD";
+  feeAmount: number;
+  valueDelivered: number;
+  pct: number;
+  level: "amber" | "over";
+}
+
+/** Matters whose delivered value is >= 80% of the agreed fee (>=100% = over). */
+export async function budgetAlerts(): Promise<BudgetAlert[]> {
+  const perf = await matterPerformance();
+  return perf
+    .filter((m) => m.feeAmount !== null && m.feeAmount > 0 && m.feeType !== "hourly")
+    .map((m) => ({
+      matterId: m.matterId,
+      code: m.code,
+      title: m.title,
+      clientName: m.clientName,
+      currency: m.currency,
+      feeAmount: m.feeAmount!,
+      valueDelivered: m.valueDelivered,
+      pct: Math.round((m.valueDelivered / m.feeAmount!) * 100),
+    }))
+    .filter((m) => m.pct >= 80)
+    .map((m) => ({ ...m, level: m.pct >= 100 ? ("over" as const) : ("amber" as const) }))
+    .sort((a, b) => b.pct - a.pct);
+}
+
 export async function utilizationThisWeek(): Promise<Utilization[]> {
   const week = weekOf();
   const users = await db().select().from(tables.users).where(eq(tables.users.active, true));

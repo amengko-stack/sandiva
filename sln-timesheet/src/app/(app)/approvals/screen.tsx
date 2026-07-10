@@ -37,10 +37,12 @@ export function ApprovalsScreen({ initials, matters, entries }: { initials: stri
   }
 
   async function sendBack(id: number) {
+    const note = window.prompt("Reason for sending back (the member sees this):", "");
+    if (note === null) return; // cancelled
     const res = await fetch("/api/entries/reject", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id, note: note.trim() || undefined }),
     });
     const data = await res.json().catch(() => ({}));
     setToast(res.ok ? "Sent back for revision" : data.error ?? "Failed.");
