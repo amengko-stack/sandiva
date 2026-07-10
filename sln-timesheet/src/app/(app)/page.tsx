@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/auth/current-user";
 import { todayJakarta } from "@/lib/api";
 import { weekOf, DAY_LABELS } from "@/lib/entries/week";
 import { EntryRow, type EntryRowData } from "@/components/entry-row";
+import { AskAI } from "@/components/ask-ai";
 
 export const dynamic = "force-dynamic";
 
@@ -106,6 +107,8 @@ export default async function Dashboard() {
           );
         })}
       </div>
+
+      {user.role !== "member" && <AskAI />}
 
       <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
