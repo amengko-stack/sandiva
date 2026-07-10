@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Sandiva brand tokens — locked by the approved mockup. */
+:root {
+  --navy: #003d5a;
+  --navy-700: #013049;
+  --navy-300: #4e7e97;
+  --gold: #b9b400;
+  --gold-ink: #5f5c00;
+  --gold-soft: #f2f0c2;
+  --purple: #522b4c;
+  --burgundy: #792c38;
+  --good: #2e7d5b;
+  --ground: #eef2f5;
+  --surface: #ffffff;
+  --surface-2: #f4f7f9;
+  --surface-3: #e7edf1;
+  --border: #d8e0e6;
+  --border-strong: #c3cfd8;
+  --text: #0e2430;
+  --text-2: #48606d;
+  --text-3: #7a909c;
+}
+
+:root[data-theme="dark"] {
+  --gold: #cfc91a;
+  --gold-ink: #e9e46b;
+  --gold-soft: #3a3900;
+  --purple: #8a5680;
+  --burgundy: #c06174;
+  --good: #5fb98f;
+  --ground: #061620;
+  --surface: #0b2531;
+  --surface-2: #0f2c39;
+  --surface-3: #143544;
+  --border: #1c3a49;
+  --border-strong: #274a5b;
+  --text: #e8eff3;
+  --text-2: #a9bec9;
+  --text-3: #72909e;
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  overflow-x: hidden;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.brandbar {
+  height: 3px;
+  background: linear-gradient(90deg, var(--navy), var(--burgundy) 55%, var(--purple));
+}
+
+/* Gradient wordmark (real SVG logo lands in /public later). */
+.wordmark {
+  font-weight: 600;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, var(--navy), var(--burgundy));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wordmark--light {
+  background: linear-gradient(90deg, #cfe0e8, #e9c6cf);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

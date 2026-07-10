@@ -1,0 +1,10 @@
+{
+  "name": "Sandiva Timesheets",
+  "short_name": "Timesheets",
+  "description": "Record billable time, submit for approval, and generate matter invoices.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#003D5A",
+  "theme_color": "#003D5A",
+  "icons": []
+}
