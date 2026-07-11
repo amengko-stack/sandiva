@@ -144,17 +144,19 @@ function query<T = any>(sql: string, params: any[] = []): T[] {
   return rows;
 }
 
+// db.export() inside saveDb() resets sqlite's last_insert_rowid() to 0,
+// so the rowid must be captured before saving.
+let _lastInsertId = 0;
+
 function run(sql: string, params: any[] = []) {
   db.run(sql, params);
+  const res = db.exec("SELECT last_insert_rowid() as id");
+  _lastInsertId = res.length > 0 && res[0].values.length > 0 ? (res[0].values[0][0] as number) : 0;
   saveDb();
 }
 
 function lastInsertId(): number {
-  const res = db.exec("SELECT last_insert_rowid() as id");
-  if (res.length > 0 && res[0].values.length > 0) {
-    return res[0].values[0][0] as number;
-  }
-  return 0;
+  return _lastInsertId;
 }
 
 // --- Groups ---
