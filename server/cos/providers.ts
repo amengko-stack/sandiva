@@ -167,33 +167,38 @@ export class DemoTeamsProvider implements MessageProvider {
 // Real providers — activated by environment variables.
 // ---------------------------------------------------------------------------
 
+// Shared Microsoft Graph client-credentials auth (Teams + Outlook mail).
+let _graphToken: { value: string; expiresAt: number } | null = null;
+export async function getGraphToken(): Promise<string> {
+  if (_graphToken && Date.now() < _graphToken.expiresAt - 60000) return _graphToken.value;
+  const tenant = process.env.AZURE_TENANT_ID!;
+  const res = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.AZURE_CLIENT_ID!,
+      client_secret: process.env.AZURE_CLIENT_SECRET!,
+      scope: "https://graph.microsoft.com/.default",
+      grant_type: "client_credentials",
+    }),
+  });
+  if (!res.ok) throw new Error(`Graph token request failed: ${res.status}`);
+  const data = await res.json();
+  _graphToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return _graphToken.value;
+}
+
+function stripHtml(html: string): string {
+  return String(html).replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /** Microsoft Graph (client credentials) — reads recent messages from configured Teams chats/channels. */
 export class GraphTeamsProvider implements MessageProvider {
   source: CosSource = "teams";
   name = "Microsoft Teams (Graph)";
-  private token: { value: string; expiresAt: number } | null = null;
-
-  private async getToken(): Promise<string> {
-    if (this.token && Date.now() < this.token.expiresAt - 60000) return this.token.value;
-    const tenant = process.env.AZURE_TENANT_ID!;
-    const res = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: process.env.AZURE_CLIENT_ID!,
-        client_secret: process.env.AZURE_CLIENT_SECRET!,
-        scope: "https://graph.microsoft.com/.default",
-        grant_type: "client_credentials",
-      }),
-    });
-    if (!res.ok) throw new Error(`Graph token request failed: ${res.status}`);
-    const data = await res.json();
-    this.token = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
-    return this.token.value;
-  }
 
   async fetchMessages(): Promise<ProviderMessage[]> {
-    const token = await this.getToken();
+    const token = await getGraphToken();
     // TEAMS_CHAT_IDS: comma-separated Graph chat ids to poll
     const chatIds = (process.env.TEAMS_CHAT_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
     const out: ProviderMessage[] = [];
@@ -213,12 +218,49 @@ export class GraphTeamsProvider implements MessageProvider {
           sender_role: "other",
           channel: chatId,
           subject: msg.subject || null,
-          body: String(msg.body.content).replace(/<[^>]+>/g, " ").trim(),
+          body: stripHtml(msg.body.content),
           received_at: msg.createdDateTime || new Date().toISOString(),
         });
       }
     }
     return out;
+  }
+}
+
+/** Map a Graph mail message (users/{id}/messages item) to a ProviderMessage. Pure — unit tested. */
+export function mapOutlookMessage(msg: any, firmDomain?: string): ProviderMessage {
+  const from = msg.from?.emailAddress || {};
+  const email: string | null = from.address || null;
+  const domain = email?.split("@")[1]?.toLowerCase();
+  const isInternal = Boolean(firmDomain && domain === firmDomain.toLowerCase());
+  return {
+    external_id: `outlook-${msg.id}`,
+    sender: from.name || email || "Unknown",
+    sender_email: email,
+    sender_role: isInternal ? "associate" : "other",
+    channel: null,
+    subject: msg.subject || null,
+    body: msg.bodyPreview || (msg.body?.content ? stripHtml(msg.body.content) : ""),
+    received_at: msg.receivedDateTime || new Date().toISOString(),
+  };
+}
+
+/** Office 365 / Outlook mail via Microsoft Graph (client credentials, Mail.Read application permission). */
+export class OutlookMailProvider implements MessageProvider {
+  source: CosSource = "email";
+  name = "Outlook (Microsoft Graph)";
+
+  async fetchMessages(): Promise<ProviderMessage[]> {
+    const token = await getGraphToken();
+    const mailbox = process.env.COS_MAILBOX!;
+    const url =
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox)}/mailFolders/inbox/messages` +
+      `?$top=25&$orderby=receivedDateTime desc&$select=id,subject,from,receivedDateTime,bodyPreview,body`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`Outlook mail fetch failed: ${res.status} ${await res.text().catch(() => "")}`);
+    const data = await res.json();
+    const firmDomain = process.env.COS_FIRM_DOMAIN;
+    return (data.value || []).map((msg: any) => mapOutlookMessage(msg, firmDomain));
   }
 }
 
@@ -279,6 +321,12 @@ export class GmailProvider implements MessageProvider {
 }
 
 export function getEmailProvider(now: Date = new Date()): MessageProvider {
+  if (
+    process.env.AZURE_TENANT_ID && process.env.AZURE_CLIENT_ID &&
+    process.env.AZURE_CLIENT_SECRET && process.env.COS_MAILBOX
+  ) {
+    return new OutlookMailProvider();
+  }
   if (process.env.GMAIL_CLIENT_ID && process.env.GMAIL_CLIENT_SECRET && process.env.GMAIL_REFRESH_TOKEN) {
     return new GmailProvider();
   }
