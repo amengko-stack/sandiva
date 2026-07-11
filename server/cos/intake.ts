@@ -35,7 +35,7 @@ const PRACTICE_AREAS: Array<{ area: string; patterns: RegExp[] }> = [
 
 const ISSUE_KEYWORDS = /\b(breach|terminat\w+|discriminat\w+|harass\w+|infring\w+|damages|owed|refus\w+|fail\w+|dispute|violat\w+|threat\w+|deadline|statute of limitations|non.?payment|injunction|sued?|fired)\b/i;
 
-const HIGH_URGENCY = /\b(statute of limitations|deadline|court date|hearing|tomorrow|this week|tro|injunction|restraining order|immediate\w*)\b/i;
+const HIGH_URGENCY = /\b(statute of limitations|deadline|court date|hearing|tomorrow|this week|next week|tro|injunction|restraining order|immediate\w*)\b/i;
 const COMPLEXITY_HIGH = /\b(class action|multi.?state|federal|international|criminal referral|regulatory investigation|multiple parties|cross.?border)\b/i;
 
 export function detectPracticeArea(description: string): string {

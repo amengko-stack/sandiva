@@ -51,18 +51,18 @@ export default function Sidebar() {
         {navItems.map(({ href, label, icon: Icon }) => {
           const active = location === href;
           return (
-            <Link key={href} href={href}>
-              <a
-                data-testid={`nav-${label.toLowerCase().replace(/\s/g, "-")}`}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm mb-0.5 transition-colors"
-                style={{
-                  color: active ? "hsl(var(--sidebar-text))" : "hsl(var(--sidebar-muted))",
-                  background: active ? "hsl(var(--sidebar-accent))" : "transparent",
-                }}
-              >
-                <Icon size={15} />
-                {label}
-              </a>
+            <Link
+              key={href}
+              href={href}
+              data-testid={`nav-${label.toLowerCase().replace(/\s/g, "-")}`}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm mb-0.5 transition-colors"
+              style={{
+                color: active ? "hsl(var(--sidebar-text))" : "hsl(var(--sidebar-muted))",
+                background: active ? "hsl(var(--sidebar-accent))" : "transparent",
+              }}
+            >
+              <Icon size={15} />
+              {label}
             </Link>
           );
         })}
@@ -72,18 +72,18 @@ export default function Sidebar() {
         {cosNavItems.map(({ href, label, icon: Icon }) => {
           const active = location === href;
           return (
-            <Link key={href} href={href}>
-              <a
-                data-testid={`nav-${label.toLowerCase().replace(/\s/g, "-")}`}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm mb-0.5 transition-colors"
-                style={{
-                  color: active ? "hsl(var(--sidebar-text))" : "hsl(var(--sidebar-muted))",
-                  background: active ? "hsl(var(--sidebar-accent))" : "transparent",
-                }}
-              >
-                <Icon size={15} />
-                {label}
-              </a>
+            <Link
+              key={href}
+              href={href}
+              data-testid={`nav-${label.toLowerCase().replace(/\s/g, "-")}`}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm mb-0.5 transition-colors"
+              style={{
+                color: active ? "hsl(var(--sidebar-text))" : "hsl(var(--sidebar-muted))",
+                background: active ? "hsl(var(--sidebar-accent))" : "transparent",
+              }}
+            >
+              <Icon size={15} />
+              {label}
             </Link>
           );
         })}
@@ -93,18 +93,18 @@ export default function Sidebar() {
         {groups.map(g => {
           const active = location === `/group/${g.id}`;
           return (
-            <Link key={g.id} href={`/group/${g.id}`}>
-              <a
-                data-testid={`nav-group-${g.id}`}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm mb-0.5 transition-colors"
-                style={{
-                  color: active ? "hsl(var(--sidebar-text))" : "hsl(var(--sidebar-muted))",
-                  background: active ? "hsl(var(--sidebar-accent))" : "transparent",
-                }}
-              >
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: g.color }} />
-                <span className="truncate">{g.name}</span>
-              </a>
+            <Link
+              key={g.id}
+              href={`/group/${g.id}`}
+              data-testid={`nav-group-${g.id}`}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm mb-0.5 transition-colors"
+              style={{
+                color: active ? "hsl(var(--sidebar-text))" : "hsl(var(--sidebar-muted))",
+                background: active ? "hsl(var(--sidebar-accent))" : "transparent",
+              }}
+            >
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: g.color }} />
+              <span className="truncate">{g.name}</span>
             </Link>
           );
         })}

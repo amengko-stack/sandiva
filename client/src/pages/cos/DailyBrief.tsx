@@ -124,8 +124,12 @@ export default function DailyBrief() {
               ) : (
                 <div className="space-y-2">
                   {brief.attention_items.map((item, i) => (
-                    <Link key={`${item.type}-${item.ref_id}`} href={ITEM_LINKS[item.source] || "/cos"}>
-                      <a className="block" data-testid={`brief-item-${i}`}>
+                    <Link
+                      key={`${item.type}-${item.ref_id}`}
+                      href={ITEM_LINKS[item.source] || "/cos"}
+                      className="block"
+                      data-testid={`brief-item-${i}`}
+                    >
                         <Card className="hover:border-primary/50 transition-colors cursor-pointer">
                           <CardContent className="pt-3 pb-3">
                             <div className="flex items-start gap-3">
@@ -143,7 +147,6 @@ export default function DailyBrief() {
                             </div>
                           </CardContent>
                         </Card>
-                      </a>
                     </Link>
                   ))}
                 </div>

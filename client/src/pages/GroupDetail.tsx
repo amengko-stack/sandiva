@@ -60,9 +60,7 @@ export default function GroupDetail() {
         {/* Header */}
         <div className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b px-6 py-4">
           <div className="flex items-center gap-3">
-            <Link href="/">
-              <a className="text-sm text-muted-foreground hover:text-foreground">← Back</a>
-            </Link>
+            <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">← Back</Link>
             {group && (
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full" style={{ background: group.color }} />
@@ -173,7 +171,7 @@ export default function GroupDetail() {
               ) : (
                 <div className="text-center py-16 text-muted-foreground">
                   <p className="text-sm">No summaries yet. Upload a chat to get started.</p>
-                  <Link href="/upload"><a className="text-sm text-primary hover:underline mt-2 block">Upload Chat →</a></Link>
+                  <Link href="/upload" className="text-sm text-primary hover:underline mt-2 block">Upload Chat →</Link>
                 </div>
               )}
             </TabsContent>
