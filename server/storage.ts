@@ -2,7 +2,7 @@ import initSqlJs, { Database } from "sql.js";
 import fs from "fs";
 import path from "path";
 
-const DB_PATH = path.resolve("data.db");
+const DB_PATH = path.resolve(process.env.DATA_DB_PATH || "data.db");
 
 let db: Database;
 
@@ -70,6 +70,59 @@ export async function initDb() {
       frequency TEXT NOT NULL DEFAULT 'daily',
       enabled INTEGER NOT NULL DEFAULT 1,
       last_sent TEXT
+    );
+    CREATE TABLE IF NOT EXISTS cos_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL,
+      external_id TEXT NOT NULL UNIQUE,
+      sender TEXT NOT NULL,
+      sender_email TEXT,
+      sender_role TEXT NOT NULL DEFAULT 'other',
+      channel TEXT,
+      subject TEXT,
+      body TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      is_read INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      urgency TEXT,
+      category TEXT,
+      triage_summary TEXT,
+      action_items TEXT,
+      suggested_deadline TEXT,
+      triaged_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS cos_matters (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_name TEXT NOT NULL,
+      matter_name TEXT NOT NULL,
+      practice_area TEXT NOT NULL DEFAULT 'general',
+      adverse_party TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      opened_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS cos_intakes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_name TEXT NOT NULL,
+      contact_email TEXT,
+      matter_description TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'email',
+      status TEXT NOT NULL DEFAULT 'new',
+      created_at TEXT NOT NULL,
+      analysis TEXT,
+      analyzed_at TEXT,
+      matter_id INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS cos_reminders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      notes TEXT,
+      due_at TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'medium',
+      status TEXT NOT NULL DEFAULT 'open',
+      source_type TEXT,
+      source_id INTEGER,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
     );
   `);
   saveDb();
@@ -235,4 +288,122 @@ export function deleteReportConfig(id: number) {
 
 function toSnake(s: string) {
   return s.replace(/[A-Z]/g, c => `_${c.toLowerCase()}`);
+}
+
+// =====================================================================
+// Chief of Staff (COS) module
+// =====================================================================
+import type { CosMessage, CosMatter, CosIntake, CosReminder } from "@shared/schema";
+
+// --- COS Messages ---
+export function cosGetMessages(opts: { source?: string; archived?: boolean } = {}): CosMessage[] {
+  const conds: string[] = [];
+  const params: any[] = [];
+  if (opts.source) { conds.push("source = ?"); params.push(opts.source); }
+  conds.push("is_archived = ?");
+  params.push(opts.archived ? 1 : 0);
+  return query<CosMessage>(
+    `SELECT * FROM cos_messages WHERE ${conds.join(" AND ")} ORDER BY received_at DESC`,
+    params
+  );
+}
+export function cosGetMessage(id: number): CosMessage | null {
+  return query<CosMessage>("SELECT * FROM cos_messages WHERE id = ?", [id])[0] || null;
+}
+export function cosMessageExists(externalId: string): boolean {
+  return query("SELECT id FROM cos_messages WHERE external_id = ?", [externalId]).length > 0;
+}
+// Batch insert: one file save for the whole sync instead of per row
+export function cosInsertMessages(msgs: Array<Omit<CosMessage, "id">>): number {
+  let inserted = 0;
+  for (const m of msgs) {
+    if (cosMessageExists(m.external_id)) continue;
+    db.run(
+      `INSERT INTO cos_messages (source, external_id, sender, sender_email, sender_role, channel, subject, body, received_at,
+        is_read, is_archived, urgency, category, triage_summary, action_items, suggested_deadline, triaged_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [m.source, m.external_id, m.sender, m.sender_email, m.sender_role, m.channel, m.subject, m.body, m.received_at,
+       m.is_read, m.is_archived, m.urgency, m.category, m.triage_summary, m.action_items, m.suggested_deadline, m.triaged_at]
+    );
+    inserted++;
+  }
+  if (inserted > 0) saveDb();
+  return inserted;
+}
+export function cosUpdateMessage(id: number, data: Partial<Pick<CosMessage,
+  "is_read" | "is_archived" | "urgency" | "category" | "triage_summary" | "action_items" | "suggested_deadline" | "triaged_at">>): CosMessage | null {
+  const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+  if (entries.length) {
+    const fields = entries.map(([k]) => `${k} = ?`).join(", ");
+    run(`UPDATE cos_messages SET ${fields} WHERE id = ?`, [...entries.map(([, v]) => v), id]);
+  }
+  return cosGetMessage(id);
+}
+
+// --- COS Matters ---
+export function cosGetMatters(): CosMatter[] {
+  return query<CosMatter>("SELECT * FROM cos_matters ORDER BY opened_at DESC");
+}
+export function cosCreateMatter(data: { client_name: string; matter_name: string; practice_area?: string; adverse_party?: string | null }): CosMatter {
+  run("INSERT INTO cos_matters (client_name, matter_name, practice_area, adverse_party, status, opened_at) VALUES (?,?,?,?,?,?)", [
+    data.client_name, data.matter_name, data.practice_area || "general", data.adverse_party || null, "active", new Date().toISOString()
+  ]);
+  return query<CosMatter>("SELECT * FROM cos_matters WHERE id = ?", [lastInsertId()])[0];
+}
+
+// --- COS Intakes ---
+export function cosGetIntakes(): CosIntake[] {
+  return query<CosIntake>("SELECT * FROM cos_intakes ORDER BY created_at DESC");
+}
+export function cosGetIntake(id: number): CosIntake | null {
+  return query<CosIntake>("SELECT * FROM cos_intakes WHERE id = ?", [id])[0] || null;
+}
+export function cosCreateIntake(data: { client_name: string; contact_email?: string | null; matter_description: string; source?: string }): CosIntake {
+  run("INSERT INTO cos_intakes (client_name, contact_email, matter_description, source, status, created_at) VALUES (?,?,?,?,?,?)", [
+    data.client_name, data.contact_email || null, data.matter_description, data.source || "email", "new", new Date().toISOString()
+  ]);
+  return query<CosIntake>("SELECT * FROM cos_intakes WHERE id = ?", [lastInsertId()])[0];
+}
+export function cosUpdateIntake(id: number, data: Partial<Pick<CosIntake, "status" | "analysis" | "analyzed_at" | "matter_id">>): CosIntake | null {
+  const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+  if (entries.length) {
+    const fields = entries.map(([k]) => `${k} = ?`).join(", ");
+    run(`UPDATE cos_intakes SET ${fields} WHERE id = ?`, [...entries.map(([, v]) => v), id]);
+  }
+  return cosGetIntake(id);
+}
+
+// --- COS Reminders ---
+export function cosGetReminders(status?: string): CosReminder[] {
+  if (status) return query<CosReminder>("SELECT * FROM cos_reminders WHERE status = ? ORDER BY due_at ASC", [status]);
+  return query<CosReminder>("SELECT * FROM cos_reminders ORDER BY due_at ASC");
+}
+export function cosGetReminder(id: number): CosReminder | null {
+  return query<CosReminder>("SELECT * FROM cos_reminders WHERE id = ?", [id])[0] || null;
+}
+export function cosCreateReminder(data: { title: string; notes?: string | null; due_at: string; priority?: string; source_type?: string | null; source_id?: number | null }): CosReminder {
+  run("INSERT INTO cos_reminders (title, notes, due_at, priority, status, source_type, source_id, created_at) VALUES (?,?,?,?,?,?,?,?)", [
+    data.title, data.notes || null, data.due_at, data.priority || "medium", "open",
+    data.source_type || "manual", data.source_id ?? null, new Date().toISOString()
+  ]);
+  return query<CosReminder>("SELECT * FROM cos_reminders WHERE id = ?", [lastInsertId()])[0];
+}
+export function cosUpdateReminder(id: number, data: Partial<Pick<CosReminder, "title" | "notes" | "due_at" | "priority" | "status" | "completed_at">>): CosReminder | null {
+  const entries = Object.entries(data).filter(([, v]) => v !== undefined);
+  if (entries.length) {
+    const fields = entries.map(([k]) => `${k} = ?`).join(", ");
+    run(`UPDATE cos_reminders SET ${fields} WHERE id = ?`, [...entries.map(([, v]) => v), id]);
+  }
+  return cosGetReminder(id);
+}
+export function cosDeleteReminder(id: number) {
+  run("DELETE FROM cos_reminders WHERE id = ?", [id]);
+}
+// Batch status update used by the overdue sweep: single save
+export function cosMarkRemindersOverdue(ids: number[]): void {
+  if (!ids.length) return;
+  for (const id of ids) {
+    db.run("UPDATE cos_reminders SET status = 'overdue' WHERE id = ? AND status = 'open'", [id]);
+  }
+  saveDb();
 }

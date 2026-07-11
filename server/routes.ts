@@ -5,6 +5,7 @@ import fs from "fs";
 import nodemailer from "nodemailer";
 import * as storage from "./storage";
 import { parseWhatsAppChat, generateSummary, buildEmailReport } from "./llm";
+import { registerCosRoutes, seedCosDemoData } from "./cos/routes";
 
 const upload = multer({ dest: "uploads/", limits: { fileSize: 20 * 1024 * 1024 } });
 fs.mkdirSync("uploads", { recursive: true });
@@ -138,6 +139,8 @@ function seedDemoData() {
 
 export function registerRoutes(httpServer: Server, app: Express) {
   seedDemoData();
+  registerCosRoutes(app);
+  seedCosDemoData().catch(err => console.error("COS demo seed failed:", err));
 
   // Groups
   app.get("/api/groups", (req, res) => res.json(storage.getGroups()));
