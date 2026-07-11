@@ -14,6 +14,14 @@ const navItems = [
   { href: "/reports", label: "Report Config", icon: BellIcon },
 ];
 
+const cosNavItems = [
+  { href: "/cos", label: "Daily Brief", icon: SunIcon },
+  { href: "/cos/inbox", label: "Inbox", icon: MailIcon },
+  { href: "/cos/teams", label: "MS Teams", icon: ChatIcon },
+  { href: "/cos/intake", label: "Client Intake", icon: ScaleIcon },
+  { href: "/cos/reminders", label: "Reminders", icon: ClockIcon },
+];
+
 export default function Sidebar() {
   const [location] = useLocation();
   const { data: groups = [] } = useQuery<Group[]>({
@@ -41,6 +49,27 @@ export default function Sidebar() {
       <nav className="px-2 pt-4 pb-2 flex-1">
         <div className="text-xs font-medium mb-1 px-2" style={{ color: "hsl(var(--sidebar-muted))" }}>MENU</div>
         {navItems.map(({ href, label, icon: Icon }) => {
+          const active = location === href;
+          return (
+            <Link key={href} href={href}>
+              <a
+                data-testid={`nav-${label.toLowerCase().replace(/\s/g, "-")}`}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm mb-0.5 transition-colors"
+                style={{
+                  color: active ? "hsl(var(--sidebar-text))" : "hsl(var(--sidebar-muted))",
+                  background: active ? "hsl(var(--sidebar-accent))" : "transparent",
+                }}
+              >
+                <Icon size={15} />
+                {label}
+              </a>
+            </Link>
+          );
+        })}
+
+        {/* Chief of Staff */}
+        <div className="text-xs font-medium mt-4 mb-1 px-2" style={{ color: "hsl(var(--sidebar-muted))" }}>CHIEF OF STAFF</div>
+        {cosNavItems.map(({ href, label, icon: Icon }) => {
           const active = location === href;
           return (
             <Link key={href} href={href}>
@@ -97,4 +126,19 @@ function UploadIcon({ size = 16 }: { size?: number }) {
 }
 function BellIcon({ size = 16 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>;
+}
+function SunIcon({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.9" y1="4.9" x2="7" y2="7"/><line x1="17" y1="17" x2="19.1" y2="19.1"/><line x1="4.9" y1="19.1" x2="7" y2="17"/><line x1="17" y1="7" x2="19.1" y2="4.9"/></svg>;
+}
+function MailIcon({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 6L2 7"/></svg>;
+}
+function ChatIcon({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>;
+}
+function ScaleIcon({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="3" x2="12" y2="21"/><path d="M8 21h8"/><path d="M4 7h16"/><path d="M6 7l-2 5a3 3 0 006 0L8 7"/><path d="M18 7l-2 5a3 3 0 006 0l-2-5"/></svg>;
+}
+function ClockIcon({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>;
 }
