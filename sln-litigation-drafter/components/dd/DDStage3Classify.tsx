@@ -16,6 +16,9 @@ interface EntityRun {
 
 const EMPTY_RUN: EntityRun = { running: false, progress: "", classified: [], tailored: null, gaps: [], warnings: [] };
 
+// Must match MAX_DOCS_PER_RUN in app/api/dd/classify/route.ts.
+const CLASSIFY_BATCH_SIZE = 60;
+
 export default function DDStage3Classify() {
   const { state, dispatch } = useDD();
   const [runs, setRuns] = useState<Record<string, EntityRun>>({});
@@ -35,41 +38,52 @@ export default function DDStage3Classify() {
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Gagal menyimpan transaksi");
 
-      // 2) classify (NDJSON stream)
+      // 2) classify (NDJSON stream, paginated: >60 docs spans multiple requests,
+      // each one picking up where the last left off via `offset`; the server
+      // persists and returns the cumulative set every time)
       patch(eid, { progress: "Klasifikasi dokumen…" });
-      res = await fetch("/api/dd/classify", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: state.sessionId, entityId: eid }),
-      });
-      if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Gagal klasifikasi");
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
       let docs: DDClassifiedDoc[] = [];
-      let sawDone = false;
+      let offset = 0;
+      let grandTotal = Infinity;
       for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() ?? "";
-        for (const line of lines.filter(Boolean)) {
-          const msg = JSON.parse(line);
-          if (msg.type === "doc") patch(eid, { progress: `Klasifikasi ${msg.index + 1}/${msg.total}: ${msg.doc.fileName}` });
-          if (msg.type === "warning")
-            setRuns((r) => ({
-              ...r,
-              [eid]: { ...EMPTY_RUN, ...(r[eid] ?? {}), warnings: [...(r[eid]?.warnings ?? []), msg.message] },
-            }));
-          if (msg.type === "done") {
-            docs = msg.docs;
-            sawDone = true;
+        res = await fetch("/api/dd/classify", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, offset }),
+        });
+        if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Gagal klasifikasi");
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        let sawDone = false;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines.filter(Boolean)) {
+            const msg = JSON.parse(line);
+            if (msg.type === "start") grandTotal = msg.grandTotal;
+            if (msg.type === "doc")
+              patch(eid, { progress: `Klasifikasi ${offset + msg.index + 1}/${grandTotal}: ${msg.doc.fileName}` });
+            if (msg.type === "warning")
+              setRuns((r) => ({
+                ...r,
+                [eid]: { ...EMPTY_RUN, ...(r[eid] ?? {}), warnings: [...(r[eid]?.warnings ?? []), msg.message] },
+              }));
+            if (msg.type === "done") {
+              docs = msg.docs;
+              sawDone = true;
+            }
+            if (msg.type === "error") throw new Error(msg.message);
           }
-          if (msg.type === "error") throw new Error(msg.message);
         }
+        if (!sawDone) throw new Error("Stream klasifikasi terputus sebelum selesai — jalankan ulang entitas ini.");
+        patch(eid, { classified: docs });
+        if (offset + CLASSIFY_BATCH_SIZE >= grandTotal) break;
+        offset += CLASSIFY_BATCH_SIZE;
+        patch(eid, { progress: `Klasifikasi ${offset}/${grandTotal} — lanjut otomatis…` });
       }
-      if (!sawDone) throw new Error("Stream klasifikasi terputus sebelum selesai — jalankan ulang entitas ini.");
-      patch(eid, { classified: docs });
 
       // 3) tailor
       patch(eid, { progress: "Menyesuaikan checklist dengan sektor…" });

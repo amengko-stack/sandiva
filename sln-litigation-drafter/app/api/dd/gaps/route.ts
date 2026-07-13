@@ -3,6 +3,7 @@ import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { loadChecklist, resolveChecklist } from "@/lib/dd/checklist-loader";
 import { computeGaps } from "@/lib/dd/gap-engine";
+import { rematchTailored } from "@/lib/dd/tailor";
 import type { DDClassifiedDoc, DDTailorResult, DDTransaction } from "@/types/dd";
 
 export const maxDuration = 60;
@@ -36,8 +37,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Klasifikasi belum tersedia." }, { status: 400 });
       }
       const txn = JSON.parse(txnRaw) as DDTransaction;
-      const classified = JSON.parse(classifiedRaw) as DDClassifiedDoc[];
       const tailored = tailoredRaw ? (JSON.parse(tailoredRaw) as DDTailorResult) : null;
+
+      // Classification runs before tailoring, so AI-added checklist items are
+      // never in the classifier's candidate list — re-match now that the
+      // tailored checklist is known, and persist so Stage 4 tables / analysis
+      // see the same matching instead of recomputing (and disagreeing).
+      const classified = rematchTailored(JSON.parse(classifiedRaw) as DDClassifiedDoc[], tailored?.added ?? []);
+      await writeBlobText(ddKeys.classified(sessionId, entityId), JSON.stringify(classified));
 
       const cl = await loadChecklist();
       const resolved = resolveChecklist(cl, txn.type, tailored?.added);

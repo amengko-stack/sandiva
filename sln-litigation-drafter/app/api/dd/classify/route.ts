@@ -15,7 +15,7 @@ const CONCURRENCY = 3;
 const enc = new TextEncoder();
 
 type Msg =
-  | { type: "start"; total: number }
+  | { type: "start"; total: number; offset: number; grandTotal: number }
   | { type: "doc"; doc: DDClassifiedDoc; index: number; total: number }
   | { type: "warning"; message: string }
   | { type: "done"; docs: DDClassifiedDoc[] }
@@ -25,10 +25,13 @@ const emit = (c: ReadableStreamDefaultController<Uint8Array>, m: Msg) =>
   c.enqueue(enc.encode(JSON.stringify(m) + "\n"));
 
 export async function POST(req: NextRequest) {
-  const { sessionId, entityId } = (await req.json()) as { sessionId: string; entityId: string };
+  const { sessionId, entityId, offset: offsetRaw } = (await req.json()) as {
+    sessionId: string; entityId: string; offset?: number;
+  };
   if (!isValidSessionId(sessionId) || !isValidEntityId(entityId)) {
     return NextResponse.json({ error: "sessionId/entityId tidak valid" }, { status: 400 });
   }
+  const offset = typeof offsetRaw === "number" && offsetRaw > 0 ? Math.floor(offsetRaw) : 0;
 
   const [combined, txnRaw] = await Promise.all([
     readBlobText(ddKeys.extracted(sessionId, entityId)),
@@ -48,14 +51,26 @@ export async function POST(req: NextRequest) {
   const resolved = resolveChecklist(cl, txn.type);
 
   const allBlocks = splitDocBlocks(combined);
-  const blocks = allBlocks.slice(0, MAX_DOCS_PER_RUN);
+  const blocks = allBlocks.slice(offset, offset + MAX_DOCS_PER_RUN);
+
+  // On a paginated (offset > 0) run, previously classified docs from earlier
+  // batches must be prepended so both the per-batch persists and the final
+  // "done" message carry the cumulative set — never just the current slice.
+  let existingDocs: DDClassifiedDoc[] = [];
+  if (offset > 0) {
+    const existingRaw = await readBlobText(ddKeys.classified(sessionId, entityId));
+    if (existingRaw) {
+      try { existingDocs = JSON.parse(existingRaw) as DDClassifiedDoc[]; } catch { existingDocs = []; }
+    }
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        emit(controller, { type: "start", total: blocks.length });
-        if (allBlocks.length > MAX_DOCS_PER_RUN) {
-          emit(controller, { type: "warning", message: `Batas ${MAX_DOCS_PER_RUN} dokumen per run — jalankan ulang untuk sisanya.` });
+        emit(controller, { type: "start", total: blocks.length, offset, grandTotal: allBlocks.length });
+        const remaining = allBlocks.length - (offset + blocks.length);
+        if (remaining > 0) {
+          emit(controller, { type: "warning", message: `${remaining} dokumen tersisa dari ${allBlocks.length} — lanjut otomatis pada batch berikutnya.` });
         }
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         const docs: (DDClassifiedDoc | null)[] = new Array(blocks.length).fill(null);
@@ -88,10 +103,10 @@ export async function POST(req: NextRequest) {
             throw new Error(`${MAX_CONSECUTIVE_API_ERRORS}+ panggilan API gagal berturut-turut — dihentikan.`);
           }
           const soFar = docs.filter((d): d is DDClassifiedDoc => d !== null);
-          if (soFar.length) await writeBlobText(ddKeys.classified(sessionId, entityId), JSON.stringify(soFar));
+          if (soFar.length) await writeBlobText(ddKeys.classified(sessionId, entityId), JSON.stringify([...existingDocs, ...soFar]));
         }
 
-        const final = docs.filter((d): d is DDClassifiedDoc => d !== null);
+        const final = [...existingDocs, ...docs.filter((d): d is DDClassifiedDoc => d !== null)];
         emit(controller, { type: "done", docs: final });
       } catch (e) {
         try { emit(controller, { type: "error", message: e instanceof Error ? e.message : "Error" }); } catch {}

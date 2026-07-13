@@ -38,6 +38,9 @@ export default function DDStage6Export() {
       <a href={`/api/dd/excel?sessionId=${state.sessionId}`} download style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8 }}>
         ⬇ Unduh Indeks & Matriks Gap (Excel)
       </a>
+      <div style={{ fontSize: 12, color: "#6b7280" }}>
+        Data sesi analisis tersimpan 24 jam — simpan hasil ke SharePoint sebelum mengakhiri hari kerja.
+      </div>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
         <strong>Simpan ke SharePoint (folder matter)</strong>
         <input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} placeholder="Folder matter di SharePoint" style={{ padding: 8, border: "1px solid #d1d5db", borderRadius: 6 }} />

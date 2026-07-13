@@ -73,6 +73,26 @@ export function parseTailorResponse(raw: string, stopReason: string | null): DDT
   return { added, notApplicableSuggestions };
 }
 
+// Classification runs before tailoring, so tailored (AI-added) checklist items
+// never appear in the classifier's candidate list and their expectedDocId is
+// always null even when a doc plainly satisfies them. This pure re-match pass
+// runs after tailoring: for every still-unmatched classified doc, look for an
+// added doc in the SAME aspect whose keyword appears in the doc's label/file
+// name/summary. First match wins. Cross-aspect matches are intentionally
+// rejected to avoid false positives (a keyword coincidence in the wrong aspect
+// is worse than leaving the doc unmatched).
+export function rematchTailored(classified: DDClassifiedDoc[], added: DDExpectedDoc[]): DDClassifiedDoc[] {
+  if (!added.length) return classified;
+  return classified.map((doc) => {
+    if (doc.expectedDocId !== null) return doc;
+    const haystack = `${doc.docLabel} ${doc.fileName} ${doc.summary}`.toLowerCase();
+    const match = added.find(
+      (a) => a.aspectId === doc.aspectId && a.keywords.some((k) => k.trim() && haystack.includes(k.toLowerCase()))
+    );
+    return match ? { ...doc, expectedDocId: match.id } : doc;
+  });
+}
+
 export async function tailorChecklist(
   client: Anthropic,
   args: {

@@ -60,11 +60,21 @@ export async function POST(req: NextRequest) {
   const docBlocks: (string | null)[] = new Array(total).fill(null);
   const reportFiles: ExtractReport["files"] = new Array(total);
 
-  // On resume, only the remaining files are re-extracted; preserve the text
-  // already written for previously-completed files so we never overwrite-and-lose.
+  // On resume (or a subsequent chunk when the entity's files were split into
+  // batches), only the remaining files are (re-)extracted; preserve the text
+  // and report already written for previously-completed files/chunks so we
+  // never overwrite-and-lose — the coverage panel must reflect ALL chunks.
   let existingPrefix = "";
+  let existingReport: ExtractReport | null = null;
   if (appendToExisting) {
-    existingPrefix = (await readBlobText(ddKeys.extracted(sessionId, entityId))) ?? "";
+    const [prefixText, reportRaw] = await Promise.all([
+      readBlobText(ddKeys.extracted(sessionId, entityId)),
+      readBlobText(ddKeys.report(sessionId, entityId)),
+    ]);
+    existingPrefix = prefixText ?? "";
+    if (reportRaw) {
+      try { existingReport = JSON.parse(reportRaw) as ExtractReport; } catch { existingReport = null; }
+    }
   }
 
   const stream = new ReadableStream({
@@ -196,7 +206,10 @@ export async function POST(req: NextRequest) {
           console.log(`[read-files] NO WRITE: sessionId=${sessionId} key=${blobKey} — no extracted text (all PERLU_OCR / failed)`);
         }
 
-        // Audit report JSON for inventory PDF generation
+        // Audit report JSON for inventory PDF generation. On a chunked/resumed
+        // run, merge in the prior chunk's report — prepend its files and add
+        // its counts — so the coverage panel reflects the whole entity, not
+        // just this chunk.
         const report: ExtractReport = {
           sessionId,
           folderPath: "",
@@ -205,12 +218,12 @@ export async function POST(req: NextRequest) {
           claimType: null,
           ref: entityId,
           timestamp: new Date().toISOString(),
-          files: reportFiles.filter(Boolean),
-          totalChars,
-          processed,
-          skipped,
-          cacheHits,
-          ocrRequired,
+          files: [...(existingReport?.files ?? []), ...reportFiles.filter(Boolean)],
+          totalChars: (existingReport?.totalChars ?? 0) + totalChars,
+          processed: (existingReport?.processed ?? 0) + processed,
+          skipped: (existingReport?.skipped ?? 0) + skipped,
+          cacheHits: (existingReport?.cacheHits ?? 0) + cacheHits,
+          ocrRequired: (existingReport?.ocrRequired ?? 0) + ocrRequired,
         };
         await writeBlobText(ddKeys.report(sessionId, entityId), JSON.stringify(report));
 
