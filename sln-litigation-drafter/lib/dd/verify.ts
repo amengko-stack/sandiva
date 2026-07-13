@@ -49,6 +49,11 @@ Kembalikan HANYA JSON: {"verdicts":[{"id":"...","upheld":true|false,"reason":"..
     for (const v of p.verdicts ?? []) {
       if (v.id) keep.set(String(v.id), v.upheld === true);
     }
+
+    const missing = batch.filter((f) => !keep.has(f.id)).map((f) => f.id);
+    if (missing.length) {
+      throw new Error(`Hasil verifikasi tidak lengkap — tidak ada putusan untuk temuan: ${missing.join(", ")}`);
+    }
   }
 
   return findings.flatMap((f) => {
