@@ -11,7 +11,10 @@ interface EntityRun {
   classified: DDClassifiedDoc[];
   tailored: DDTailorResult | null;
   gaps: DDGapItem[];
+  warnings: string[];
 }
+
+const EMPTY_RUN: EntityRun = { running: false, progress: "", classified: [], tailored: null, gaps: [], warnings: [] };
 
 export default function DDStage3Classify() {
   const { state, dispatch } = useDD();
@@ -20,13 +23,10 @@ export default function DDStage3Classify() {
   if (!t) return <div>Selesaikan Stage 1 dahulu.</div>;
 
   const patch = (eid: string, p: Partial<EntityRun>) =>
-    setRuns((r) => {
-      const defaults: EntityRun = { running: false, progress: "", classified: [], tailored: null, gaps: [] };
-      return { ...r, [eid]: { ...defaults, ...(r[eid] ?? {}), ...p } };
-    });
+    setRuns((r) => ({ ...r, [eid]: { ...EMPTY_RUN, ...(r[eid] ?? {}), ...p } }));
 
   const runEntity = async (eid: string) => {
-    patch(eid, { running: true, progress: "Menyimpan transaksi…" });
+    patch(eid, { running: true, progress: "Menyimpan transaksi…", warnings: [] });
     try {
       // 1) persist the transaction so server routes can read it
       let res = await fetch("/api/dd/gaps", {
@@ -46,6 +46,7 @@ export default function DDStage3Classify() {
       const dec = new TextDecoder();
       let buf = "";
       let docs: DDClassifiedDoc[] = [];
+      let sawDone = false;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -55,10 +56,19 @@ export default function DDStage3Classify() {
         for (const line of lines.filter(Boolean)) {
           const msg = JSON.parse(line);
           if (msg.type === "doc") patch(eid, { progress: `Klasifikasi ${msg.index + 1}/${msg.total}: ${msg.doc.fileName}` });
-          if (msg.type === "done") docs = msg.docs;
+          if (msg.type === "warning")
+            setRuns((r) => ({
+              ...r,
+              [eid]: { ...EMPTY_RUN, ...(r[eid] ?? {}), warnings: [...(r[eid]?.warnings ?? []), msg.message] },
+            }));
+          if (msg.type === "done") {
+            docs = msg.docs;
+            sawDone = true;
+          }
           if (msg.type === "error") throw new Error(msg.message);
         }
       }
+      if (!sawDone) throw new Error("Stream klasifikasi terputus sebelum selesai — jalankan ulang entitas ini.");
       patch(eid, { classified: docs });
 
       // 3) tailor
@@ -104,6 +114,13 @@ export default function DDStage3Classify() {
               </button>
             </div>
             {run?.progress && <div style={{ fontSize: 13, color: "#6b7280" }}>{run.progress}</div>}
+            {run?.warnings && run.warnings.length > 0 && (
+              <div style={{ fontSize: 13, background: "#fefce8", padding: 8, borderRadius: 6 }}>
+                {run.warnings.map((w, i) => (
+                  <div key={i}>⚠ {w}</div>
+                ))}
+              </div>
+            )}
             {run?.tailored && run.tailored.added.length > 0 && (
               <div style={{ fontSize: 13, background: "#eff6ff", padding: 8, borderRadius: 6 }}>
                 Checklist ditambah (AI): {run.tailored.added.map((d) => d.label).join("; ")}
