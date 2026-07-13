@@ -80,6 +80,9 @@ Bila tidak ada, {"findings":[]}.`;
     } catch {
       p = JSON.parse(repairTruncatedJson(jsonStr));
     }
+    if (p.findings !== undefined && !Array.isArray(p.findings)) {
+      throw new Error("Hasil konsolidasi tanpa \"findings\" yang valid");
+    }
     crossEntityFindings = (p.findings ?? []).map((f, n) => {
       const o = f as Record<string, unknown>;
       const sev = String(o.severity ?? "material");
