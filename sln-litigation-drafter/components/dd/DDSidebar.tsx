@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useDD } from "@/context/DDContext";
+import DDChecklistManager from "@/components/dd/DDChecklistManager";
 import type { DDStage } from "@/types/dd";
 
 const STAGES: { n: DDStage; label: string }[] = [
@@ -15,6 +17,7 @@ const STAGES: { n: DDStage; label: string }[] = [
 
 export default function DDSidebar() {
   const { state, dispatch } = useDD();
+  const [showChecklist, setShowChecklist] = useState(false);
   return (
     <aside style={{ width: 240, borderRight: "1px solid var(--border, #e5e7eb)", padding: 16, display: "flex", flexDirection: "column", gap: 4 }}>
       <div style={{ fontWeight: 700, marginBottom: 8 }}>Uji Tuntas (LDD)</div>
@@ -33,6 +36,10 @@ export default function DDSidebar() {
           {s.n}. {s.label}
         </button>
       ))}
+      <button onClick={() => setShowChecklist(true)} style={{ textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", cursor: "pointer", fontSize: 12 }}>
+        ⚙ Kelola checklist
+      </button>
+      {showChecklist && <DDChecklistManager onClose={() => setShowChecklist(false)} />}
       <div style={{ marginTop: "auto", fontSize: 12 }}>
         <Link href="/">← Menu utama</Link>
       </div>
