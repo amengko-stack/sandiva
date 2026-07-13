@@ -47,13 +47,52 @@ function Section({ label, r }: { label: string; r: SectionResult }) {
   );
 }
 
-export function ImportsScreen({ batches }: { batches: Batch[] }) {
+interface Counts {
+  clients: number;
+  matters: number;
+  historicalEntries: number;
+  nativeEntries: number;
+  invoices: number;
+}
+
+export function ImportsScreen({ batches, counts }: { batches: Batch[]; counts: Counts }) {
   const router = useRouter();
   const [files, setFiles] = useState<{ clients?: File; matters?: File; time?: File }>({});
   const [preview, setPreview] = useState<Record<string, SectionResult> | null>(null);
   const [busy, setBusy] = useState<"preview" | "commit" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetDone, setResetDone] = useState<string | null>(null);
+
+  const blockReason =
+    counts.invoices > 0
+      ? `${counts.invoices} invoice(s) have been issued. Billing has started.`
+      : counts.nativeEntries > 0
+        ? `${counts.nativeEntries} time entr${counts.nativeEntries === 1 ? "y was" : "ies were"} logged in the app.`
+        : null;
+
+  async function doReset() {
+    setResetBusy(true);
+    setResetError(null);
+    const res = await fetch("/api/imports/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: confirmText }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setResetBusy(false);
+    if (!res.ok) return setResetError(data.error ?? "Reset failed.");
+    const d = data.deleted;
+    setResetDone(`Reset complete — removed ${d.clients} client(s), ${d.matters} matter(s), ${d.timeEntries} time entr${d.timeEntries === 1 ? "y" : "ies"}, ${d.batches} import batch(es).`);
+    setConfirmOpen(false);
+    setConfirmText("");
+    router.refresh();
+  }
 
   async function run(mode: "preview" | "commit") {
     setError(null);
@@ -148,6 +187,60 @@ export function ImportsScreen({ batches }: { batches: Batch[] }) {
           </div>
         ))}
         {batches.length === 0 && <p className="p-4 text-sm text-[var(--text-3)]">No imports yet.</p>}
+      </section>
+
+      <section className="rounded-card border border-burgundy/30 bg-burgundy/5 shadow-sm">
+        <header className="border-b border-burgundy/20 px-4 py-3">
+          <h2 className="text-sm font-semibold text-burgundy">Danger zone — reset imported data</h2>
+        </header>
+        <div className="flex flex-col gap-3 px-4 py-3.5">
+          <p className="text-[12.5px] text-[var(--text-2)]">
+            {counts.clients} client(s) · {counts.matters} matter(s) · {counts.historicalEntries} imported time entr{counts.historicalEntries === 1 ? "y" : "ies"}.
+            This permanently deletes all of them so you can re-import cleanly. Users, rates, and settings are kept.
+          </p>
+
+          {blockReason ? (
+            <p className="rounded-lg border border-burgundy/30 bg-burgundy/10 px-3 py-2 text-[13px] font-medium text-burgundy">
+              Reset is disabled — {blockReason}
+            </p>
+          ) : !confirmOpen ? (
+            <button
+              onClick={() => setConfirmOpen(true)}
+              disabled={counts.clients === 0 && counts.matters === 0}
+              className="w-fit rounded-lg bg-burgundy px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-60"
+            >
+              Reset imported data
+            </button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-[12.5px] text-[var(--text-2)]">
+                Type <b>RESET</b> to confirm:
+              </label>
+              <input
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                className="rounded-md border border-[var(--border-strong)] bg-[var(--surface-2)] px-2 py-1 text-[13px]"
+                placeholder="RESET"
+              />
+              <button
+                onClick={doReset}
+                disabled={confirmText !== "RESET" || resetBusy}
+                className="rounded-lg bg-burgundy px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-60"
+              >
+                {resetBusy ? "Resetting…" : "Confirm reset"}
+              </button>
+              <button
+                onClick={() => { setConfirmOpen(false); setConfirmText(""); setResetError(null); }}
+                className="rounded-lg border border-[var(--border-strong)] px-3 py-1.5 text-xs font-semibold hover:bg-[var(--surface-2)]"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {resetError && <p className="rounded-lg border border-burgundy/30 bg-burgundy/10 px-3 py-2 text-[13px] font-medium text-burgundy">{resetError}</p>}
+          {resetDone && <p className="rounded-lg border border-good/30 bg-good/10 px-3 py-2 text-[13px] font-medium text-good">{resetDone}</p>}
+        </div>
       </section>
     </div>
   );
