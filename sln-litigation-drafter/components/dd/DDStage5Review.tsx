@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDD } from "@/context/DDContext";
 import DDSourcePreview from "@/components/dd/DDSourcePreview";
 import { aspectLabel } from "@/config/ddAspects";
@@ -64,6 +64,28 @@ export default function DDStage5Review() {
   const [consolidated, setConsolidated] = useState<DDConsolidated | null>(null);
   const [preview, setPreview] = useState<{ entityId: string; sourceFile: string; verbatim: string } | null>(null);
   const t = state.transaction;
+
+  // Re-hydrate persisted findings on mount: entities marked analyzed in
+  // DDContext survive a reload, but local findings state does not — fetch
+  // them back instead of forcing an expensive re-run. Fail soft: a fetch
+  // error just leaves the list empty. The `f[e.id]?.length ? f :` guard
+  // prevents clobbering a fresh in-session run.
+  useEffect(() => {
+    if (!t) return;
+    for (const e of t.entities) {
+      if (!state.progress[e.id]?.analyzed) continue;
+      fetch(`/api/dd/findings?sessionId=${state.sessionId}&entityId=${e.id}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d?.findings?.length) {
+            setFindingsByEntity((f) => (f[e.id]?.length ? f : { ...f, [e.id]: d.findings }));
+          }
+        })
+        .catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!t) return <div>Selesaikan Stage 1 dahulu.</div>;
 
   const analyze = async (eid: string) => {
@@ -118,22 +140,30 @@ export default function DDStage5Review() {
     setFindingsByEntity((f) => ({ ...f, [eid]: (f[eid] ?? []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
 
   const saveReview = async (eid: string) => {
-    const res = await fetch("/api/dd/findings", {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, findings: findingsByEntity[eid] ?? [] }),
-    });
-    if (!res.ok) dispatch({ type: "SET_ERROR", error: (await res.json()).error ?? "Gagal menyimpan review" });
+    try {
+      const res = await fetch("/api/dd/findings", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, findings: findingsByEntity[eid] ?? [] }),
+      });
+      if (!res.ok) dispatch({ type: "SET_ERROR", error: (await res.json()).error ?? "Gagal menyimpan review" });
+    } catch (err) {
+      dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Gagal menyimpan review" });
+    }
   };
 
   const runConsolidate = async () => {
-    const res = await fetch("/api/dd/consolidate", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: state.sessionId }),
-    });
-    const data = await res.json();
-    if (!res.ok) { dispatch({ type: "SET_ERROR", error: data.error }); return; }
-    setConsolidated(data.consolidated);
-    dispatch({ type: "SET_CONSOLIDATED", value: true });
+    try {
+      const res = await fetch("/api/dd/consolidate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: state.sessionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { dispatch({ type: "SET_ERROR", error: data.error }); return; }
+      setConsolidated(data.consolidated);
+      dispatch({ type: "SET_CONSOLIDATED", value: true });
+    } catch (err) {
+      dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Gagal konsolidasi" });
+    }
   };
 
   const sortFindings = (fs: DDFinding[]) =>
