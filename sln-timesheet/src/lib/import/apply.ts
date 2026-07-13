@@ -64,13 +64,13 @@ export async function applyMatters(rows: MatterRow[], dryRun: boolean): Promise<
       summary.skipped.push({ reason: `Client ${row.clientCode} not found — import Clients first`, ref: row.matterCode });
       continue;
     }
-    const partner = row.handlingInitials ? (userByInitials.get(row.handlingInitials) as any) : null;
+    const partner = row.responsibleInitials ? (userByInitials.get(row.responsibleInitials) as any) : null;
     const found = byCode.get(row.matterCode) as any;
 
     if (!found) {
       if (!partner) {
         summary.skipped.push({
-          reason: `No engagement partner (handling "${row.handlingInitials ?? "—"}" not a user) — create the user, then re-import`,
+          reason: `No engagement partner (responsible "${row.responsibleInitials ?? "—"}" not a user) — create the user, then re-import`,
           ref: row.matterCode,
         });
         continue;

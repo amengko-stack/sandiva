@@ -297,6 +297,8 @@ export const invoices = pgTable("invoices", {
   total: numeric("total", { precision: 16, scale: 2 }).notNull(),
   // Signatory snapshot = the matter's engagement partner at issue.
   signatory: jsonb("signatory").notNull(),
+  // Remit-to bank account chosen at issue (snapshot; nullable for legacy rows).
+  bankAccount: jsonb("bank_account"),
   status: invoiceStatus("status").notNull().default("issued"),
   // Light AR: when finance confirms collection (Accurate remains the ledger).
   paidAt: date("paid_at"),

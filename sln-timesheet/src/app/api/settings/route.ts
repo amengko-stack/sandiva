@@ -14,12 +14,18 @@ const bodySchema = z.object({
     npwp: z.string().trim(),
     email: z.string().trim(),
     phone: z.string().trim(),
-    bank: z.object({
-      accountName: z.string().trim(),
-      accountNo: z.string().trim(),
-      bankName: z.string().trim(),
-      swift: z.string().trim(),
-    }),
+    bankAccounts: z
+      .array(
+        z.object({
+          label: z.string().trim().min(1),
+          accountName: z.string().trim().min(1),
+          accountNo: z.string().trim().min(1),
+          bankName: z.string().trim().min(1),
+          swift: z.string().trim(),
+        }),
+      )
+      .min(1, "Add at least one bank account.")
+      .max(6),
   }),
 });
 

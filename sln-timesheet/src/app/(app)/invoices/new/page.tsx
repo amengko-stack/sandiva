@@ -3,7 +3,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { requireUser } from "@/lib/auth/current-user";
 import { priceEntries } from "@/lib/billing/resolve";
-import { getSettings } from "@/lib/billing/firm";
+import { getSettings, getFirmProfile } from "@/lib/billing/firm";
 import { todayJakarta } from "@/lib/api";
 import { budgetAlerts } from "@/lib/reports/aggregate";
 import { AssembleScreen } from "./screen";
@@ -36,6 +36,7 @@ export default async function NewInvoicePage({
   const client = await db().query.clients.findFirst({ where: eq(tables.clients.id, matters[0].clientId) });
   const partner = await db().query.users.findFirst({ where: eq(tables.users.id, matters[0].engagementPartnerId) });
   const settings = await getSettings();
+  const firm = await getFirmProfile();
 
   const entries: any[] = [];
   for (const m of matters as any[]) {
@@ -85,6 +86,7 @@ export default async function NewInvoicePage({
       defaultPpn={settings.defaultPpnRate}
       today={todayJakarta()}
       budget={alert ? { pct: alert.pct, level: alert.level } : null}
+      bankAccounts={firm.bankAccounts.map((b) => ({ label: b.label, accountNo: b.accountNo }))}
     />
   );
 }

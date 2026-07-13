@@ -21,6 +21,11 @@ export function MattersScreen({
 }) {
   const router = useRouter();
   const [toast, setToast] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? matters.filter((m) => `${m.code} ${m.clientName} ${m.title}`.toLowerCase().includes(needle))
+    : matters;
 
   async function patch(id: number, body: object, msg: string) {
     const res = await fetch(`/api/matters/${id}`, {
@@ -37,8 +42,22 @@ export function MattersScreen({
     <div className="flex flex-col gap-4">
       <p className="rounded-card border border-plum/30 bg-plum/5 px-4 py-2.5 text-[12.5px] font-medium text-plum">
         Every matter has one designated <b>engagement partner</b> — that partner approves its time and signs its
-        invoices. Closing a matter removes it from the log-time picker; history is retained.
+        invoices. Fee type and engagement partner are editable here. Closing a matter removes it from the
+        log-time picker; history is retained.
       </p>
+      {partners.length === 0 && (
+        <p className="rounded-card border border-burgundy/30 bg-burgundy/5 px-4 py-2.5 text-[12.5px] font-medium text-burgundy">
+          No partners exist yet — add users with role <b>Partner</b> in Users &amp; rates before assigning
+          engagement partners.
+        </p>
+      )}
+      <input
+        type="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search matters by project number, client, or title…"
+        className="w-full max-w-[420px] rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--navy)]"
+      />
 
       <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
         <div className="overflow-x-auto">
@@ -51,21 +70,34 @@ export function MattersScreen({
               </tr>
             </thead>
             <tbody>
-              {matters.map((m) => (
+              {shown.map((m) => (
                 <tr key={m.id} className={`border-t border-[var(--border)] ${m.status === "closed" ? "opacity-50" : ""}`}>
                   <td className="num px-4 py-2 font-semibold">{m.code}</td>
                   <td className="max-w-[180px] truncate px-2 py-2">{m.clientName}</td>
                   <td className="max-w-[240px] truncate px-2 py-2">{m.title}</td>
-                  <td className="px-2 py-2">{FEE_TYPE_LABEL[m.feeType] ?? m.feeType}</td>
-                  <td className="px-2 py-2">{m.currency}</td>
                   <td className="px-2 py-2">
                     <select
-                      value={m.engagementPartnerId}
-                      onChange={(e) => patch(m.id, { engagementPartnerId: Number(e.target.value) }, `Engagement partner for ${m.code} updated`)}
-                      className="rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-xs font-bold"
+                      value={m.feeType}
+                      onChange={(e) => patch(m.id, { feeType: e.target.value }, `Fee type for ${m.code} set to ${FEE_TYPE_LABEL[e.target.value]}`)}
+                      className="rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-xs font-semibold"
                     >
-                      {partners.map((p) => <option key={p.id} value={p.id}>{p.initials}</option>)}
+                      {Object.entries(FEE_TYPE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                     </select>
+                  </td>
+                  <td className="px-2 py-2">{m.currency}</td>
+                  <td className="px-2 py-2">
+                    {partners.length === 0 ? (
+                      <span className="text-xs text-burgundy">no partners</span>
+                    ) : (
+                      <select
+                        value={m.engagementPartnerId}
+                        onChange={(e) => patch(m.id, { engagementPartnerId: Number(e.target.value) }, `Engagement partner for ${m.code} updated`)}
+                        className="max-w-[150px] rounded-md border border-[var(--border-strong)] bg-[var(--surface)] px-2 py-1 text-xs font-semibold"
+                        title={partners.find((p) => p.id === m.engagementPartnerId)?.name}
+                      >
+                        {partners.map((p) => <option key={p.id} value={p.id}>{p.initials} · {p.name}</option>)}
+                      </select>
+                    )}
                   </td>
                   <td className="px-2 py-2">
                     {budgets[m.id] ? (

@@ -35,15 +35,17 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 }
 
 export function AssembleScreen({
-  matter, entries, disbursements, defaultPpn, today, budget = null,
+  matter, entries, disbursements, defaultPpn, today, budget = null, bankAccounts = [],
 }: {
   matter: MatterInfo; entries: Priced[]; disbursements: Disb[]; defaultPpn: number; today: string;
   budget?: { pct: number; level: "amber" | "over" } | null;
+  bankAccounts?: { label: string; accountNo: string }[];
 }) {
   const router = useRouter();
   const [selEntries, setSelEntries] = useState<Set<number>>(new Set(entries.map((e) => e.id)));
   const [selDisb, setSelDisb] = useState<Set<number>>(new Set(disbursements.map((d) => d.id)));
   const [ppn, setPpn] = useState(String(defaultPpn));
+  const [bankIdx, setBankIdx] = useState(0);
   const [accNo, setAccNo] = useState("");
   const [invDate, setInvDate] = useState(today);
   const [dueDate, setDueDate] = useState(today);
@@ -83,6 +85,7 @@ export function AssembleScreen({
         accurateInvoiceNo: accNo.trim(),
         invoiceDate: invDate,
         dueDate,
+        bankAccountIndex: bankIdx,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -199,6 +202,16 @@ export function AssembleScreen({
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-2)]">PPN rate %</label>
                 <input type="number" step="0.5" min="0" value={ppn} onChange={(e) => setPpn(e.target.value)} className={`${inputCls} w-[110px]`} />
               </div>
+              {bankAccounts.length > 1 && (
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-2)]">Remit-to bank account</label>
+                  <select value={bankIdx} onChange={(e) => setBankIdx(Number(e.target.value))} className={`${inputCls} w-full`}>
+                    {bankAccounts.map((b, i) => (
+                      <option key={i} value={i}>{b.label} · {b.accountNo}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-2)]">Accurate invoice number</label>
                 <input placeholder="e.g. SLN/CTH/INV/50158-01/VII/2026" value={accNo} onChange={(e) => setAccNo(e.target.value)} className={`${inputCls} w-full`} />

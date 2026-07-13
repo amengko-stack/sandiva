@@ -142,7 +142,10 @@ export interface MatterRow {
   feeType: "hourly" | "lump_sum" | "retainer" | "success_fee" | "internal";
   feeAmount: number | null;
   currency: "IDR" | "USD";
-  handlingInitials: string | null; // -> engagement partner (first token)
+  // Prohukum's "Responsible Partner" -> this app's engagement partner (there is
+  // no "engagement partner" term in Prohukum). Falls back through the ordered
+  // partner columns if the Responsible cell is blank/misaligned.
+  responsibleInitials: string | null;
   teamInitials: string[]; // all initials found on the row (matter_team)
 }
 
@@ -167,6 +170,12 @@ export function parseMatters(content: string): { rows: MatterRow[]; errors: Impo
   const table = parseHtmlTable(content);
   const rows: MatterRow[] = [];
   const errors: ImportError[] = [];
+
+  // Header row carries the partner columns; the Responsible Partner column is
+  // this app's engagement partner. Found positionally when the row is well
+  // aligned; otherwise we fall back to the ordered initials-group heuristic.
+  const headerRow = table.find((c) => c.includes("Matter") && c.includes("Responsible Partner"));
+  const respColIdx = headerRow ? headerRow.indexOf("Responsible Partner") : -1;
 
   for (let r = 0; r < table.length; r++) {
     const cells = table[r];
@@ -193,15 +202,27 @@ export function parseMatters(content: string): { rows: MatterRow[]; errors: Impo
     // Header order: Disbursements Estimate, Fees Estimate, Marketing Fee, ...
     const feeAmount = moneyCells.length >= 2 && moneyCells[1] > 0 ? moneyCells[1] : null;
 
-    let handling: string | null = null;
+    // Collect the ordered initials groups on this row (Handling, Originating,
+    // Responsible, Associate-list) plus the flat team set.
+    const initialsGroups: string[][] = [];
     const team = new Set<string>();
     for (let c = 6; c < cells.length; c++) {
       const tokens = initialsTokens(cells[c]);
       if (tokens.length) {
-        if (handling === null) handling = tokens[0];
+        initialsGroups.push(tokens);
         tokens.forEach((t) => team.add(t));
       }
     }
+
+    // Engagement partner = Prohukum "Responsible Partner". Prefer the value at
+    // the header's Responsible-Partner column when the row aligns; else the 3rd
+    // ordered initials group (Handling=1, Originating=2, Responsible=3); else 1st.
+    let responsible: string | null = null;
+    if (respColIdx >= 0) {
+      const byHeader = initialsTokens(cells[respColIdx] ?? "");
+      if (byHeader.length) responsible = byHeader[0];
+    }
+    if (!responsible) responsible = initialsGroups[2]?.[0] ?? initialsGroups[0]?.[0] ?? null;
 
     const clientName = val(cells[5]);
     rows.push({
@@ -216,7 +237,7 @@ export function parseMatters(content: string): { rows: MatterRow[]; errors: Impo
           : "lump_sum",
       feeAmount,
       currency: currencyCell?.trim() === "USD" ? "USD" : "IDR",
-      handlingInitials: handling,
+      responsibleInitials: responsible,
       teamInitials: [...team],
     });
   }

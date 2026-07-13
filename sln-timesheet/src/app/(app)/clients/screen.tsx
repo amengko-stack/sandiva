@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { FEE_TYPE_LABEL } from "@/lib/constants";
 
 interface Client { id: number; clientCode: string; name: string; npwp: string | null; contactPerson: string | null }
-interface Matter { id: number; clientId: number; code: string; title: string; feeType: string; currency: string; status: string; partnerInitials: string }
+interface Matter { id: number; clientId: number; code: string; title: string; feeType: string; currency: string; status: string; partnerInitials: string; partnerName: string }
 interface Partner { id: number; initials: string; name: string }
 
 const inputCls =
@@ -16,6 +16,7 @@ export function ClientsScreen({ clients, matters, partners }: { clients: Client[
   const router = useRouter();
   const [mode, setMode] = useState<"none" | "client" | "matter">("none");
   const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
 
   // Add-client form state
   const [cCode, setCCode] = useState("");
@@ -86,6 +87,14 @@ export function ClientsScreen({ clients, matters, partners }: { clients: Client[
 
       {error && <p className="rounded-lg border border-burgundy/30 bg-burgundy/10 px-3 py-2 text-[13px] font-medium text-burgundy">{error}</p>}
 
+      <input
+        type="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search clients or matters by name, code, or title…"
+        className="w-full max-w-[420px] rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--navy)]"
+      />
+
       {mode === "client" && (
         <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
           <h3 className="mb-3 text-sm font-semibold">New client</h3>
@@ -128,18 +137,30 @@ export function ClientsScreen({ clients, matters, partners }: { clients: Client[
             <div><label className={labelCls}>Agreed fee (optional, minor units)</label><input type="number" className={inputCls} value={mAmount} onChange={(e) => setMAmount(e.target.value)} /></div>
             <div>
               <label className={labelCls}>Engagement partner (approves + signs)</label>
-              <select className={inputCls} value={mPartner} onChange={(e) => setMPartner(Number(e.target.value))}>
+              <select className={inputCls} value={mPartner} onChange={(e) => setMPartner(Number(e.target.value))} disabled={partners.length === 0}>
                 <option value="">Select partner…</option>
                 {partners.map((p) => <option key={p.id} value={p.id}>{p.initials} · {p.name}</option>)}
               </select>
+              {partners.length === 0 && (
+                <p className="mt-1 text-[11px] font-medium text-burgundy">
+                  No partners yet — add users with role <b>Partner</b> in Users &amp; rates first.
+                </p>
+              )}
             </div>
           </div>
-          <button onClick={addMatter} className="mt-4 rounded-lg bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#20200a]">Save matter</button>
+          <button onClick={addMatter} disabled={partners.length === 0} className="mt-4 rounded-lg bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#20200a] disabled:opacity-60">Save matter</button>
         </div>
       )}
 
       {clients.map((c) => {
         const ms = matters.filter((m) => m.clientId === c.id);
+        const needle = q.trim().toLowerCase();
+        // Show a client card if the client OR any of its matters match the search.
+        if (needle) {
+          const clientHit = `${c.clientCode} ${c.name}`.toLowerCase().includes(needle);
+          const matterHit = ms.some((m) => `${m.code} ${m.title}`.toLowerCase().includes(needle));
+          if (!clientHit && !matterHit) return null;
+        }
         return (
           <section key={c.id} className="rounded-card border border-[var(--border)] bg-[var(--surface)] shadow-sm">
             <header className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] px-4 py-3">
@@ -161,7 +182,10 @@ export function ClientsScreen({ clients, matters, partners }: { clients: Client[
                       <td className="px-2 py-2">{FEE_TYPE_LABEL[m.feeType] ?? m.feeType}</td>
                       <td className="px-2 py-2">{m.currency}</td>
                       <td className="px-2 py-2">
-                        <span className="grid h-6 w-6 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface-3)] text-[9px] font-bold text-[var(--text-2)]">{m.partnerInitials}</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="grid h-6 w-6 flex-none place-items-center rounded-full border border-[var(--border)] bg-[var(--surface-3)] text-[9px] font-bold text-[var(--text-2)]">{m.partnerInitials}</span>
+                          <span className="text-[12px] text-[var(--text-2)]">{m.partnerName}</span>
+                        </span>
                       </td>
                       <td className="px-2 py-2 capitalize">{m.status}</td>
                     </tr>

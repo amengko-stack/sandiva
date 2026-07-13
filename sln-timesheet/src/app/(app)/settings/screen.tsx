@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { FirmProfile } from "@/lib/billing/firm";
+import type { BankAccount, FirmProfile } from "@/lib/billing/firm";
 
 const inputCls =
   "w-full rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--navy)]";
@@ -20,6 +20,17 @@ export function SettingsScreen({
   const [rounding, setRounding] = useState(settings.roundingRule);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  function setBank(i: number, patch: Partial<BankAccount>) {
+    setF({ ...f, bankAccounts: f.bankAccounts.map((b, j) => (j === i ? { ...b, ...patch } : b)) });
+  }
+  function addBank() {
+    setF({ ...f, bankAccounts: [...f.bankAccounts, { label: "", accountName: f.name, accountNo: "", bankName: "", swift: "" }] });
+  }
+  function removeBank(i: number) {
+    if (f.bankAccounts.length <= 1) return;
+    setF({ ...f, bankAccounts: f.bankAccounts.filter((_, j) => j !== i) });
+  }
 
   async function save() {
     setBusy(true);
@@ -53,12 +64,43 @@ export function SettingsScreen({
             <div><label className={labelCls}>Phone</label><input className={inputCls} value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></div>
           </div>
           <div><label className={labelCls}>Accounting email</label><input className={inputCls} value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className={labelCls}>Bank account name</label><input className={inputCls} value={f.bank.accountName} onChange={(e) => setF({ ...f, bank: { ...f.bank, accountName: e.target.value } })} /></div>
-            <div><label className={labelCls}>Account number</label><input className={inputCls} value={f.bank.accountNo} onChange={(e) => setF({ ...f, bank: { ...f.bank, accountNo: e.target.value } })} /></div>
-            <div><label className={labelCls}>Bank</label><input className={inputCls} value={f.bank.bankName} onChange={(e) => setF({ ...f, bank: { ...f.bank, bankName: e.target.value } })} /></div>
-            <div><label className={labelCls}>SWIFT</label><input className={inputCls} value={f.bank.swift} onChange={(e) => setF({ ...f, bank: { ...f.bank, swift: e.target.value } })} /></div>
-          </div>
+        </div>
+      </section>
+
+      <section className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
+        <div className="mb-3 flex items-center gap-2">
+          <h2 className="text-sm font-semibold">Bank accounts</h2>
+          <span className="text-xs text-[var(--text-3)]">the issuer picks one per invoice</span>
+          <span className="flex-1" />
+          <button onClick={addBank} className="rounded-lg border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
+            + Add account
+          </button>
+        </div>
+        <div className="flex flex-col gap-3">
+          {f.bankAccounts.map((b, i) => (
+            <div key={i} className="rounded-lg border border-[var(--border)] p-3">
+              <div className="mb-2 flex items-center gap-2">
+                <input
+                  className={`${inputCls} max-w-[220px] font-semibold`}
+                  value={b.label}
+                  onChange={(e) => setBank(i, { label: e.target.value })}
+                  placeholder="Label (e.g. IDR Account)"
+                />
+                <span className="flex-1" />
+                {f.bankAccounts.length > 1 && (
+                  <button onClick={() => removeBank(i)} className="rounded-md border border-[var(--border-strong)] px-2 py-1 text-xs font-semibold hover:border-burgundy hover:text-burgundy">
+                    Remove
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className={labelCls}>Account name</label><input className={inputCls} value={b.accountName} onChange={(e) => setBank(i, { accountName: e.target.value })} /></div>
+                <div><label className={labelCls}>Account number</label><input className={inputCls} value={b.accountNo} onChange={(e) => setBank(i, { accountNo: e.target.value })} /></div>
+                <div><label className={labelCls}>Bank</label><input className={inputCls} value={b.bankName} onChange={(e) => setBank(i, { bankName: e.target.value })} /></div>
+                <div><label className={labelCls}>SWIFT</label><input className={inputCls} value={b.swift} onChange={(e) => setBank(i, { swift: e.target.value })} /></div>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 

@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { requireUser } from "@/lib/auth/current-user";
-import { fmtMoney } from "@/lib/billing/firm";
+import { fmtMoney, getFirmProfile } from "@/lib/billing/firm";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,8 @@ export default async function InvoiceDetailPage({ params }: { params: { id: stri
 
   const cb = invoice.clientBlock as any;
   const sig = invoice.signatory as any;
+  // Bank from the issue-time snapshot; legacy invoices fall back to the firm's first account.
+  const bank = (invoice.bankAccount as any) ?? (await getFirmProfile()).bankAccounts[0];
   const cur = invoice.currency as "IDR" | "USD";
   const fees = (lines as any[]).filter((l) => l.kind === "fee");
   const disb = (lines as any[]).filter((l) => l.kind === "disbursement");
@@ -123,9 +125,10 @@ export default async function InvoiceDetailPage({ params }: { params: { id: stri
 
           <div className="mt-6 flex items-end justify-between gap-5">
             <div className="text-[11px] leading-relaxed text-[#3a4a54]">
-              <b className="text-[#101f28]">Please remit payment to</b>
-              <br />Account Name : Pers Perdata Sandiva Lawyer Network
-              <br />Account No. : 1260060600607 (IDR) · Bank Mandiri · BMRIIDJA
+              <b className="text-[#101f28]">Please remit payment to{bank.label ? ` (${bank.label})` : ""}</b>
+              <br />Account Name : {bank.accountName}
+              <br />Account No. : {bank.accountNo}
+              <br />Bank : {bank.bankName}{bank.swift ? ` · ${bank.swift}` : ""}
             </div>
             <div className="text-center text-xs">
               Sincerely,

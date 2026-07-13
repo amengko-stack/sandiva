@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
 import { priceEntries, type PricedEntry } from "@/lib/billing/resolve";
+import { getFirmProfile } from "@/lib/billing/firm";
 import { ppnAmount } from "@/lib/rates";
 
 const bodySchema = z.object({
@@ -16,6 +17,8 @@ const bodySchema = z.object({
   accurateInvoiceNo: z.string().trim().min(3, "Enter the invoice number from Accurate.").max(80),
   invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  // Index into the firm's bank accounts to print on this invoice (default 0).
+  bankAccountIndex: z.number().int().min(0).max(20).default(0),
 });
 
 export async function POST(req: NextRequest) {
@@ -85,6 +88,9 @@ export async function POST(req: NextRequest) {
   const combined = matters.length > 1;
   const matterCodes = matters.map((m: any) => m.matterCode).sort();
 
+  const firm = await getFirmProfile();
+  const bankAccount = firm.bankAccounts[d.bankAccountIndex] ?? firm.bankAccounts[0];
+
   const [invoice] = await db()
     .insert(tables.invoices)
     .values({
@@ -110,6 +116,7 @@ export async function POST(req: NextRequest) {
       ppnAmount: ppn.toFixed(2),
       total: total.toFixed(2),
       signatory: { name: partner.name, title: partner.title ?? "Partner", initials: partner.initials },
+      bankAccount,
       status: "issued",
       issuedBy: auth.session.userId,
     })

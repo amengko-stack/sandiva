@@ -35,6 +35,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
   const cb = invoice.clientBlock as any;
   const sig = invoice.signatory as any;
+  // Bank from the issue-time snapshot; legacy invoices fall back to firm's first.
+  const bank = (invoice.bankAccount as any) ?? firm.bankAccounts[0];
   const cur = invoice.currency as "IDR" | "USD";
   const fees = (lines as any[]).filter((l) => l.kind === "fee");
   const disb = (lines as any[]).filter((l) => l.kind === "disbursement");
@@ -221,12 +223,16 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
   // --- bank + signature ---
   const bankY = y;
-  doc.fillColor("#101f28").font("Helvetica-Bold").fontSize(8).text("Please remit the payment to", L, y, { underline: true });
+  doc
+    .fillColor("#101f28")
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .text(`Please remit the payment to${bank.label ? ` (${bank.label})` : ""}`, L, y, { underline: true });
   doc.font("Helvetica").fontSize(7.8).fillColor(GREY);
-  doc.text(`Account Name : ${firm.bank.accountName}`, L, y + 12);
-  doc.text(`Account Number : ${firm.bank.accountNo}`);
-  doc.text(`Bank : ${firm.bank.bankName}`);
-  doc.text(`Swift Code : ${firm.bank.swift}`);
+  doc.text(`Account Name : ${bank.accountName}`, L, y + 12);
+  doc.text(`Account Number : ${bank.accountNo}`);
+  doc.text(`Bank : ${bank.bankName}`);
+  doc.text(`Swift Code : ${bank.swift}`);
 
   doc.fillColor("#101f28").font("Helvetica").fontSize(8.5).text("Sincerely,", L + W - 170, bankY, { width: 170, align: "center" });
   doc.moveTo(L + W - 150, bankY + 52).lineTo(L + W - 20, bankY + 52).stroke("#101f28");

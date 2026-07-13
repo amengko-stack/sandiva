@@ -1,14 +1,30 @@
 import { db, tables } from "@/db";
 import { eq } from "drizzle-orm";
 
+export interface BankAccount {
+  label: string; // e.g. "IDR Account", "USD Account"
+  accountName: string;
+  accountNo: string;
+  bankName: string;
+  swift: string;
+}
+
 export interface FirmProfile {
   name: string;
   addressLines: string[];
   npwp: string;
   email: string;
   phone: string;
-  bank: { accountName: string; accountNo: string; bankName: string; swift: string };
+  bankAccounts: BankAccount[];
 }
+
+const DEFAULT_BANK: BankAccount = {
+  label: "IDR Account",
+  accountName: "Pers Perdata Sandiva Lawyer Network",
+  accountNo: "1260060600607",
+  bankName: "PT Bank Mandiri Persero Tbk",
+  swift: "BMRIIDJA",
+};
 
 // Defaults from the firm's real invoice letterhead; editable in Settings.
 export const DEFAULT_FIRM: FirmProfile = {
@@ -21,18 +37,29 @@ export const DEFAULT_FIRM: FirmProfile = {
   npwp: "000000000000",
   email: "Accounting@legal.sandiva.co",
   phone: "(021) 57950593",
-  bank: {
-    accountName: "Pers Perdata Sandiva Lawyer Network",
-    accountNo: "1260060600607 (IDR Account)",
-    bankName: "PT Bank Mandiri Persero Tbk",
-    swift: "BMRIIDJA",
-  },
+  bankAccounts: [DEFAULT_BANK],
 };
 
 export async function getFirmProfile(): Promise<FirmProfile> {
   const row = await db().query.settings.findFirst({ where: eq(tables.settings.id, 1) });
-  const stored = (row?.firmProfile ?? null) as Partial<FirmProfile> | null;
-  return { ...DEFAULT_FIRM, ...(stored ?? {}), bank: { ...DEFAULT_FIRM.bank, ...(stored?.bank ?? {}) } };
+  const stored = (row?.firmProfile ?? null) as
+    | (Partial<FirmProfile> & { bank?: Omit<BankAccount, "label"> })
+    | null;
+  // Back-compat: migrate a legacy single `bank` object → one-element array.
+  const bankAccounts =
+    stored?.bankAccounts && stored.bankAccounts.length
+      ? stored.bankAccounts
+      : stored?.bank
+        ? [{ ...stored.bank, label: "IDR Account" }]
+        : DEFAULT_FIRM.bankAccounts;
+  return {
+    name: stored?.name ?? DEFAULT_FIRM.name,
+    addressLines: stored?.addressLines ?? DEFAULT_FIRM.addressLines,
+    npwp: stored?.npwp ?? DEFAULT_FIRM.npwp,
+    email: stored?.email ?? DEFAULT_FIRM.email,
+    phone: stored?.phone ?? DEFAULT_FIRM.phone,
+    bankAccounts,
+  };
 }
 
 export async function getSettings() {

@@ -21,6 +21,7 @@ export default async function ClientsPage() {
       currency: tables.matters.currency,
       status: tables.matters.status,
       partnerInitials: tables.users.initials,
+      partnerName: tables.users.name,
     })
     .from(tables.matters)
     .innerJoin(tables.users, eq(tables.matters.engagementPartnerId, tables.users.id))

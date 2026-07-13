@@ -20,11 +20,13 @@ const CLIENTS_HTML = `﻿<table border=1>
 <tr><td>3</td><td>'90178</td><td>03/06/2026</td><td></td><td>---</td></tr>
 </table>`;
 
+// Partner columns run Handling → Originating → Responsible → Associate; the
+// engagement partner must come from RESPONSIBLE, not Handling.
 const MATTERS_HTML = `﻿<table border=1>
 <tr><td>MATTER</td></tr>
-<tr><td>No</td><td>Matter</td><td>Task</td><td>Active Date</td><td>Practice Area</td><td>Client</td><td>Company</td></tr>
-<tr><td>1</td><td>'90180-01</td><td>Divorce Assistance</td><td>18/06/2026</td><td>FAMILY LAW</td><td>Mrs. Test GÃ¶bel</td><td>-</td><td>0.00</td><td>75,000,000.00</td><td>0.00</td><td>Lump Sum</td><td>IDR</td><td>No</td><td>AHM, DPM</td><td>FAS,AWS,JNP</td></tr>
-<tr><td>2</td><td>'90179-02</td><td>Legal Opinion</td><td>16/06/2026</td><td>GENERAL CORPORATE</td><td>PT Contoh Sejahtera</td><td>-</td><td>0.00</td><td>4,000.00</td><td>0.00</td><td>Hourly</td><td>USD</td><td>No</td><td>AWS</td></tr>
+<tr><td>No</td><td>Matter</td><td>Task</td><td>Active Date</td><td>Practice Area</td><td>Client</td><td>Company</td><td>Disbursements Estimate</td><td>Fees Estimate</td><td>Marketing Fee</td><td>Billing Type</td><td>Currency</td><td>Use Fixed Conversion Rate</td><td>Handling Partner</td><td>Originating Partner</td><td>Responsible Partner</td><td>Associate</td></tr>
+<tr><td>1</td><td>'90180-01</td><td>Divorce Assistance</td><td>18/06/2026</td><td>FAMILY LAW</td><td>Mrs. Test GÃ¶bel</td><td>-</td><td>0.00</td><td>75,000,000.00</td><td>0.00</td><td>Lump Sum</td><td>IDR</td><td>No</td><td>AHM</td><td>DPM</td><td>FAS</td><td>JNP,AWS</td></tr>
+<tr><td>2</td><td>'90179-02</td><td>Legal Opinion</td><td>16/06/2026</td><td>GENERAL CORPORATE</td><td>PT Contoh Sejahtera</td><td>-</td><td>0.00</td><td>4,000.00</td><td>0.00</td><td>Hourly</td><td>USD</td><td>RJP</td><td>MNI</td><td>ELW</td></tr>
 <tr><td>3</td><td>'7005-06 AHM</td><td>Marketing AHM</td><td>01/01/2026</td><td></td><td>SANDIVA GROUP</td><td>-</td><td>Lump Sum</td><td>IDR</td><td>AHM</td></tr>
 <tr><td>4</td><td>garbage</td><td>No code here</td></tr>
 </table>`;
@@ -73,16 +75,21 @@ describe("parseMatters", () => {
     expect(a.feeType).toBe("lump_sum");
     expect(a.currency).toBe("IDR");
     expect(a.feeAmount).toBe(75000000); // second money cell = Fees Estimate
-    expect(a.handlingInitials).toBe("AHM");
+    // Engagement partner = Responsible (FAS), NOT Handling (AHM), by header column.
+    expect(a.responsibleInitials).toBe("FAS");
     expect(a.teamInitials).toEqual(expect.arrayContaining(["AHM", "DPM", "FAS", "AWS", "JNP"]));
 
+    // Ragged row (no cell at the header's Responsible index) → fall back to the
+    // 3rd ordered initials group (Handling RJP, Originating MNI, Responsible ELW).
     expect(b.feeType).toBe("hourly");
     expect(b.currency).toBe("USD");
-    expect(b.handlingInitials).toBe("AWS");
+    expect(b.responsibleInitials).toBe("ELW");
 
-    // internal matter: code with suffix token, SANDIVA GROUP -> internal
+    // internal matter: code with suffix token, SANDIVA GROUP -> internal;
+    // single partner → falls back to the only initials group.
     expect(c.matterCode).toBe("7005-06");
     expect(c.feeType).toBe("internal");
+    expect(c.responsibleInitials).toBe("AHM");
 
     expect(errors).toHaveLength(1); // "garbage" row
   });

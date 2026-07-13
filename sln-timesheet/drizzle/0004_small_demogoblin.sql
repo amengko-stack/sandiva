@@ -1,0 +1,1 @@
+ALTER TABLE "invoices" ADD COLUMN "bank_account" jsonb;

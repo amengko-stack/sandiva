@@ -7,6 +7,7 @@ import { jsonError, requireSession } from "@/lib/api";
 const patchSchema = z.object({
   engagementPartnerId: z.number().int().positive().optional(),
   status: z.enum(["active", "closed"]).optional(),
+  feeType: z.enum(["hourly", "lump_sum", "retainer", "success_fee", "internal"]).optional(),
 });
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -19,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!matter) return jsonError("Matter not found.", 404);
 
   const parsed = patchSchema.safeParse(await req.json().catch(() => null));
-  if (!parsed.success || (!parsed.data.engagementPartnerId && !parsed.data.status)) {
+  if (!parsed.success || (!parsed.data.engagementPartnerId && !parsed.data.status && !parsed.data.feeType)) {
     return jsonError("Nothing to update.");
   }
 
@@ -33,17 +34,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .set({
       ...(parsed.data.engagementPartnerId ? { engagementPartnerId: parsed.data.engagementPartnerId } : {}),
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
+      ...(parsed.data.feeType ? { feeType: parsed.data.feeType } : {}),
     })
     .where(eq(tables.matters.id, id))
     .returning();
 
+  const action = parsed.data.status
+    ? `matter_${parsed.data.status}`
+    : parsed.data.feeType
+      ? "matter_fee_type"
+      : "matter_reassign_partner";
   await db().insert(tables.auditLog).values({
     actorId: auth.session.userId,
-    action: parsed.data.status ? `matter_${parsed.data.status}` : "matter_reassign_partner",
+    action,
     entity: "matter",
     entityId: String(id),
-    before: { engagementPartnerId: matter.engagementPartnerId, status: matter.status },
-    after: { engagementPartnerId: updated.engagementPartnerId, status: updated.status },
+    before: { engagementPartnerId: matter.engagementPartnerId, status: matter.status, feeType: matter.feeType },
+    after: { engagementPartnerId: updated.engagementPartnerId, status: updated.status, feeType: updated.feeType },
   });
 
   return NextResponse.json({ ok: true, matter: updated });
