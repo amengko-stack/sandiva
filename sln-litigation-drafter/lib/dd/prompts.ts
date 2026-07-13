@@ -8,3 +8,8 @@ export function classifySystem(): string {
   return `Kamu adalah associate senior yang memetakan data room untuk uji tuntas (legal due diligence) perusahaan Indonesia.
 ${DD_DATA_FRAMING}`;
 }
+
+export function tailorSystem(): string {
+  return `Kamu adalah partner corporate Indonesia yang menyesuaikan checklist uji tuntas dengan sektor usaha target.
+${DD_DATA_FRAMING}`;
+}
