@@ -40,6 +40,12 @@ describe("uniqueEntityIds", () => {
     expect(uniqueEntityIds(["PT Alpha", "PT Beta"])).toEqual(["pt-alpha", "pt-beta"]);
   });
 
+  it("never emits a suffixed id that collides with another name's bare slug", () => {
+    const ids = uniqueEntityIds(["PT Alpha 2", "PT Alpha", "PT Alpha"]);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(["pt-alpha-2", "pt-alpha", "pt-alpha-3"]);
+  });
+
   it("produces ids that all satisfy isValidEntityId, even for long collisions", () => {
     const longName = "A".repeat(30);
     const ids = uniqueEntityIds([longName, longName]);
