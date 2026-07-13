@@ -61,4 +61,22 @@ describe("buildDdReportDocx", () => {
     const buf = await buildDdReportDocx({ transaction, results: [dirty], consolidated: null });
     expect(verifyDocx(buf).illegal).toBe(0);
   });
+
+  it("builds cleanly when all cross-entity findings are dismissed (empty-state fallback path)", async () => {
+    const allDismissed: DDConsolidated = {
+      ...consolidated,
+      crossEntityFindings: [{
+        id: "consolidated-konsistensi-0", entityId: "consolidated", aspectId: "perizinan", dimension: "konsistensi", severity: "material",
+        anchor: "kutipan", sourceFile: "nib.pdf", problem: "Masalah lintas-entitas", whyItMatters: "Dampak", suggestedFix: "Fix",
+        verified: false, status: "dismissed",
+      }],
+    };
+    const buf = await buildDdReportDocx({
+      transaction, results: [result("e1", "PT Alpha")], consolidated: allDismissed,
+    });
+    const verdict = verifyDocx(buf);
+    expect(verdict.bad).toBe(0);
+    expect(verdict.illegal).toBe(0);
+    expect(buf.length).toBeGreaterThan(5000);
+  });
 });

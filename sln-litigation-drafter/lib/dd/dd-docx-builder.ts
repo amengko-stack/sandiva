@@ -143,10 +143,9 @@ export async function buildDdReportDocx(args: {
   // --- Konsolidasi ---
   if (consolidated) {
     children.push(p("KONSOLIDASI LINTAS-ENTITAS", { heading: HeadingLevel.HEADING_1 }));
-    for (const f of consolidated.crossEntityFindings.filter((x) => x.status !== "dismissed")) {
-      children.push(...findingParas(f));
-    }
-    if (consolidated.crossEntityFindings.length === 0) children.push(p("Tidak ada temuan lintas-entitas."));
+    const activeCross = consolidated.crossEntityFindings.filter((x) => x.status !== "dismissed");
+    for (const f of activeCross) children.push(...findingParas(f));
+    if (activeCross.length === 0) children.push(p("Tidak ada temuan lintas-entitas."));
     children.push(p("Rekap Kelengkapan per Aspek", { heading: HeadingLevel.HEADING_2 }));
     children.push(new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
