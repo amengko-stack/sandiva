@@ -1,13 +1,13 @@
 import { redirect } from "next/navigation";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { ApprovalsScreen } from "./screen";
 
 export const dynamic = "force-dynamic";
 
 export default async function ApprovalsPage() {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role !== "partner") redirect("/");
 
   const myMatters = await db()

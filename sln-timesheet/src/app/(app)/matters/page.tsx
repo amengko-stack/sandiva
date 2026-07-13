@@ -1,14 +1,14 @@
 import { redirect } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { budgetAlerts } from "@/lib/reports/aggregate";
 import { MattersScreen } from "./screen";
 
 export const dynamic = "force-dynamic";
 
 export default async function MattersPage() {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role !== "admin") redirect("/");
 
   const matters = await db()

@@ -2,13 +2,13 @@ import { redirect } from "next/navigation";
 import { asc, desc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { UsersScreen } from "./screen";
 
 export const dynamic = "force-dynamic";
 
 export default async function UsersPage() {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role !== "admin") redirect("/");
 
   const users = await db()

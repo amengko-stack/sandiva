@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { and, eq, gte, lte } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { firmTotals, utilizationThisWeek } from "@/lib/reports/aggregate";
 import { fmtMoney } from "@/lib/billing/firm";
 import { FEE_TYPE_LABEL } from "@/lib/constants";
@@ -10,7 +10,7 @@ import { todayJakarta } from "@/lib/api";
 export const dynamic = "force-dynamic";
 
 export default async function ReportsPage({ searchParams }: { searchParams: { from?: string; to?: string } }) {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role === "member") redirect("/");
 
   const today = todayJakarta();

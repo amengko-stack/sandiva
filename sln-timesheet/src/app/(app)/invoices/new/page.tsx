@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { priceEntries } from "@/lib/billing/resolve";
 import { getSettings } from "@/lib/billing/firm";
 import { todayJakarta } from "@/lib/api";
@@ -17,7 +17,7 @@ export default async function NewInvoicePage({
 }: {
   searchParams: { matter?: string; matters?: string };
 }) {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role === "member") redirect("/");
 
   const ids = (searchParams.matters ?? searchParams.matter ?? "")

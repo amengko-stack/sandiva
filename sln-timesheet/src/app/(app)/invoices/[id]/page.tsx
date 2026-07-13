@@ -2,13 +2,13 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { fmtMoney } from "@/lib/billing/firm";
 
 export const dynamic = "force-dynamic";
 
 export default async function InvoiceDetailPage({ params }: { params: { id: string } }) {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role === "member") redirect("/");
 
   const id = Number(params.id);

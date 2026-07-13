@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { todayJakarta } from "@/lib/api";
 import { isDelegateOf, principalsOf } from "@/lib/entries/delegation";
 import { LogTimeForm, type EditEntry } from "./form";
@@ -8,7 +8,7 @@ import { LogTimeForm, type EditEntry } from "./form";
 export const dynamic = "force-dynamic";
 
 export default async function LogTimePage({ searchParams }: { searchParams: { edit?: string } }) {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   const principals = await principalsOf(user.id);
   let edit: EditEntry | null = null;
 

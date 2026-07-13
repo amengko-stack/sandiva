@@ -1,10 +1,10 @@
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { AccountScreen } from "./screen";
 
 export const dynamic = "force-dynamic";
 
 export default async function AccountPage() {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   return (
     <AccountScreen
       name={user.name}

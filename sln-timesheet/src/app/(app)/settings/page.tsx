@@ -1,12 +1,12 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { getFirmProfile, getSettings } from "@/lib/billing/firm";
 import { SettingsScreen } from "./screen";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role !== "admin") redirect("/");
 
   const [firm, settings] = await Promise.all([getFirmProfile(), getSettings()]);

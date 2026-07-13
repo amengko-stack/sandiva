@@ -1,13 +1,13 @@
 import { desc, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { principalsOf } from "@/lib/entries/delegation";
 import { TimesheetList } from "./list";
 
 export const dynamic = "force-dynamic";
 
 export default async function TimesheetPage({ searchParams }: { searchParams: { for?: string } }) {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   const principals = await principalsOf(user.id);
 
   // A delegate may view/manage a principal's timesheet via ?for=<id>.

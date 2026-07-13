@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { todayJakarta } from "@/lib/api";
 import { weekOf, DAY_LABELS } from "@/lib/entries/week";
 import { EntryRow, type EntryRowData } from "@/components/entry-row";
@@ -12,7 +12,7 @@ import { fmtMoney } from "@/lib/billing/firm";
 export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   const today = todayJakarta();
   const week = weekOf(today);
   const alerts: BudgetAlert[] = user.role === "member" ? [] : await budgetAlerts();

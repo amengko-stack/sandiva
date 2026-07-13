@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,7 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 export default async function AuditPage({ searchParams }: { searchParams: { action?: string } }) {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role !== "admin") redirect("/");
 
   const filter = searchParams.action;

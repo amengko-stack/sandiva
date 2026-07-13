@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import { db, tables } from "@/db";
-import { getCurrentUser } from "@/lib/auth/current-user";
+import { requireUser } from "@/lib/auth/current-user";
 import { priceEntries } from "@/lib/billing/resolve";
 import { fmtMoney } from "@/lib/billing/firm";
 import { VoidButton } from "./void-button";
@@ -11,7 +11,7 @@ import { PaidButton } from "./paid-button";
 export const dynamic = "force-dynamic";
 
 export default async function InvoicesPage() {
-  const user = (await getCurrentUser())!;
+  const user = await requireUser();
   if (user.role === "member") redirect("/");
 
   // Approved (unbilled) entries grouped by matter = ready to invoice.
