@@ -26,8 +26,8 @@ export function groupAgreements(classified: DDClassifiedDoc[], entityId: string)
 
   const groups: DDDocGroup[] = [];
   let n = 0;
-  for (const docs of byBase.values()) {
-    // Longest label first = base contract first; chunk if over the cap.
+  for (const docs of Array.from(byBase.values())) {
+    // Shortest label first = base contract first; chunk if over the cap.
     const sorted = [...docs].sort((a, b) => a.docLabel.length - b.docLabel.length);
     for (let i = 0; i < sorted.length; i += MAX_GROUP_SIZE) {
       const chunk = sorted.slice(i, i + MAX_GROUP_SIZE);
