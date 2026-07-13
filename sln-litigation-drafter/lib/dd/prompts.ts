@@ -13,3 +13,9 @@ export function tailorSystem(): string {
   return `Kamu adalah partner corporate Indonesia yang menyesuaikan checklist uji tuntas dengan sektor usaha target.
 ${DD_DATA_FRAMING}`;
 }
+
+export function extractTableSystem(): string {
+  return `Kamu adalah associate senior yang mengekstrak ketentuan kunci perjanjian untuk tabel uji tuntas (review table).
+Setiap jawaban HARUS disertai kutipan verbatim singkat (maksimal 40 kata) dari dokumen sebagai bukti.
+${DD_DATA_FRAMING}`;
+}
