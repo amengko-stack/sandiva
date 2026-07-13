@@ -90,6 +90,25 @@ describe("computeGaps", () => {
     expect(gaps.find((g) => g.expectedDocId === "asuransi.polis")!.status).toBe("not_applicable");
     expect(gaps).toHaveLength(4);
   });
+
+  it("treats a missing day in YYYY-MM as the actual last day of that month, not a rolled-over date", () => {
+    // 2024-06 -> last day is June 30 (June has 30 days). +1y = 2025-06-30.
+    // cutoff 2025-07-01 is after 2025-06-30, so the policy must be expired.
+    const expiredGaps = computeGaps({
+      ...base,
+      cutoffDateISO: "2025-07-01",
+      classified: [doc({ expectedDocId: "asuransi.polis", aspectId: "asuransi", docDate: "2024-06" })],
+    });
+    expect(expiredGaps.find((g) => g.expectedDocId === "asuransi.polis")!.status).toBe("expired");
+
+    // cutoff 2025-06-15 is before 2025-06-30, so the same policy is still present.
+    const presentGaps = computeGaps({
+      ...base,
+      cutoffDateISO: "2025-06-15",
+      classified: [doc({ expectedDocId: "asuransi.polis", aspectId: "asuransi", docDate: "2024-06" })],
+    });
+    expect(presentGaps.find((g) => g.expectedDocId === "asuransi.polis")!.status).toBe("present");
+  });
 });
 
 describe("severityFor / gapToFinding", () => {
@@ -113,5 +132,14 @@ describe("severityFor / gapToFinding", () => {
       classified: [doc({ expectedDocId: "perizinan.nib" })],
     }).find((g) => g.expectedDocId === "perizinan.nib")!;
     expect(gapToFinding(present)).toBeNull();
+  });
+
+  it("downgrades whyItMatters text (not just severity) when a wajib item is marked not_applicable", () => {
+    const gaps = computeGaps({ ...base, classified: [], notApplicableIds: ["perizinan.nib"] });
+    const nib = gaps.find((g) => g.expectedDocId === "perizinan.nib")!;
+    const finding = gapToFinding(nib)!;
+    expect(finding.severity).toBe("minor");
+    expect(finding.whyItMatters).toContain("perlu konfirmasi reviewer");
+    expect(finding.whyItMatters).not.toContain("condition precedent");
   });
 });

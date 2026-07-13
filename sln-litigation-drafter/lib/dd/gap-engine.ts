@@ -12,7 +12,12 @@ function toComparable(dateStr: string | null): string | null {
   if (!dateStr) return null;
   const m = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?/.exec(dateStr.trim());
   if (!m) return null;
-  return `${m[1]}-${m[2] ?? "12"}-${m[3] ?? "31"}`; // missing parts = latest possible
+  const year = Number(m[1]);
+  const month = m[2] ? Number(m[2]) : 12;
+  // missing parts = latest possible: missing day = last day of that month
+  // (Date.UTC month is 0-based; day 0 of next month = last day of the target month)
+  const day = m[3] ? Number(m[3]) : new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${m[1]}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 function isExpired(latestDate: string, years: number, cutoffISO: string): boolean {
@@ -98,9 +103,11 @@ export function gapToFinding(gap: DDGapItem): DDFinding | null {
     sourceFile: null,
     problem: `${STATUS_PROBLEM[gap.status]}: ${gap.expectedLabel}. ${gap.note}`.trim(),
     whyItMatters:
-      gap.severity === "kritis"
-        ? "Dokumen wajib — ketiadaannya menghambat penilaian aspek ini dan berpotensi menjadi condition precedent."
-        : "Kelengkapan aspek ini belum dapat dinilai penuh tanpa dokumen tersebut.",
+      gap.status === "not_applicable"
+        ? "Item ini disarankan tidak relevan untuk entitas/transaksi ini — perlu konfirmasi reviewer sebelum dikecualikan dari daftar permintaan dokumen."
+        : gap.severity === "kritis"
+          ? "Dokumen wajib — ketiadaannya menghambat penilaian aspek ini dan berpotensi menjadi condition precedent."
+          : "Kelengkapan aspek ini belum dapat dinilai penuh tanpa dokumen tersebut.",
     suggestedFix: `Minta dokumen "${gap.expectedLabel}" dari target / masukkan dalam daftar permintaan dokumen.`,
     verified: false,
     status: "open",
