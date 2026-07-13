@@ -15,21 +15,26 @@ export default function DDPage() {
   useEffect(() => {
     const rec = loadLastDDSession();
     if (rec && rec.sessionId !== state.sessionId && !state.transaction) setLast(rec);
+    else setLast(null);
   }, [state.sessionId, state.transaction]);
 
   const resume = async () => {
     if (!last) return;
-    const res = await fetch(`/api/dd/check-session?sessionId=${last.sessionId}`);
-    const data = await res.json();
-    if (!data.exists) { setLast(null); dispatch({ type: "SET_ERROR", error: "Sesi lama sudah kedaluwarsa (Blob 24 jam) — mulai baru." }); return; }
-    dispatch({ type: "HYDRATE", state: {
-      stage: 2, sessionId: last.sessionId, transaction: data.transaction, activeEntityId: null,
-      progress: Object.fromEntries(Object.entries(data.entities as Record<string, Record<string, boolean>>).map(([id, e]) => [id, {
-        extracted: e.extracted, classified: e.gaps, tabled: e.tables, analyzed: e.findings,
-      }])),
-      consolidated: false, savedToSharePoint: false, error: null,
-    }});
-    setLast(null);
+    try {
+      const res = await fetch(`/api/dd/check-session?sessionId=${last.sessionId}`);
+      const data = await res.json();
+      if (!data.exists) { setLast(null); dispatch({ type: "SET_ERROR", error: "Sesi lama sudah kedaluwarsa (Blob 24 jam) — mulai baru." }); return; }
+      dispatch({ type: "HYDRATE", state: {
+        stage: 2, sessionId: last.sessionId, transaction: data.transaction, activeEntityId: null,
+        progress: Object.fromEntries(Object.entries(data.entities as Record<string, Record<string, boolean>>).map(([id, e]) => [id, {
+          extracted: e.extracted, classified: e.gaps, tabled: e.tables, analyzed: e.findings,
+        }])),
+        consolidated: false, savedToSharePoint: false, error: null,
+      }});
+      setLast(null);
+    } catch (err) {
+      dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Error" });
+    }
   };
 
   return (
