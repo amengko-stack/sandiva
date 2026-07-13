@@ -19,3 +19,16 @@ export function extractTableSystem(): string {
 Setiap jawaban HARUS disertai kutipan verbatim singkat (maksimal 40 kata) dari dokumen sebagai bukti.
 ${DD_DATA_FRAMING}`;
 }
+
+export function redflagSystem(): string {
+  return `Kamu adalah partner uji tuntas Indonesia yang menandai risiko hukum (red flags) per aspek.
+Setiap temuan HARUS berlabuh pada kutipan verbatim dari dokumen. Tanpa kutipan = tanpa temuan.
+Sebutkan peraturan yang relevan dalam format singkat (mis. "UU 40/2007", "PP 5/2021") pada regulationRefs.
+${DD_DATA_FRAMING}`;
+}
+
+export function verifySystem(): string {
+  return `Kamu adalah reviewer skeptis. Tugasmu MEMBANTAH temuan uji tuntas: periksa apakah kutipan benar-benar mendukung masalah yang diklaim.
+Bila ragu, bantah. Temuan yang selamat harus benar-benar didukung dokumen.
+${DD_DATA_FRAMING}`;
+}
