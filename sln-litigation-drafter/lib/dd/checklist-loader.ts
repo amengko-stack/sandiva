@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { readSiteFileBytes, writeMatterFile } from "@/lib/graph-client";
 import { SEED_CHECKLIST } from "@/config/ddChecklist.seed";
 import { DD_ASPECTS } from "@/config/ddAspects";
+import { DD_TRANSACTION_TYPES } from "@/config/ddTransactionTypes";
 import type {
   DDAspectId, DDCellType, DDChecklist, DDExpectedDoc, DDExtractionField,
   DDImportance, DDTransactionType, ResolvedChecklist,
@@ -14,6 +15,7 @@ const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const ASPECT_IDS = new Set<string>(DD_ASPECTS.map((a) => a.id));
 const IMPORTANCE = new Set(["wajib", "penting", "opsional"]);
 const CELL_TYPES = new Set(["text", "date", "currency", "number", "verbatim", "category", "boolean"]);
+const TRANSACTION_TYPE_IDS = new Set<string>(DD_TRANSACTION_TYPES.map((t) => t.id));
 
 const splitList = (v: unknown): string[] =>
   String(v ?? "").split(";").map((s) => s.trim()).filter(Boolean);
@@ -41,9 +43,17 @@ export async function buildChecklistWorkbook(cl: DDChecklist): Promise<Buffer> {
       txns,
     ]);
   for (const d of cl.base) writeDoc(d, "");
+  // One row per unique overlay doc; appliesTo wins, otherwise accumulate the
+  // overlay keys the doc is stored under (a doc may appear in several buckets).
+  const overlayById = new Map<string, { doc: DDExpectedDoc; txns: Set<string> }>();
   for (const [txn, docs] of Object.entries(cl.overlays)) {
-    for (const d of docs ?? []) writeDoc(d, (d.appliesTo ?? [txn as DDTransactionType]).join(";"));
+    for (const d of docs ?? []) {
+      const entry = overlayById.get(d.id) ?? { doc: d, txns: new Set<string>() };
+      for (const t of d.appliesTo ?? [txn]) entry.txns.add(t);
+      overlayById.set(d.id, entry);
+    }
   }
+  for (const { doc, txns } of Array.from(overlayById.values())) writeDoc(doc, Array.from(txns).join(";"));
 
   const ext = wb.addWorksheet("KolomEkstraksi");
   ext.addRow(["ID", "Label", "Tipe", "Prompt", "KataKunciPerjanjian", "PemicuTransaksi"]);
@@ -80,6 +90,9 @@ export async function parseChecklistWorkbook(buf: Buffer): Promise<DDChecklist> 
     if (!IMPORTANCE.has(importance)) throw new Error(`Baris ${n}: Kepentingan "${importance}" tidak dikenal.`);
     const years = Number(cellStr(row, 6));
     const txns = splitList(cellStr(row, 7)) as DDTransactionType[];
+    for (const t of txns) {
+      if (!TRANSACTION_TYPE_IDS.has(t)) throw new Error(`Baris ${n}: JenisTransaksi "${t}" tidak dikenal.`);
+    }
     const doc: DDExpectedDoc = {
       id,
       aspectId: aspectId as DDAspectId,
@@ -105,6 +118,11 @@ export async function parseChecklistWorkbook(buf: Buffer): Promise<DDChecklist> 
     const type = cellStr(row, 3);
     if (!CELL_TYPES.has(type)) throw new Error(`KolomEkstraksi baris ${n}: Tipe "${type}" tidak dikenal.`);
     const triggers = splitList(cellStr(row, 6)) as DDTransactionType[];
+    for (const t of triggers) {
+      if (!TRANSACTION_TYPE_IDS.has(t)) {
+        throw new Error(`KolomEkstraksi baris ${n}: PemicuTransaksi "${t}" tidak dikenal.`);
+      }
+    }
     extractionFields.push({
       id, label: cellStr(row, 2), type: type as DDCellType, prompt: cellStr(row, 4),
       appliesToKeywords: splitList(cellStr(row, 5)),

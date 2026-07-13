@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildChecklistWorkbook, parseChecklistWorkbook, resolveChecklist } from "@/lib/dd/checklist-loader";
 import { SEED_CHECKLIST } from "@/config/ddChecklist.seed";
+import type { DDChecklist, DDExpectedDoc } from "@/types/dd";
 
 describe("checklist workbook round-trip", () => {
   it("build → parse preserves docs, overlays, and extraction fields", async () => {
@@ -28,6 +29,68 @@ describe("checklist workbook round-trip", () => {
     wb.addWorksheet("Random");
     const buf = Buffer.from(await wb.xlsx.writeBuffer());
     await expect(parseChecklistWorkbook(buf)).rejects.toThrow(/Checklist/);
+  });
+
+  it("build → parse does not duplicate a doc stored under multiple overlay buckets", async () => {
+    const multiDoc: DDExpectedDoc = {
+      id: "permodalan_saham.uji_multi",
+      aspectId: "permodalan_saham",
+      label: "Dokumen multi-tipe (uji)",
+      importance: "penting",
+      keywords: ["uji multi"],
+      appliesTo: ["akuisisi_saham", "merger"],
+      source: "overlay",
+    };
+    const cl: DDChecklist = {
+      ...SEED_CHECKLIST,
+      overlays: {
+        ...SEED_CHECKLIST.overlays,
+        akuisisi_saham: [...(SEED_CHECKLIST.overlays.akuisisi_saham ?? []), multiDoc],
+        merger: [...(SEED_CHECKLIST.overlays.merger ?? []), multiDoc],
+      },
+    };
+
+    const buf = await buildChecklistWorkbook(cl);
+    const parsed = await parseChecklistWorkbook(buf);
+
+    const inAkuisisi = (parsed.overlays.akuisisi_saham ?? []).filter((d) => d.id === multiDoc.id);
+    const inMerger = (parsed.overlays.merger ?? []).filter((d) => d.id === multiDoc.id);
+    expect(inAkuisisi.length).toBe(1);
+    expect(inMerger.length).toBe(1);
+
+    const resolved = resolveChecklist(parsed, "merger");
+    expect(resolved.expected.filter((d) => d.id === multiDoc.id).length).toBe(1);
+  });
+
+  it("parse throws on an unknown JenisTransaksi value", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const info = wb.addWorksheet("Info");
+    info.addRow(["version", "test"]);
+    info.addRow(["updatedAt", new Date().toISOString()]);
+    const sheet = wb.addWorksheet("Checklist");
+    sheet.addRow(["ID", "Aspek", "Dokumen", "Kepentingan", "KataKunci", "MasaBerlakuTahun", "JenisTransaksi"]);
+    sheet.addRow(["perizinan.uji", "perizinan", "Dokumen Uji", "wajib", "uji", "", "mergerr"]);
+    const ext = wb.addWorksheet("KolomEkstraksi");
+    ext.addRow(["ID", "Label", "Tipe", "Prompt", "KataKunciPerjanjian", "PemicuTransaksi"]);
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    await expect(parseChecklistWorkbook(buf)).rejects.toThrow(/JenisTransaksi/);
+  });
+
+  it("parse throws on an unknown PemicuTransaksi value", async () => {
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    const info = wb.addWorksheet("Info");
+    info.addRow(["version", "test"]);
+    info.addRow(["updatedAt", new Date().toISOString()]);
+    const sheet = wb.addWorksheet("Checklist");
+    sheet.addRow(["ID", "Aspek", "Dokumen", "Kepentingan", "KataKunci", "MasaBerlakuTahun", "JenisTransaksi"]);
+    sheet.addRow(["perizinan.uji", "perizinan", "Dokumen Uji", "wajib", "uji", "", ""]);
+    const ext = wb.addWorksheet("KolomEkstraksi");
+    ext.addRow(["ID", "Label", "Tipe", "Prompt", "KataKunciPerjanjian", "PemicuTransaksi"]);
+    ext.addRow(["uji_field", "Uji", "verbatim", "Prompt uji", "", "xyz"]);
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    await expect(parseChecklistWorkbook(buf)).rejects.toThrow(/PemicuTransaksi/);
   });
 });
 
