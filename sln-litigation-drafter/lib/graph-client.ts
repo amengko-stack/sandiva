@@ -264,3 +264,16 @@ export async function listAiFolder(
     lastModified: i.lastModifiedDateTime,
   }));
 }
+
+// Binary twin of readSiteFileText — used by the DD checklist loader to read
+// checklist.xlsx. 404 → null (file not created yet); any other error throws.
+export async function readSiteFileBytes(relPath: string): Promise<Buffer | null> {
+  const encoded = encodeRelPath(relPath);
+  const res = await graphFetch(`/drive/root:/${encoded}:/content`);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Graph read error ${res.status} for ${relPath}: ${text.slice(0, 300)}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
