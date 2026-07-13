@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useDD } from "@/context/DDContext";
 import { DD_TRANSACTION_TYPES } from "@/config/ddTransactionTypes";
 import type { DDEntity, DDTransaction, DDTransactionType } from "@/types/dd";
+import { slugifyEntityName, uniqueEntityIds } from "@/lib/dd/entity-ids";
 
 const input: React.CSSProperties = { padding: 8, border: "1px solid #d1d5db", borderRadius: 6, width: "100%" };
 
@@ -17,14 +18,11 @@ export default function DDStage1Setup() {
   const [entities, setEntities] = useState<DDEntity[]>(t?.entities ?? []);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const slug = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "entitas";
-
   const addEntity = () =>
-    setEntities((es) => [...es, { id: `${slug("e" + (es.length + 1))}`, name: "", role: "target", dataRoomPath: "", files: [] }]);
+    setEntities((es) => [...es, { id: `e${es.length + 1}`, name: "", role: "target", dataRoomPath: "", files: [] }]);
 
   const patchEntity = (i: number, patch: Partial<DDEntity>) =>
-    setEntities((es) => es.map((e, j) => (j === i ? { ...e, ...patch, ...(patch.name ? { id: slug(patch.name) } : {}) } : e)));
+    setEntities((es) => es.map((e, j) => (j === i ? { ...e, ...patch, ...(patch.name ? { id: slugifyEntityName(patch.name) } : {}) } : e)));
 
   const loadFiles = async (i: number) => {
     const e = entities[i];
@@ -48,9 +46,11 @@ export default function DDStage1Setup() {
   const canContinue = name.trim() && entities.length > 0 && entities.every((e) => e.name.trim() && e.files.length > 0);
 
   const next = () => {
+    const ids = uniqueEntityIds(entities.map((e) => e.name));
+    const uniqueEntities = entities.map((e, i) => ({ ...e, id: ids[i] }));
     const transaction: DDTransaction = {
       id: state.sessionId, name: name.trim(), type, clientRole,
-      cutoffDateISO: cutoff, entities, checklistVersion: "",
+      cutoffDateISO: cutoff, entities: uniqueEntities, checklistVersion: "",
     };
     dispatch({ type: "SET_TRANSACTION", transaction });
     dispatch({ type: "SET_STAGE", stage: 2 });
