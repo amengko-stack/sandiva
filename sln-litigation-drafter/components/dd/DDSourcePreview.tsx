@@ -27,7 +27,7 @@ export default function DDSourcePreview({
 
   useEffect(() => {
     markRef.current?.scrollIntoView({ block: "center" });
-  }, [text]);
+  }, [text, highlight]);
 
   // Whitespace-tolerant split: find the highlight even if line breaks differ.
   const parts = (() => {

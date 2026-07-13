@@ -11,11 +11,14 @@ export default function DDStage4Tables() {
   const [rowsByEntity, setRowsByEntity] = useState<Record<string, DDExtractionRow[]>>({});
   const [progress, setProgress] = useState<Record<string, string>>({});
   const [warnings, setWarnings] = useState<Record<string, string[]>>({});
+  const [running, setRunning] = useState<Record<string, boolean>>({});
   const [preview, setPreview] = useState<{ entityId: string; sourceFile: string; verbatim: string } | null>(null);
   const t = state.transaction;
   if (!t) return <div>Selesaikan Stage 1 dahulu.</div>;
 
   const run = async (eid: string) => {
+    if (running[eid]) return;
+    setRunning((r) => ({ ...r, [eid]: true }));
     setProgress((p) => ({ ...p, [eid]: "Memulai…" }));
     setWarnings((w) => ({ ...w, [eid]: [] }));
     try {
@@ -61,6 +64,8 @@ export default function DDStage4Tables() {
       }
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Error" });
+    } finally {
+      setRunning((r) => ({ ...r, [eid]: false }));
     }
   };
 
@@ -74,7 +79,9 @@ export default function DDStage4Tables() {
         <div key={e.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong>{e.name}</strong>
-            <button onClick={() => run(e.id)} disabled={!state.progress[e.id]?.classified}>Ekstrak tabel</button>
+            <button onClick={() => run(e.id)} disabled={!state.progress[e.id]?.classified || running[e.id]}>
+              {running[e.id] ? "Mengekstrak…" : "Ekstrak tabel"}
+            </button>
           </div>
           {progress[e.id] && <div style={{ fontSize: 13, color: "#6b7280" }}>{progress[e.id]}</div>}
           {warnings[e.id] && warnings[e.id].length > 0 && (
