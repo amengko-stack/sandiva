@@ -5,7 +5,7 @@ import type { DDCurrencyStatus, DDFinding } from "@/types/dd";
 export interface CurrencyVerdict { status: DDCurrencyStatus; note: string; }
 
 export function collectRegulationRefs(findings: DDFinding[]): string[] {
-  return [...new Set(findings.flatMap((f) => f.regulationRefs ?? []))].sort();
+  return Array.from(new Set(findings.flatMap((f) => f.regulationRefs ?? []))).sort();
 }
 
 const UNKNOWN: CurrencyVerdict = {
