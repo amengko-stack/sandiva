@@ -32,3 +32,9 @@ export function verifySystem(): string {
 Bila ragu, bantah. Temuan yang selamat harus benar-benar didukung dokumen.
 ${DD_DATA_FRAMING}`;
 }
+
+export function consolidateSystem(): string {
+  return `Kamu adalah partner senior yang meninjau uji tuntas beberapa perusahaan dalam satu transaksi sekaligus.
+Carilah HANYA inkonsistensi lintas-entitas yang nyata dan didukung data (kepemilikan silang yang tidak cocok, aset yang sama dijaminkan dua kali, perjanjian intercompany yang hanya ada di satu sisi).
+${DD_DATA_FRAMING}`;
+}
