@@ -34,6 +34,14 @@ export async function POST(req: NextRequest) {
   // Uniform error — do not reveal whether the account exists.
   const badCreds = NextResponse.json({ error: "Email or password is incorrect." }, { status: 401 });
   if (!user || !user.active) return badCreds;
+  // Pending invite: no password exists yet. Internal app — a clear message
+  // beats enumeration-hardening here.
+  if (user.passwordHash === null) {
+    return NextResponse.json(
+      { error: "Your account isn't activated yet — open the invite link from your admin to set a password." },
+      { status: 403 },
+    );
+  }
   if (!(await verifyPassword(parsed.data.password, user.passwordHash))) return badCreds;
 
   const token = mintSessionToken(user.id, user.role);

@@ -5,7 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 function ResetForm() {
   const router = useRouter();
-  const token = useSearchParams().get("token") ?? "";
+  const search = useSearchParams();
+  const token = search.get("token") ?? "";
+  // Invite links carry welcome=1 — same token flow, first-time copy.
+  const welcome = search.get("welcome") === "1";
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,15 +29,23 @@ function ResetForm() {
       setError(data.error ?? "Reset failed. Request a new link.");
       return;
     }
-    router.push("/login");
+    // Setting the password logs the user in — straight to the dashboard.
+    router.push(data.autoLogin ? "/" : "/login");
+    router.refresh();
   }
 
   return (
     <div className="w-full max-w-[400px] overflow-hidden rounded-2xl bg-[var(--surface)] shadow-2xl">
       <div className="px-8 pt-8">
         <span className="wordmark text-2xl">Sandiva</span>
-        <h1 className="mt-6 text-xl font-semibold">Set a new password</h1>
-        <p className="mb-6 mt-1 text-[13px] text-[var(--text-2)]">At least 10 characters.</p>
+        <h1 className="mt-6 text-xl font-semibold">
+          {welcome ? "Welcome to Sandiva Timesheets" : "Set a new password"}
+        </h1>
+        <p className="mb-6 mt-1 text-[13px] text-[var(--text-2)]">
+          {welcome
+            ? "Choose your password to activate your account — at least 10 characters."
+            : "At least 10 characters."}
+        </p>
       </div>
       <form className="px-8 pb-8" onSubmit={submit}>
         <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-[var(--text-2)]">
@@ -69,11 +80,11 @@ function ResetForm() {
           disabled={busy || !token}
           className="w-full rounded-lg bg-[var(--gold)] px-4 py-2.5 font-semibold text-[#20200a] hover:brightness-105 disabled:opacity-60"
         >
-          {busy ? "Saving…" : "Set new password"}
+          {busy ? "Saving…" : welcome ? "Activate my account" : "Set new password"}
         </button>
         {!token && (
           <p className="mt-3 text-center text-[13px] text-[var(--text-3)]">
-            This page needs the link from your reset email.
+            This page needs the link from your {welcome ? "invite" : "reset email"}.
           </p>
         )}
       </form>

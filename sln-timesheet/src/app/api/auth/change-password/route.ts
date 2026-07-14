@@ -20,7 +20,9 @@ export async function POST(req: NextRequest) {
   const user = await db().query.users.findFirst({ where: eq(tables.users.id, auth.session.userId) });
   if (!user || !user.active) return jsonError("Account not found.", 404);
 
-  if (!(await verifyPassword(parsed.data.currentPassword, user.passwordHash))) {
+  // A pending-invite session can't exist (no password to log in with), but
+  // guard the null hash anyway rather than passing it to bcrypt.
+  if (user.passwordHash === null || !(await verifyPassword(parsed.data.currentPassword, user.passwordHash))) {
     return jsonError("Current password is incorrect.", 403);
   }
   if (parsed.data.newPassword === parsed.data.currentPassword) {

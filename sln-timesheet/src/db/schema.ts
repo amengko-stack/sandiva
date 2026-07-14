@@ -60,7 +60,9 @@ export const users = pgTable(
     // Fee-earner initials as used firm-wide (AHM, FAS, ...); shown on entry rows.
     initials: text("initials").notNull(),
     email: text("email").notNull(),
-    passwordHash: text("password_hash").notNull(),
+    // Null until the user activates their invite link and sets their own
+    // password — a "pending invite" has no usable credential at all.
+    passwordHash: text("password_hash"),
     role: userRole("role").notNull().default("member"),
     // Signature block on invoices, e.g. "Partner".
     title: text("title"),

@@ -3,13 +3,12 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
-import { hashPassword } from "@/lib/auth/password";
+import { issueInviteLink } from "@/lib/auth/invite";
 
 const bodySchema = z.object({
   name: z.string().trim().min(2).max(120),
   initials: z.string().trim().min(2).max(6).toUpperCase(),
   email: z.string().email().max(200),
-  password: z.string().min(10, "Temporary password must be at least 10 characters.").max(200),
   role: z.enum(["member", "partner", "admin", "accounting"]),
   title: z.string().trim().max(60).optional(),
   weeklyTargetUnits: z.number().nonnegative().max(80).default(40),
@@ -19,6 +18,8 @@ const bodySchema = z.object({
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
+// Creates the account as a PENDING INVITE — no password exists until the user
+// opens their invite link and sets their own (never an admin-invented temp).
 export async function POST(req: NextRequest) {
   const auth = requireSession(["admin"]);
   if (!auth.ok) return auth.response;
@@ -39,12 +40,11 @@ export async function POST(req: NextRequest) {
       name: d.name,
       initials: d.initials,
       email,
-      passwordHash: await hashPassword(d.password),
+      passwordHash: null,
       role: d.role,
       title: d.title,
       weeklyTargetUnits: String(d.weeklyTargetUnits),
-      // Temp password from the admin — force the new user to set their own.
-      mustChangePassword: true,
+      mustChangePassword: false,
     })
     .returning();
 
@@ -58,5 +58,15 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ ok: true, user: { id: user.id, email: user.email } });
+  const { inviteUrl, emailSent } = await issueInviteLink(user);
+
+  await db().insert(tables.auditLog).values({
+    actorId: auth.session.userId,
+    action: "user_invited",
+    entity: "user",
+    entityId: String(user.id),
+    after: { name: user.name, initials: user.initials, email: user.email, role: user.role, emailSent },
+  });
+
+  return NextResponse.json({ ok: true, user: { id: user.id, email: user.email }, inviteUrl, emailSent });
 }

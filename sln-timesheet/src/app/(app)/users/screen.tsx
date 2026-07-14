@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 interface RateRow { billingRateIdr: string | null; billingRateUsd: string | null; costRateIdr: string | null; effectiveFrom: string }
 interface UserRow {
   id: number; name: string; initials: string; email: string; role: string;
-  title: string | null; weeklyTargetUnits: string; active: boolean;
+  title: string | null; weeklyTargetUnits: string; active: boolean; pending: boolean;
   rate: RateRow | null;
   rateHistory: RateRow[];
 }
@@ -25,21 +25,45 @@ interface DelegateMapping {
   principalName: string;
 }
 
+interface InvitePanel { name: string; email: string; url: string; emailSent: boolean; kind: "invite" | "reset" }
+
 export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; delegates?: DelegateMapping[] }) {
   const router = useRouter();
   const [dDelegate, setDDelegate] = useState<number | "">("");
   const [dPrincipal, setDPrincipal] = useState<number | "">("");
   const [adding, setAdding] = useState(false);
+  const [showRates, setShowRates] = useState(false);
   const [rateFor, setRateFor] = useState<UserRow | null>(null);
   const [historyFor, setHistoryFor] = useState<number | null>(null);
+  const [editFor, setEditFor] = useState<UserRow | null>(null);
+  const [invite, setInvite] = useState<InvitePanel | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
-    name: "", initials: "", email: "", password: "", role: "member", title: "",
+    name: "", initials: "", email: "", role: "member", title: "",
     weeklyTargetUnits: "40", billingRateIdr: "", billingRateUsd: "", costRateIdr: "",
   });
+  const [edit, setEdit] = useState({ name: "", initials: "", email: "", role: "member", title: "", weeklyTargetUnits: "40" });
   const [rate, setRate] = useState({ billingRateIdr: "", billingRateUsd: "", costRateIdr: "", effectiveFrom: "" });
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
+  const setE = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setEdit((f) => ({ ...f, [k]: e.target.value }));
+
+  function showInvite(panel: InvitePanel) {
+    setInvite(panel);
+    setCopied(false);
+  }
+
+  async function copyInvite() {
+    if (!invite) return;
+    try {
+      await navigator.clipboard.writeText(invite.url);
+      setCopied(true);
+    } catch {
+      // Clipboard blocked — the link is visible for manual selection.
+    }
+  }
 
   async function addUser() {
     setError(null);
@@ -47,7 +71,7 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: form.name, initials: form.initials, email: form.email, password: form.password,
+        name: form.name, initials: form.initials, email: form.email,
         role: form.role, title: form.title || undefined, weeklyTargetUnits: Number(form.weeklyTargetUnits) || 40,
         billingRateIdr: form.billingRateIdr ? Number(form.billingRateIdr) : undefined,
         billingRateUsd: form.billingRateUsd ? Number(form.billingRateUsd) : undefined,
@@ -57,6 +81,53 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setError(data.error ?? "Could not add user.");
     setAdding(false);
+    setShowRates(false);
+    setForm({ name: "", initials: "", email: "", role: "member", title: "", weeklyTargetUnits: "40", billingRateIdr: "", billingRateUsd: "", costRateIdr: "" });
+    showInvite({ name: form.name, email: data.user.email, url: data.inviteUrl, emailSent: data.emailSent, kind: "invite" });
+    router.refresh();
+  }
+
+  async function sendLink(u: UserRow) {
+    setError(null);
+    const res = await fetch(`/api/users/${u.id}/invite`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error ?? "Could not create the link.");
+    showInvite({ name: u.name, email: u.email, url: data.inviteUrl, emailSent: data.emailSent, kind: data.pending ? "invite" : "reset" });
+  }
+
+  async function cancelInvite(u: UserRow) {
+    setError(null);
+    if (!window.confirm(`Cancel the invite for ${u.name}? The account will be removed.`)) return;
+    const res = await fetch(`/api/users/${u.id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error ?? "Could not cancel the invite.");
+    if (invite && invite.email === u.email) setInvite(null);
+    router.refresh();
+  }
+
+  function openEdit(u: UserRow) {
+    setEditFor(u);
+    setEdit({
+      name: u.name, initials: u.initials, email: u.email, role: u.role,
+      title: u.title ?? "", weeklyTargetUnits: String(Number(u.weeklyTargetUnits)),
+    });
+    setError(null);
+  }
+
+  async function saveEdit() {
+    if (!editFor) return;
+    setError(null);
+    const res = await fetch(`/api/users/${editFor.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: edit.name, initials: edit.initials, email: edit.email,
+        role: edit.role, title: edit.title || null, weeklyTargetUnits: Number(edit.weeklyTargetUnits) || 0,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return setError(data.error ?? "Could not save the changes.");
+    setEditFor(null);
     router.refresh();
   }
 
@@ -119,20 +190,47 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
         </p>
         <span className="flex-1" />
         <button onClick={() => setAdding((v) => !v)} className="flex-none rounded-lg bg-[var(--gold)] px-3 py-1.5 text-xs font-semibold text-[#20200a]">
-          + Add user
+          + Invite user
         </button>
       </div>
 
       {error && <p className="rounded-lg border border-burgundy/30 bg-burgundy/10 px-3 py-2 text-[13px] font-medium text-burgundy">{error}</p>}
 
+      {invite && (
+        <div className="rounded-card border border-good/40 bg-good/5 p-4 shadow-sm">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold text-good">
+                {invite.kind === "invite" ? `Invite link for ${invite.name}` : `Password-reset link for ${invite.name}`}
+              </h3>
+              <p className="mt-0.5 text-[12.5px] text-[var(--text-2)]">
+                {invite.emailSent
+                  ? `Email sent to ${invite.email}. You can also send the link yourself (e.g. WhatsApp):`
+                  : `Email could not be sent to ${invite.email} — copy the link and send it yourself (e.g. WhatsApp):`}
+              </p>
+            </div>
+            <button onClick={() => setInvite(null)} aria-label="Dismiss" className="rounded p-1 text-[var(--text-3)] hover:bg-[var(--surface-2)]">✕</button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 break-all rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-[11.5px]">{invite.url}</code>
+            <button onClick={copyInvite} className="rounded-lg bg-[var(--gold)] px-3 py-2 text-xs font-semibold text-[#20200a] hover:brightness-105">
+              {copied ? "✓ Copied" : "Copy link"}
+            </button>
+          </div>
+          <p className="mt-1.5 text-[11.5px] text-[var(--text-3)]">Single-use, valid 7 days. Re-issuing a link invalidates this one.</p>
+        </div>
+      )}
+
       {adding && (
         <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
-          <h3 className="mb-3 text-sm font-semibold">New user</h3>
+          <h3 className="mb-1 text-sm font-semibold">Invite a new user</h3>
+          <p className="mb-3 text-[12.5px] text-[var(--text-2)]">
+            No password needed — they get a link to set their own and sign straight in.
+          </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div><label className={labelCls}>Name</label><input className={inputCls} value={form.name} onChange={set("name")} /></div>
             <div><label className={labelCls}>Initials</label><input className={inputCls} value={form.initials} onChange={set("initials")} placeholder="e.g. RJP" /></div>
             <div><label className={labelCls}>Email</label><input className={inputCls} type="email" value={form.email} onChange={set("email")} /></div>
-            <div><label className={labelCls}>Temp password (10+)</label><input className={inputCls} value={form.password} onChange={set("password")} /></div>
             <div>
               <label className={labelCls}>Role</label>
               <select className={inputCls} value={form.role} onChange={set("role")}>
@@ -141,11 +239,44 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
             </div>
             <div><label className={labelCls}>Title (signature)</label><input className={inputCls} value={form.title} onChange={set("title")} placeholder="Associate / Partner" /></div>
             <div><label className={labelCls}>Weekly target (units)</label><input className={inputCls} type="number" value={form.weeklyTargetUnits} onChange={set("weeklyTargetUnits")} /></div>
-            <div><label className={labelCls}>Billing rate IDR /unit</label><input className={inputCls} type="number" value={form.billingRateIdr} onChange={set("billingRateIdr")} /></div>
-            <div><label className={labelCls}>Billing rate USD /unit</label><input className={inputCls} type="number" value={form.billingRateUsd} onChange={set("billingRateUsd")} /></div>
-            <div><label className={labelCls}>Cost rate IDR /unit (confidential)</label><input className={inputCls} type="number" value={form.costRateIdr} onChange={set("costRateIdr")} /></div>
           </div>
-          <button onClick={addUser} className="mt-4 rounded-lg bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#20200a]">Create user</button>
+          <button onClick={() => setShowRates((v) => !v)} className="mt-3 text-[12.5px] font-semibold text-[var(--navy)] dark:text-[#9cc4d6]">
+            {showRates ? "▾" : "▸"} Billing rates (optional — can be set later)
+          </button>
+          {showRates && (
+            <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div><label className={labelCls}>Billing rate IDR /unit</label><input className={inputCls} type="number" value={form.billingRateIdr} onChange={set("billingRateIdr")} /></div>
+              <div><label className={labelCls}>Billing rate USD /unit</label><input className={inputCls} type="number" value={form.billingRateUsd} onChange={set("billingRateUsd")} /></div>
+              <div><label className={labelCls}>Cost rate IDR /unit (confidential)</label><input className={inputCls} type="number" value={form.costRateIdr} onChange={set("costRateIdr")} /></div>
+            </div>
+          )}
+          <div className="mt-4 flex gap-2">
+            <button onClick={addUser} className="rounded-lg bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#20200a]">Create &amp; get invite link</button>
+            <button onClick={() => setAdding(false)} className="rounded-lg border border-[var(--border-strong)] px-4 py-2 text-sm font-semibold">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {editFor && (
+        <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
+          <h3 className="mb-3 text-sm font-semibold">Edit {editFor.name}</h3>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div><label className={labelCls}>Name</label><input className={inputCls} value={edit.name} onChange={setE("name")} /></div>
+            <div><label className={labelCls}>Initials</label><input className={inputCls} value={edit.initials} onChange={setE("initials")} /></div>
+            <div><label className={labelCls}>Email</label><input className={inputCls} type="email" value={edit.email} onChange={setE("email")} /></div>
+            <div>
+              <label className={labelCls}>Role</label>
+              <select className={inputCls} value={edit.role} onChange={setE("role")}>
+                <option value="member">Member</option><option value="partner">Partner</option><option value="accounting">Accounting</option><option value="admin">Admin</option>
+              </select>
+            </div>
+            <div><label className={labelCls}>Title (signature)</label><input className={inputCls} value={edit.title} onChange={setE("title")} /></div>
+            <div><label className={labelCls}>Weekly target (units)</label><input className={inputCls} type="number" value={edit.weeklyTargetUnits} onChange={setE("weeklyTargetUnits")} /></div>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button onClick={saveEdit} className="rounded-lg bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#20200a]">Save changes</button>
+            <button onClick={() => setEditFor(null)} className="rounded-lg border border-[var(--border-strong)] px-4 py-2 text-sm font-semibold">Cancel</button>
+          </div>
         </div>
       )}
 
@@ -210,6 +341,7 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
                     <td className="px-4 py-2">
                       <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface-3)] align-middle text-[9px] font-bold text-[var(--text-2)]">{u.initials}</span>
                       {u.name}
+                      {u.pending && <span className="ml-2 rounded-full bg-[var(--gold-soft)] px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--gold-ink)]">invited</span>}
                       {!u.active && <span className="ml-2 rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-3)]">inactive</span>}
                     </td>
                     <td className="px-2 py-2 capitalize">{u.title ?? u.role}</td>
@@ -218,19 +350,40 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
                     <td className="num px-2 py-2 text-right font-semibold text-plum">{idr(u.rate?.costRateIdr ?? null)}</td>
                     <td className="num px-2 py-2 text-right">{Number(u.weeklyTargetUnits)}</td>
                     <td className="px-2 py-2 text-right">
-                      <span className="inline-flex gap-1.5">
+                      <span className="inline-flex flex-wrap justify-end gap-1.5">
+                        {u.pending ? (
+                          <>
+                            <button onClick={() => sendLink(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
+                              Invite link
+                            </button>
+                            <button onClick={() => cancelInvite(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:border-burgundy hover:text-burgundy">
+                              Cancel invite
+                            </button>
+                          </>
+                        ) : (
+                          u.active && (
+                            <button onClick={() => sendLink(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]" title="Issue a password-reset link">
+                              Reset link
+                            </button>
+                          )
+                        )}
+                        <button onClick={() => openEdit(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
+                          Edit
+                        </button>
                         <button onClick={() => setHistoryFor(historyFor === u.id ? null : u.id)} className="rounded-md border border-[var(--border-strong)] px-2 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]" title="Rate history">
                           {historyFor === u.id ? "▴" : "▾"} {u.rateHistory.length}
                         </button>
                         <button onClick={() => { setRateFor(u); setError(null); }} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
                           New rate
                         </button>
-                        <button
-                          onClick={() => toggleActive(u)}
-                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${u.active ? "border-[var(--border-strong)] hover:border-burgundy hover:text-burgundy" : "border-good text-good hover:bg-good/10"}`}
-                        >
-                          {u.active ? "Deactivate" : "Reactivate"}
-                        </button>
+                        {!u.pending && (
+                          <button
+                            onClick={() => toggleActive(u)}
+                            className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${u.active ? "border-[var(--border-strong)] hover:border-burgundy hover:text-burgundy" : "border-good text-good hover:bg-good/10"}`}
+                          >
+                            {u.active ? "Deactivate" : "Reactivate"}
+                          </button>
+                        )}
                       </span>
                     </td>
                   </tr>
