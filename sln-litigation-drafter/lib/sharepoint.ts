@@ -94,6 +94,19 @@ function isSharingLink(url: string): boolean {
   return /\/:[\w!]:\//.test(url) || /\/s\/[A-Za-z0-9_-]{10,}/.test(url);
 }
 
+// Users often paste a SharePoint link wrapped in surrounding text/punctuation —
+// a markdown link's parens `(url)`, angle brackets `<url>`, a "Link: url"
+// prefix, or a full `[label](url)`. Without this, parseInput's `startsWith("http")`
+// check fails on the wrapper and the WHOLE polluted string gets sent to Graph
+// as a literal sub-path, which 400s with "Resource not found for the segment
+// 'root:'." Extract the embedded URL first so classification sees a bare link.
+export function unwrapUrl(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.startsWith("http")) return trimmed;
+  const match = trimmed.match(/https?:\/\/[^\s<>()[\]"']+/);
+  return match ? match[0] : trimmed;
+}
+
 function normalizePath(p: string): string {
   return p.replace(/^\/+/, "").replace(/\/+$/, "");
 }
@@ -118,7 +131,7 @@ function siteAddr(hostname: string, siteName: string): string {
 }
 
 async function parseInput(input: string): Promise<ParsedInput> {
-  const trimmed = input.trim();
+  const trimmed = unwrapUrl(input);
 
   // 1. Sharing link
   if (trimmed.startsWith("http") && isSharingLink(trimmed)) {
