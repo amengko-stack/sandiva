@@ -4,6 +4,7 @@ import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } fr
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { formatDocBlock } from "@/lib/extract-format";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
+import { mergeExtractReports } from "@/lib/dd/merge-report";
 import { preCategorize } from "@/lib/dd/pre-categorize";
 import type { FileEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
 
@@ -207,10 +208,11 @@ export async function POST(req: NextRequest) {
         }
 
         // Audit report JSON for inventory PDF generation. On a chunked/resumed
-        // run, merge in the prior chunk's report — prepend its files and add
-        // its counts — so the coverage panel reflects the whole entity, not
-        // just this chunk.
-        const report: ExtractReport = {
+        // run, merge this run's report into the prior chunk's: same-name
+        // entries are REPLACED (retry semantics) and counters recomputed, so a
+        // re-extracted file never double-counts and the coverage panel
+        // reflects the whole entity, not just this chunk.
+        const thisRunReport: ExtractReport = {
           sessionId,
           folderPath: "",
           docTypeId: "dd",
@@ -218,13 +220,17 @@ export async function POST(req: NextRequest) {
           claimType: null,
           ref: entityId,
           timestamp: new Date().toISOString(),
-          files: [...(existingReport?.files ?? []), ...reportFiles.filter(Boolean)],
-          totalChars: (existingReport?.totalChars ?? 0) + totalChars,
-          processed: (existingReport?.processed ?? 0) + processed,
-          skipped: (existingReport?.skipped ?? 0) + skipped,
-          cacheHits: (existingReport?.cacheHits ?? 0) + cacheHits,
-          ocrRequired: (existingReport?.ocrRequired ?? 0) + ocrRequired,
+          files: reportFiles.filter(Boolean),
+          totalChars,
+          processed,
+          skipped,
+          cacheHits,
+          ocrRequired,
         };
+        const report: ExtractReport =
+          appendToExisting && existingReport
+            ? mergeExtractReports(existingReport, thisRunReport)
+            : thisRunReport;
         await writeBlobText(ddKeys.report(sessionId, entityId), JSON.stringify(report));
 
         enqueue({ type: "complete", processed, skipped, totalChars, cacheHits, ocrRequired });
