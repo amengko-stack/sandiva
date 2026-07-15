@@ -64,15 +64,25 @@ export async function POST(req: NextRequest) {
 
     const results: RecheckResult[] = [];
     let appended = "";
-    let addedChars = 0;
-    let addedProcessed = 0;
-    let clearedOcr = 0;
 
     for (const file of files) {
       // DD has no docMap — category comes from the filename tier heuristic,
       // keyed on the original's name when this file replaces a scanned one.
       const targetName = file.replacesName ?? file.name;
       const category: DocCategory = preCategorize(targetName);
+
+      // Idempotency guard: if this OCR file's target is already recorded as
+      // "selesai" (e.g. the same OCR folder was read and extracted twice),
+      // skip re-extracting it so it never gets appended/counted as a duplicate.
+      if (report?.files.some((f) => f.name === targetName && f.status === "selesai")) {
+        results.push({
+          name: targetName,
+          replacesName: file.replacesName,
+          status: "gagal",
+          reason: "Dokumen sudah diekstrak sebelumnya — dilewati agar tidak duplikat.",
+        });
+        continue;
+      }
 
       try {
         const { content, extractionMethod, needsOcr } = await extractWithTier(
@@ -97,8 +107,6 @@ export async function POST(req: NextRequest) {
         };
         appended += formatDocBlock(metadata, content);
         await writeExtractionCache(file.path, { content, metadata });
-        addedChars += content.length;
-        addedProcessed += 1;
 
         if (report) {
           const rf = file.replacesName
@@ -108,7 +116,6 @@ export async function POST(req: NextRequest) {
             rf.status = "selesai";
             rf.extractionMode = extractionMethod;
             rf.charCount = content.length;
-            clearedOcr += 1;
           } else {
             // Newly-added document (no PERLU_OCR slot) — insert a fresh inventory entry.
             report.files.push({
@@ -153,9 +160,23 @@ export async function POST(req: NextRequest) {
     }
 
     if (report && appended) {
-      report.totalChars += addedChars;
-      report.processed += addedProcessed;
-      report.ocrRequired = Math.max(0, (report.ocrRequired ?? 0) - clearedOcr);
+      // Recompute counters from the merged files array (same semantics as
+      // lib/dd/merge-report.ts) instead of adding deltas onto stale totals —
+      // additive arithmetic here could double-count across repeated recheck runs.
+      let processed = 0;
+      let skipped = 0;
+      let ocrRequired = 0;
+      let totalChars = 0;
+      for (const f of report.files) {
+        if (f.status === "selesai") processed++;
+        else if (f.status === "gagal") skipped++;
+        else if (f.status === "perlu_ocr") ocrRequired++;
+        totalChars += f.charCount ?? 0;
+      }
+      report.processed = processed;
+      report.skipped = skipped;
+      report.ocrRequired = ocrRequired;
+      report.totalChars = totalChars;
       await writeBlobText(ddKeys.report(sessionId, entityId), JSON.stringify(report));
     }
 

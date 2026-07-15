@@ -17,13 +17,33 @@ interface EntityRun {
   ocrFolder: string;
   ocrLoading: boolean;
   ocrMatches: OcrMatch[] | null;
+  // Count of OCR-folder files dropped because they already match a "selesai"
+  // report entry (by name or normalized base) — re-reading the same OCR
+  // folder twice must not offer them again as "Baru".
+  ocrSkippedCount: number;
   ocrExtracting: boolean;
 }
 
 const emptyRun = (): EntityRun => ({
   log: [], report: null, running: false, done: false,
-  retrying: false, ocrFolder: "", ocrLoading: false, ocrMatches: null, ocrExtracting: false,
+  retrying: false, ocrFolder: "", ocrLoading: false, ocrMatches: null, ocrSkippedCount: 0, ocrExtracting: false,
 });
+
+// Mirrors the normalization lib/dd/ocr-match.ts uses internally (not exported
+// there) — needed here to recognize an OCR-folder file as a duplicate of an
+// already-imported ("selesai") report entry even when extensions/OCR suffixes differ.
+function normalizeOcrBase(name: string): string {
+  return name
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[\s_-]*\(\s*ocr\s*\)$/, "")
+    .replace(/[\s_-]+ocr$/, "")
+    .trim();
+}
+
+// Shared reminder appended whenever Stage 2's extracted content changes after
+// downstream stages may already have run against the old content.
+const STALE_DOWNSTREAM_NOTICE = "Dokumen berubah — jalankan ulang Klasifikasi (Stage 3) untuk entitas ini.";
 
 // Caps how many files go into a single /api/dd/extract request so a very
 // large data room doesn't run into the route's maxDuration (300s). Chunks
@@ -67,7 +87,7 @@ export default function DDStage2Extract() {
     eid: string,
     payload: { files: FileEntry[]; appendToExisting: boolean },
     onComplete?: () => void
-  ) => {
+  ): Promise<{ successCount: number }> => {
     const res = await fetch("/api/dd/extract", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, files: payload.files, appendToExisting: payload.appendToExisting }),
@@ -76,6 +96,7 @@ export default function DDStage2Extract() {
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
+    let successCount = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -86,17 +107,36 @@ export default function DDStage2Extract() {
         const line = ev.split("\n").find((l) => l.startsWith("data: "));
         if (!line) continue;
         const msg = JSON.parse(line.slice(6));
-        if (msg.type === "done") appendLog(eid, `✓ ${msg.name} (${msg.charCount} kar)`);
+        if (msg.type === "done") { appendLog(eid, `✓ ${msg.name} (${msg.charCount} kar)`); successCount++; }
         if (msg.type === "error") appendLog(eid, `✗ ${msg.name}: ${msg.reason}`);
         if (msg.type === "ocr_required") appendLog(eid, `⚠ ${msg.name}: perlu OCR`);
         if (msg.type === "complete") onComplete?.();
         if (msg.error) throw new Error(msg.error);
       }
     }
+    return { successCount };
   };
 
   const extractEntity = async (eid: string) => {
     const entity = t.entities.find((e) => e.id === eid)!;
+
+    // "Ekstrak ulang" overwrites the whole report from chunk 0 (appendToExisting
+    // false) — if the current report holds entries added outside entity.files
+    // (i.e. documents brought in via an OCR recheck), that work would be
+    // silently discarded. Confirm first; fetch the report if not loaded yet.
+    let existingReport = runs[eid]?.report ?? null;
+    if (!existingReport) existingReport = await refreshReport(eid);
+    if (existingReport) {
+      const entityFileNames = new Set(entity.files.map((f) => f.name));
+      const ocrAddedCount = existingReport.files.filter((f) => !entityFileNames.has(f.name)).length;
+      if (ocrAddedCount > 0) {
+        const ok = window.confirm(
+          `Ekstrak ulang akan menimpa seluruh hasil sebelumnya, termasuk ${ocrAddedCount} dokumen hasil OCR yang sudah ditambahkan. Lanjutkan?`
+        );
+        if (!ok) return;
+      }
+    }
+
     patch(eid, { running: true, log: [] });
     try {
       const files = entity.files;
@@ -115,11 +155,16 @@ export default function DDStage2Extract() {
         const isLastChunk = c === chunks.length - 1;
         // Progress only counts as "extracted" once every chunk has completed —
         // marking it after an intermediate chunk would let Stage 3 start on
-        // a partially-extracted entity.
+        // a partially-extracted entity. A full extract replaces the entity's
+        // content, so downstream stages' cached results are now stale.
         await streamExtract(eid, { files: chunks[c], appendToExisting: c > 0 }, () => {
           if (isLastChunk) {
             patch(eid, { done: true });
-            dispatch({ type: "MARK_PROGRESS", entityId: eid, patch: { extracted: true } });
+            dispatch({
+              type: "MARK_PROGRESS", entityId: eid,
+              patch: { extracted: true, classified: false, tabled: false, analyzed: false },
+            });
+            appendLog(eid, STALE_DOWNSTREAM_NOTICE);
           }
         });
       }
@@ -147,8 +192,17 @@ export default function DDStage2Extract() {
     patch(eid, { retrying: true });
     try {
       appendLog(eid, `— Coba ulang ${files.length} dokumen gagal —`);
-      await streamExtract(eid, { files, appendToExisting: true });
+      const { successCount } = await streamExtract(eid, { files, appendToExisting: true });
       await refreshReport(eid);
+      // Any successful retry changes the entity's extracted content — Stages
+      // 3–6 must not keep showing results computed against the old text.
+      if (successCount > 0) {
+        dispatch({
+          type: "MARK_PROGRESS", entityId: eid,
+          patch: { extracted: true, classified: false, tabled: false, analyzed: false },
+        });
+        appendLog(eid, STALE_DOWNSTREAM_NOTICE);
+      }
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Error" });
     } finally {
@@ -163,7 +217,7 @@ export default function DDStage2Extract() {
     const report = run?.report;
     const folder = (run?.ocrFolder ?? "").trim();
     if (!report || !folder) return;
-    patch(eid, { ocrLoading: true, ocrMatches: null });
+    patch(eid, { ocrLoading: true, ocrMatches: null, ocrSkippedCount: 0 });
     try {
       const res = await fetch("/api/sharepoint/list-files", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -174,8 +228,23 @@ export default function DDStage2Extract() {
       const listing = (data?.files ?? []) as FileEntry[];
       if (listing.length === 0) throw new Error("Tidak ada dokumen ditemukan di folder OCR ini.");
       const perluOcrNames = report.files.filter((f) => f.status === "perlu_ocr").map((f) => f.name);
-      const matches = matchOcrFiles(listing.map((f) => ({ name: f.name, path: f.path })), perluOcrNames);
-      patch(eid, { ocrMatches: matches });
+      const rawMatches = matchOcrFiles(listing.map((f) => ({ name: f.name, path: f.path })), perluOcrNames);
+      // Idempotency: an unmatched OCR file (no perlu_ocr slot to replace) whose
+      // name or normalized base already appears as a "selesai" report entry was
+      // already imported by a previous recheck — re-reading the same OCR folder
+      // must not offer it again as "Baru" (which would re-import it as a duplicate).
+      const importedNames = new Set(report.files.filter((f) => f.status === "selesai").map((f) => f.name));
+      const importedBases = new Set(
+        report.files.filter((f) => f.status === "selesai").map((f) => normalizeOcrBase(f.name))
+      );
+      let ocrSkippedCount = 0;
+      const matches = rawMatches.filter((m) => {
+        if (m.replacesName) return true;
+        const isDup = importedNames.has(m.name) || importedBases.has(normalizeOcrBase(m.name));
+        if (isDup) ocrSkippedCount++;
+        return !isDup;
+      });
+      patch(eid, { ocrMatches: matches, ocrSkippedCount });
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Error" });
     } finally {
@@ -201,12 +270,22 @@ export default function DDStage2Extract() {
         name: string; replacesName?: string; status: "selesai" | "ocr_gagal" | "gagal";
         charCount?: number; method?: string; reason?: string;
       }[];
+      let successCount = 0;
       for (const r of results) {
-        if (r.status === "selesai") appendLog(eid, `✓ ${r.name}${r.charCount ? ` (${r.charCount} kar)` : ""}`);
+        if (r.status === "selesai") { appendLog(eid, `✓ ${r.name}${r.charCount ? ` (${r.charCount} kar)` : ""}`); successCount++; }
         else appendLog(eid, `✗ ${r.name}: ${r.reason ?? (r.status === "ocr_gagal" ? "hasil OCR masih tanpa teks" : "gagal diekstrak")}`);
       }
       patch(eid, { ocrMatches: null });
       await refreshReport(eid);
+      // An OCR recheck that actually adds text changes the entity's extracted
+      // content the same way a retry does — invalidate the downstream stages.
+      if (successCount > 0) {
+        dispatch({
+          type: "MARK_PROGRESS", entityId: eid,
+          patch: { extracted: true, classified: false, tabled: false, analyzed: false },
+        });
+        appendLog(eid, STALE_DOWNSTREAM_NOTICE);
+      }
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Error" });
     } finally {
@@ -286,7 +365,7 @@ export default function DDStage2Extract() {
                 <input
                   type="text"
                   value={run?.ocrFolder ?? ""}
-                  onChange={(ev) => patch(e.id, { ocrFolder: ev.target.value, ocrMatches: null })}
+                  onChange={(ev) => patch(e.id, { ocrFolder: ev.target.value, ocrMatches: null, ocrSkippedCount: 0 })}
                   placeholder="https://sandiva.sharepoint.com/… atau /sites/…/OCR"
                   disabled={busy}
                   style={{ fontFamily: "monospace", fontSize: 12, padding: "6px 10px", borderRadius: 4, border: "1px solid var(--border-color)", background: "var(--bg-surface)", color: "var(--text-primary)" }}
@@ -295,7 +374,12 @@ export default function DDStage2Extract() {
                   <button onClick={() => readOcrFolder(e.id)} disabled={busy || !(run?.ocrFolder ?? "").trim()}>
                     {run?.ocrLoading ? "Membaca…" : "Baca folder OCR"}
                   </button>
-                  {matches && <span style={{ fontSize: 13 }}>Cocok: {matchedCount} · Baru: {newCount}</span>}
+                  {matches && (
+                    <span style={{ fontSize: 13 }}>
+                      Cocok: {matchedCount} · Baru: {newCount}
+                      {(run?.ocrSkippedCount ?? 0) > 0 ? ` · sudah diimpor — dilewati (${run?.ocrSkippedCount})` : ""}
+                    </span>
+                  )}
                 </div>
                 {matches && matches.length > 0 && (
                   <>

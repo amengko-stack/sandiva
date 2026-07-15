@@ -23,7 +23,7 @@ export default function DDCoveragePanel({ report }: { report: ExtractReport | nu
   return (
     <div style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 6 }}>
       <div style={{ fontWeight: 600 }}>Cakupan ekstraksi: {report.processed}/{total} dokumen ({pct}%)</div>
-      <div style={{ height: 8, background: "#f3f4f6", borderRadius: 4 }}>
+      <div style={{ height: 8, background: "var(--border-color)", borderRadius: 4 }}>
         <div style={{ height: 8, width: `${pct}%`, background: pct === 100 ? "#059669" : "#f59e0b", borderRadius: 4 }} />
       </div>
       <div style={{ fontSize: 13, color: "var(--text-primary)" }}>
