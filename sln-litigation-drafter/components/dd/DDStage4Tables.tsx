@@ -74,18 +74,18 @@ export default function DDStage4Tables() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <h1>4 — Tabel Ketentuan Kunci</h1>
-      <p style={{ color: "#6b7280" }}>Sel merah ⚠ = klausul yang terpicu oleh jenis transaksi ini. Klik sel untuk melihat kutipan sumber.</p>
+      <p style={{ color: "var(--text-muted)" }}>Sel merah ⚠ = klausul yang terpicu oleh jenis transaksi ini. Klik sel untuk melihat kutipan sumber.</p>
       {t.entities.map((e) => (
-        <div key={e.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+        <div key={e.id} style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong>{e.name}</strong>
             <button onClick={() => run(e.id)} disabled={!state.progress[e.id]?.classified || running[e.id]}>
               {running[e.id] ? "Mengekstrak…" : "Ekstrak tabel"}
             </button>
           </div>
-          {progress[e.id] && <div style={{ fontSize: 13, color: "#6b7280" }}>{progress[e.id]}</div>}
+          {progress[e.id] && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{progress[e.id]}</div>}
           {warnings[e.id] && warnings[e.id].length > 0 && (
-            <div style={{ background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 4, padding: 8, fontSize: 12 }}>
+            <div style={{ background: "#fef3c7", color: "#78350f", border: "1px solid #fcd34d", borderRadius: 4, padding: 8, fontSize: 12 }}>
               {warnings[e.id].map((w, i) => (
                 <div key={i}>⚠ {w}</div>
               ))}

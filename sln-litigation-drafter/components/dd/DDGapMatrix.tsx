@@ -3,12 +3,12 @@
 import { aspectLabel } from "@/config/ddAspects";
 import type { DDGapItem } from "@/types/dd";
 
-const STATUS_STYLE: Record<DDGapItem["status"], { label: string; bg: string }> = {
-  present: { label: "Ada", bg: "#d1fae5" },
-  incomplete: { label: "Tidak lengkap", bg: "#fef3c7" },
-  expired: { label: "Kedaluwarsa", bg: "#fed7aa" },
-  missing: { label: "TIDAK ADA", bg: "#fee2e2" },
-  not_applicable: { label: "N/A?", bg: "#e5e7eb" },
+const STATUS_STYLE: Record<DDGapItem["status"], { label: string; bg: string; fg: string }> = {
+  present: { label: "Ada", bg: "#d1fae5", fg: "#065f46" },
+  incomplete: { label: "Tidak lengkap", bg: "#fef3c7", fg: "#78350f" },
+  expired: { label: "Kedaluwarsa", bg: "#fed7aa", fg: "#9a3412" },
+  missing: { label: "TIDAK ADA", bg: "#fee2e2", fg: "#7f1d1d" },
+  not_applicable: { label: "N/A?", bg: "#e5e7eb", fg: "#374151" },
 };
 
 export default function DDGapMatrix({ gaps }: { gaps: DDGapItem[] }) {
@@ -23,14 +23,14 @@ export default function DDGapMatrix({ gaps }: { gaps: DDGapItem[] }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <tbody>
               {items.map((g: DDGapItem) => (
-                <tr key={g.expectedDocId} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                <tr key={g.expectedDocId} style={{ borderBottom: "1px solid var(--border-color)" }}>
                   <td style={{ padding: 6 }}>{g.expectedLabel}</td>
                   <td style={{ padding: 6, width: 130 }}>
-                    <span style={{ background: STATUS_STYLE[g.status].bg, padding: "2px 8px", borderRadius: 4 }}>
+                    <span style={{ background: STATUS_STYLE[g.status].bg, color: STATUS_STYLE[g.status].fg, padding: "2px 8px", borderRadius: 4 }}>
                       {STATUS_STYLE[g.status].label}
                     </span>
                   </td>
-                  <td style={{ padding: 6, color: "#6b7280" }}>
+                  <td style={{ padding: 6, color: "var(--text-muted)" }}>
                     {g.matchedFiles.length ? g.matchedFiles.join(", ") : g.note}
                   </td>
                 </tr>

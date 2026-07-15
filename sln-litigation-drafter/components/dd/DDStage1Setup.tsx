@@ -6,7 +6,7 @@ import { DD_TRANSACTION_TYPES } from "@/config/ddTransactionTypes";
 import type { DDEntity, DDTransaction, DDTransactionType } from "@/types/dd";
 import { slugifyEntityName, uniqueEntityIds } from "@/lib/dd/entity-ids";
 
-const input: React.CSSProperties = { padding: 8, border: "1px solid #d1d5db", borderRadius: 6, width: "100%" };
+const input: React.CSSProperties = { padding: 8, border: "1px solid var(--border-color)", borderRadius: 6, width: "100%", background: "var(--bg-surface)", color: "var(--text-primary)" };
 
 export default function DDStage1Setup() {
   const { state, dispatch } = useDD();
@@ -59,25 +59,25 @@ export default function DDStage1Setup() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <h1>1 — Transaksi & Entitas</h1>
-      <label>Nama matter<input style={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Proyek Alpha — akuisisi PT Alpha Sentosa" /></label>
+      <label>Nama matter<input style={input} type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Proyek Alpha — akuisisi PT Alpha Sentosa" /></label>
       <label>Jenis transaksi
         <select style={input} value={type} onChange={(e) => setType(e.target.value as DDTransactionType)}>
           {DD_TRANSACTION_TYPES.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
       </label>
-      <label>Klien bertindak sebagai<input style={input} value={clientRole} onChange={(e) => setClientRole(e.target.value)} /></label>
+      <label>Klien bertindak sebagai<input style={input} type="text" value={clientRole} onChange={(e) => setClientRole(e.target.value)} /></label>
       <label>Tanggal uji (cut-off)<input style={input} type="date" value={cutoff} onChange={(e) => setCutoff(e.target.value)} /></label>
 
       <h2>Perusahaan target</h2>
       {entities.map((e, i) => (
-        <div key={i} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
-          <input style={input} placeholder="Nama PT" value={e.name} onChange={(ev) => patchEntity(i, { name: ev.target.value })} />
-          <input style={input} placeholder="Peran (target/penjual/…)" value={e.role} onChange={(ev) => patchEntity(i, { role: ev.target.value })} />
+        <div key={i} style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+          <input style={input} type="text" placeholder="Nama PT" value={e.name} onChange={(ev) => patchEntity(i, { name: ev.target.value })} />
+          <input style={input} type="text" placeholder="Peran (target/penjual/…)" value={e.role} onChange={(ev) => patchEntity(i, { role: ev.target.value })} />
           <div style={{ display: "flex", gap: 8 }}>
-            <input style={{ ...input, flex: 1 }} placeholder="Folder data room di SharePoint (path atau link)" value={e.dataRoomPath} onChange={(ev) => patchEntity(i, { dataRoomPath: ev.target.value })} />
+            <input style={{ ...input, flex: 1 }} type="text" placeholder="Folder data room di SharePoint (path atau link)" value={e.dataRoomPath} onChange={(ev) => patchEntity(i, { dataRoomPath: ev.target.value })} />
             <button onClick={() => loadFiles(i)} disabled={busy === e.id}>{busy === e.id ? "Membaca…" : "Baca folder"}</button>
           </div>
-          {e.files.length > 0 && <div style={{ fontSize: 13, color: "#059669" }}>{e.files.length} file ditemukan</div>}
+          {e.files.length > 0 && <div style={{ fontSize: 13, color: "var(--success)" }}>{e.files.length} file ditemukan</div>}
         </div>
       ))}
       <button onClick={addEntity}>+ Tambah perusahaan</button>

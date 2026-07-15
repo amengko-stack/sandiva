@@ -40,7 +40,7 @@ export default function DDPage() {
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
       {last && (
-        <div style={{ background: "#eff6ff", padding: 12, borderRadius: 8, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ background: "#eff6ff", color: "#1e3a8a", padding: 12, borderRadius: 8, marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Lanjutkan matter terakhir: <strong>{last.name}</strong> ({new Date(last.timestamp).toLocaleString("id-ID")})?</span>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={resume}>Lanjutkan</button>

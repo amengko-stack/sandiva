@@ -22,7 +22,7 @@ function FindingCard({ f, onAction, onOpenSource, readOnly }: {
   const [text, setText] = useState(f.editedProblem ?? f.problem);
   const muted = f.status === "accepted" || f.status === "dismissed";
   return (
-    <div style={{ background: muted ? "#fafafa" : SEV_STYLE[f.severity], opacity: muted ? 0.6 : 1, borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+    <div style={{ background: muted ? "#fafafa" : SEV_STYLE[f.severity], color: "#1f2937", opacity: muted ? 0.6 : 1, borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
         <strong style={{ textTransform: "uppercase" }}>{f.severity}</strong>
         <span>{DIM_LABEL[f.dimension]}</span>
@@ -225,11 +225,11 @@ export default function DDStage5Review() {
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <h1>5 — Temuan & Review (exceptions-first)</h1>
-      <div style={{ fontSize: 12, color: "#6b7280" }}>
+      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
         Data sesi analisis tersimpan 24 jam — simpan hasil ke SharePoint sebelum mengakhiri hari kerja.
       </div>
       {t.entities.map((e) => (
-        <div key={e.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+        <div key={e.id} style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong>{e.name}</strong>
             <div style={{ display: "flex", gap: 8 }}>
@@ -237,7 +237,7 @@ export default function DDStage5Review() {
               <button onClick={() => saveReview(e.id)} disabled={!findingsByEntity[e.id]}>Simpan review</button>
             </div>
           </div>
-          {progress[e.id] && <div style={{ fontSize: 13, color: "#6b7280" }}>{progress[e.id]}</div>}
+          {progress[e.id] && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{progress[e.id]}</div>}
           <div style={{ display: "grid", gap: 8 }}>
             {sortFindings(findingsByEntity[e.id] ?? []).map((f) => (
               <FindingCard
@@ -249,7 +249,7 @@ export default function DDStage5Review() {
         </div>
       ))}
 
-      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+      <div style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <strong>Konsolidasi lintas-entitas</strong>
           <button onClick={runConsolidate} disabled={!allAnalyzed}>Jalankan konsolidasi</button>

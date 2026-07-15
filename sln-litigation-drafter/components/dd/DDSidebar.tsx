@@ -19,8 +19,8 @@ export default function DDSidebar() {
   const { state, dispatch } = useDD();
   const [showChecklist, setShowChecklist] = useState(false);
   return (
-    <aside style={{ width: 240, borderRight: "1px solid var(--border, #e5e7eb)", padding: 16, display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontWeight: 700, marginBottom: 8 }}>Uji Tuntas (LDD)</div>
+    <aside style={{ width: 240, borderRight: "1px solid var(--border-color)", padding: 16, display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ fontWeight: 700, marginBottom: 8, color: "var(--accent-gold)" }}>Uji Tuntas (LDD)</div>
       {STAGES.map((s) => (
         <button
           key={s.n}
@@ -29,14 +29,15 @@ export default function DDSidebar() {
           style={{
             textAlign: "left", padding: "8px 10px", borderRadius: 6, border: "none",
             cursor: s.n <= state.stage ? "pointer" : "default",
-            background: s.n === state.stage ? "var(--accent, #e0e7ff)" : "transparent",
+            background: s.n === state.stage ? "rgba(91,155,213,0.15)" : "transparent",
+            color: "var(--text-primary)",
             opacity: s.n > state.stage ? 0.45 : 1,
           }}
         >
           {s.n}. {s.label}
         </button>
       ))}
-      <button onClick={() => setShowChecklist(true)} style={{ textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", cursor: "pointer", fontSize: 12 }}>
+      <button onClick={() => setShowChecklist(true)} style={{ textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", cursor: "pointer", fontSize: 12, color: "var(--text-primary)" }}>
         ⚙ Kelola checklist
       </button>
       {showChecklist && <DDChecklistManager onClose={() => setShowChecklist(false)} />}

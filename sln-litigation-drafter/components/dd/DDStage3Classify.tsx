@@ -120,28 +120,28 @@ export default function DDStage3Classify() {
       {t.entities.map((e) => {
         const run = runs[e.id];
         return (
-          <div key={e.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+          <div key={e.id} style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <strong>{e.name}</strong>
               <button onClick={() => runEntity(e.id)} disabled={run?.running || !state.progress[e.id]?.extracted}>
                 {run?.running ? "Berjalan…" : "Klasifikasi + Gap"}
               </button>
             </div>
-            {run?.progress && <div style={{ fontSize: 13, color: "#6b7280" }}>{run.progress}</div>}
+            {run?.progress && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{run.progress}</div>}
             {run?.warnings && run.warnings.length > 0 && (
-              <div style={{ fontSize: 13, background: "#fefce8", padding: 8, borderRadius: 6 }}>
+              <div style={{ fontSize: 13, background: "#fefce8", color: "#78350f", padding: 8, borderRadius: 6 }}>
                 {run.warnings.map((w, i) => (
                   <div key={i}>⚠ {w}</div>
                 ))}
               </div>
             )}
             {run?.tailored && run.tailored.added.length > 0 && (
-              <div style={{ fontSize: 13, background: "#eff6ff", padding: 8, borderRadius: 6 }}>
+              <div style={{ fontSize: 13, background: "#eff6ff", color: "#1e3a8a", padding: 8, borderRadius: 6 }}>
                 Checklist ditambah (AI): {run.tailored.added.map((d) => d.label).join("; ")}
               </div>
             )}
             {run?.tailored && run.tailored.notApplicableSuggestions.length > 0 && (
-              <div style={{ fontSize: 13, background: "#fefce8", padding: 8, borderRadius: 6 }}>
+              <div style={{ fontSize: 13, background: "#fefce8", color: "#78350f", padding: 8, borderRadius: 6 }}>
                 Disarankan tidak relevan: {run.tailored.notApplicableSuggestions.map((s) => `${s.expectedDocId} (${s.reason})`).join("; ")}
               </div>
             )}

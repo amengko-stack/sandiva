@@ -18,23 +18,23 @@ export default function DDReviewTable({
       <table style={{ borderCollapse: "collapse", fontSize: 12, minWidth: 800 }}>
         <thead>
           <tr>
-            <th style={{ padding: 6, textAlign: "left", borderBottom: "2px solid #e5e7eb" }}>Perjanjian</th>
+            <th style={{ padding: 6, textAlign: "left", borderBottom: "2px solid var(--border-color)" }}>Perjanjian</th>
             {fieldIds.map((id) => (
-              <th key={id} style={{ padding: 6, textAlign: "left", borderBottom: "2px solid #e5e7eb" }}>{id.replace(/_/g, " ")}</th>
+              <th key={id} style={{ padding: 6, textAlign: "left", borderBottom: "2px solid var(--border-color)" }}>{id.replace(/_/g, " ")}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.groupId} style={{ borderBottom: "1px solid #f3f4f6", verticalAlign: "top" }}>
+            <tr key={r.groupId} style={{ borderBottom: "1px solid var(--border-color)", verticalAlign: "top" }}>
               <td style={{ padding: 6, fontWeight: 600 }}>
                 {r.agreementLabel}
-                {r.memberFiles.length > 1 && <div style={{ fontWeight: 400, color: "#6b7280" }}>{r.memberFiles.length} file (induk + addendum)</div>}
-                {r.status === "gagal" && <div style={{ color: "#991b1b" }}>GAGAL: {r.reason}</div>}
+                {r.memberFiles.length > 1 && <div style={{ fontWeight: 400, color: "var(--text-muted)" }}>{r.memberFiles.length} file (induk + addendum)</div>}
+                {r.status === "gagal" && <div style={{ color: "var(--error)" }}>GAGAL: {r.reason}</div>}
               </td>
               {fieldIds.map((id) => {
                 const c = r.cells.find((x) => x.fieldId === id);
-                if (!c) return <td key={id} style={{ padding: 6, color: "#d1d5db" }}>·</td>;
+                if (!c) return <td key={id} style={{ padding: 6, color: "var(--text-muted)" }}>·</td>;
                 return (
                   <td
                     key={id}
@@ -44,6 +44,7 @@ export default function DDReviewTable({
                       padding: 6,
                       cursor: c.verbatim ? "pointer" : "default",
                       background: c.dealTriggered ? "#fee2e2" : undefined,
+                      color: c.dealTriggered ? "#7f1d1d" : undefined,
                       textDecoration: c.verbatim ? "underline dotted" : undefined,
                     }}
                   >

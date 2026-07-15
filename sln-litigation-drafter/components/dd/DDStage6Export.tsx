@@ -32,23 +32,23 @@ export default function DDStage6Export() {
   return (
     <div style={{ display: "grid", gap: 16, maxWidth: 640 }}>
       <h1>6 — Ekspor</h1>
-      <a href={`/api/dd/docx?sessionId=${state.sessionId}`} download style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8 }}>
+      <a href={`/api/dd/docx?sessionId=${state.sessionId}`} download style={{ padding: 12, border: "1px solid var(--border-color)", borderRadius: 8 }}>
         ⬇ Unduh Laporan Temuan (Word)
       </a>
-      <a href={`/api/dd/excel?sessionId=${state.sessionId}`} download style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8 }}>
+      <a href={`/api/dd/excel?sessionId=${state.sessionId}`} download style={{ padding: 12, border: "1px solid var(--border-color)", borderRadius: 8 }}>
         ⬇ Unduh Indeks & Matriks Gap (Excel)
       </a>
-      <div style={{ fontSize: 12, color: "#6b7280" }}>
+      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
         Data sesi analisis tersimpan 24 jam — simpan hasil ke SharePoint sebelum mengakhiri hari kerja.
       </div>
-      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+      <div style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
         <strong>Simpan ke SharePoint (folder matter)</strong>
-        <input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} placeholder="Folder matter di SharePoint" style={{ padding: 8, border: "1px solid #d1d5db", borderRadius: 6 }} />
+        <input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} placeholder="Folder matter di SharePoint" style={{ padding: 8, border: "1px solid var(--border-color)", borderRadius: 6, background: "var(--bg-surface)", color: "var(--text-primary)" }} />
         <button onClick={save} disabled={saving || !folderPath.trim()} style={{ padding: 10, fontWeight: 600 }}>
           {saving ? "Menyimpan…" : "Simpan kedua file ke folder AI/"}
         </button>
         {savedFiles.length > 0 && (
-          <div style={{ color: "#059669", fontSize: 13 }}>Tersimpan: {savedFiles.join(" · ")}</div>
+          <div style={{ color: "var(--success)", fontSize: 13 }}>Tersimpan: {savedFiles.join(" · ")}</div>
         )}
       </div>
       <button onClick={() => { if (confirm("Mulai matter uji tuntas baru?")) dispatch({ type: "RESET" }); }}>

@@ -41,26 +41,27 @@ export default function DDSourcePreview({
   return (
     <div style={{
       position: "fixed", top: 0, right: 0, width: "min(560px, 90vw)", height: "100vh",
-      background: "#fff", borderLeft: "1px solid #e5e7eb", boxShadow: "-4px 0 12px rgba(0,0,0,.08)",
+      background: "var(--bg-surface)", borderLeft: "1px solid var(--border-color)", boxShadow: "-4px 0 12px rgba(0,0,0,.08)",
+      color: "var(--text-primary)",
       padding: 16, overflowY: "auto", zIndex: 50,
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
         <strong style={{ fontSize: 14 }}>{sourceFile}</strong>
         <button onClick={onClose}>✕ Tutup</button>
       </div>
-      {error && <div style={{ color: "#991b1b" }}>{error}</div>}
+      {error && <div style={{ color: "var(--error)" }}>{error}</div>}
       {text === null && !error && <div>Memuat…</div>}
       {text !== null && (
         <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.6 }}>
           {parts ? (
             <>
               {parts[0]}
-              <mark ref={(el) => { markRef.current = el; }} style={{ background: "#fde68a" }}>{parts[1]}</mark>
+              <mark ref={(el) => { markRef.current = el; }} style={{ background: "#fde68a", color: "#78350f" }}>{parts[1]}</mark>
               {parts[2]}
             </>
           ) : (
             <>
-              {highlight.trim() && <div style={{ background: "#fef3c7", padding: 8, marginBottom: 8 }}>Kutipan tidak ditemukan persis dalam teks ekstraksi — ditampilkan tanpa sorotan.</div>}
+              {highlight.trim() && <div style={{ background: "#fef3c7", color: "#78350f", padding: 8, marginBottom: 8 }}>Kutipan tidak ditemukan persis dalam teks ekstraksi — ditampilkan tanpa sorotan.</div>}
               {text}
             </>
           )}

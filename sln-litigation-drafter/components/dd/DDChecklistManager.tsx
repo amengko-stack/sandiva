@@ -32,12 +32,12 @@ export default function DDChecklistManager({ onClose }: { onClose: () => void })
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.3)", zIndex: 60, display: "flex", justifyContent: "center", padding: 40 }}>
-      <div style={{ background: "#fff", borderRadius: 12, padding: 20, maxWidth: 720, width: "100%", overflowY: "auto" }}>
+      <div style={{ background: "var(--bg-surface)", color: "var(--text-primary)", borderRadius: 12, padding: 20, maxWidth: 720, width: "100%", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <h2 style={{ marginTop: 0 }}>Checklist Uji Tuntas ({source === "sharepoint" ? "dari SharePoint" : "bawaan (seed)"})</h2>
           <button onClick={onClose}>✕</button>
         </div>
-        <p style={{ fontSize: 13, color: "#6b7280" }}>
+        <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
           Checklist diedit langsung di <code>SLN-AI/due-diligence/checklist.xlsx</code> di SharePoint — aplikasi membaca versi terbaru setiap dijalankan.
         </p>
         <button onClick={generate}>Buat/perbarui template di SharePoint (dari seed)</button>
@@ -47,7 +47,7 @@ export default function DDChecklistManager({ onClose }: { onClose: () => void })
             <thead><tr><th style={{ textAlign: "left" }}>Aspek</th><th style={{ textAlign: "left" }}>Dokumen</th><th>Kepentingan</th></tr></thead>
             <tbody>
               {checklist.expected.map((d) => (
-                <tr key={d.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                <tr key={d.id} style={{ borderBottom: "1px solid var(--border-color)" }}>
                   <td style={{ padding: 4 }}>{aspectLabel(d.aspectId)}</td>
                   <td style={{ padding: 4 }}>{d.label}</td>
                   <td style={{ padding: 4, textAlign: "center" }}>{d.importance}</td>
