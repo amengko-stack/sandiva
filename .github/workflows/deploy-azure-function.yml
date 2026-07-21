@@ -18,6 +18,7 @@ on:
       - feature/timesheet-m1
     paths:
       - "azure-functions/reminder-cron/**"
+      - ".github/workflows/deploy-azure-function.yml"
   workflow_dispatch:
 
 jobs:
@@ -50,3 +51,9 @@ jobs:
           app-name: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
           package: azure-functions/reminder-cron
+          # Flex Consumption has no classic Kudu/SCM site — it uses a
+          # different deploy path ("One Deploy") that these two settings
+          # switch the action onto. Without them the action 404s trying to
+          # reach a Kudu endpoint that doesn't exist on this plan.
+          sku: "flexconsumption"
+          remote-build: true
