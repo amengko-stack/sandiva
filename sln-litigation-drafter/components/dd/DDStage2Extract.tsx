@@ -254,6 +254,10 @@ export default function DDStage2Extract() {
 
   // Step 2 — send the matched (and new) OCR files to the recheck route, which
   // patches the server-side report (perlu_ocr→selesai, new docs appended).
+  // Streamed (SSE), same reader shape as streamExtract, so per-file progress
+  // is visible instead of one blocking call with no feedback until it resolves
+  // or dies — the prior single-JSON version surfaced a mid-run timeout as an
+  // opaque "Gagal mengekstrak hasil OCR" with no indication how far it got.
   const extractOcrResults = async (eid: string) => {
     const matches = runs[eid]?.ocrMatches;
     if (!matches || matches.length === 0) return;
@@ -264,16 +268,33 @@ export default function DDStage2Extract() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, files: matches }),
       });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.error ?? "Gagal mengekstrak hasil OCR");
-      const results = (data?.results ?? []) as {
-        name: string; replacesName?: string; status: "selesai" | "ocr_gagal" | "gagal";
-        charCount?: number; method?: string; reason?: string;
-      }[];
+      if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Gagal memulai ekstraksi OCR");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
       let successCount = 0;
-      for (const r of results) {
-        if (r.status === "selesai") { appendLog(eid, `✓ ${r.name}${r.charCount ? ` (${r.charCount} kar)` : ""}`); successCount++; }
-        else appendLog(eid, `✗ ${r.name}: ${r.reason ?? (r.status === "ocr_gagal" ? "hasil OCR masih tanpa teks" : "gagal diekstrak")}`);
+      let sawComplete = false;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const events = buf.split("\n\n");
+        buf = events.pop() ?? "";
+        for (const ev of events) {
+          const line = ev.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const msg = JSON.parse(line.slice(6));
+          if (msg.type === "done") { appendLog(eid, `✓ ${msg.name}${msg.charCount ? ` (${msg.charCount} kar)` : ""}`); successCount++; }
+          if (msg.type === "error") appendLog(eid, `✗ ${msg.name}: ${msg.reason}`);
+          if (msg.type === "ocr_required") appendLog(eid, `✗ ${msg.name}: hasil OCR masih tanpa teks`);
+          if (msg.type === "complete") sawComplete = true;
+          if (msg.error) throw new Error(msg.error);
+        }
+      }
+      if (!sawComplete) {
+        throw new Error(
+          "Ekstraksi OCR terputus sebelum selesai — dokumen yang sudah selesai tetap tersimpan; ulangi untuk sisanya."
+        );
       }
       patch(eid, { ocrMatches: null });
       await refreshReport(eid);
