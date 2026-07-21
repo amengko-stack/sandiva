@@ -51,9 +51,12 @@ jobs:
           app-name: ${{ secrets.AZURE_FUNCTIONAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
           package: azure-functions/reminder-cron
-          # Flex Consumption has no classic Kudu/SCM site — it uses a
-          # different deploy path ("One Deploy") that these two settings
-          # switch the action onto. Without them the action 404s trying to
-          # reach a Kudu endpoint that doesn't exist on this plan.
+          # Flex Consumption has no classic Kudu/SCM site — sku:flexconsumption
+          # switches the action onto its "One Deploy" path instead of 404ing
+          # against a Kudu endpoint that doesn't exist on this plan.
           sku: "flexconsumption"
-          remote-build: true
+          # The "Build" step above already compiles TypeScript to dist/ and
+          # installs node_modules — remote-build:true would have Azure's own
+          # Oryx build try to build it AGAIN server-side, which fails trying
+          # to invoke tsc there. We hand over an already-built package instead.
+          remote-build: false
