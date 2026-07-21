@@ -90,7 +90,6 @@ function tabsFor(role: ShellUser["role"]): NavItem[] {
 }
 
 const TITLES: [string, string][] = [
-  ["/account", "My account"],
   ["/audit", "Audit log"],
   ["/log-time", "Log time"],
   ["/timesheet", "My timesheet"],
@@ -168,19 +167,15 @@ export function AppShell({
             </div>
           ))}
         </nav>
-        <Link
-          href="/account"
-          className="mt-auto flex items-center gap-2.5 rounded-lg border-t border-white/10 px-2 pt-3 hover:bg-white/5"
-          title="My account — change password"
-        >
+        <div className="mt-auto flex items-center gap-2.5 border-t border-white/10 px-2 pt-3">
           <div className="grid h-8 w-8 flex-none place-items-center rounded-full bg-gradient-to-br from-[var(--burgundy)] to-[var(--purple)] text-xs font-bold text-white">
             {user.initials}
           </div>
           <div className="min-w-0 text-[12.5px] leading-tight">
             <div className="truncate font-semibold text-white">{user.name}</div>
-            <div className="text-[#8fb2c2]">{user.title ?? user.role} · account ›</div>
+            <div className="text-[#8fb2c2]">{user.title ?? user.role}</div>
           </div>
-        </Link>
+        </div>
         <button
           onClick={signOut}
           className="mt-3 rounded-lg border border-white/20 px-2.5 py-1.5 text-xs text-[#bcd4df] hover:bg-white/5"

@@ -3,13 +3,11 @@ import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = [
   "/login",
-  "/reset-password",
-  "/api/auth/login",
+  "/api/auth/entra", // Entra ID sign-in redirect + OAuth callback — no session cookie yet
   "/api/auth/logout",
-  "/api/auth/request-reset",
-  "/api/auth/reset-password",
   "/api/cron", // cron routes do their own CRON_SECRET bearer check
   "/manifest.json",
+  "/api/health", // App Service health-check ping carries no session cookie
 ];
 
 function isPublicPath(pathname: string): boolean {

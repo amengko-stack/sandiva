@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, tables } from "@/db";
 import { jsonError, requireSession } from "@/lib/api";
-import { issueInviteLink } from "@/lib/auth/invite";
 
 const bodySchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -18,8 +17,8 @@ const bodySchema = z.object({
   effectiveFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
-// Creates the account as a PENDING INVITE — no password exists until the user
-// opens their invite link and sets their own (never an admin-invented temp).
+// Creates the account. There is no password to set — the person signs in
+// immediately via Microsoft Entra ID as long as their email matches.
 export async function POST(req: NextRequest) {
   const auth = requireSession(["admin"]);
   if (!auth.ok) return auth.response;
@@ -40,11 +39,9 @@ export async function POST(req: NextRequest) {
       name: d.name,
       initials: d.initials,
       email,
-      passwordHash: null,
       role: d.role,
       title: d.title,
       weeklyTargetUnits: String(d.weeklyTargetUnits),
-      mustChangePassword: false,
     })
     .returning();
 
@@ -58,15 +55,13 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { inviteUrl, emailSent } = await issueInviteLink(user);
-
   await db().insert(tables.auditLog).values({
     actorId: auth.session.userId,
-    action: "user_invited",
+    action: "user_created",
     entity: "user",
     entityId: String(user.id),
-    after: { name: user.name, initials: user.initials, email: user.email, role: user.role, emailSent },
+    after: { name: user.name, initials: user.initials, email: user.email, role: user.role },
   });
 
-  return NextResponse.json({ ok: true, user: { id: user.id, email: user.email }, inviteUrl, emailSent });
+  return NextResponse.json({ ok: true, user });
 }

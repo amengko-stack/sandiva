@@ -1,0 +1,21 @@
+{
+  "name": "reminder-cron",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Azure Function (Timer Trigger) that pings the sln-timesheet app's /api/cron/reminders endpoint. Not part of the sln-timesheet Next.js app.",
+  "main": "dist/src/functions/*.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "_note_start": "start' runs the compiled function locally via Azure Functions Core Tools for testing only.",
+    "start": "func start",
+    "_note_deploy": "Not part of this repo's normal dev flow. Deploy via CI/CD or: func azure functionapp publish <function-app-name>"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.4.5"
+  }
+}

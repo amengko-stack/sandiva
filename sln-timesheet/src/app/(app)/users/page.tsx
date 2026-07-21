@@ -11,22 +11,19 @@ export default async function UsersPage() {
   const user = await requireUser();
   if (user.role !== "admin") redirect("/");
 
-  const users = (
-    await db()
-      .select({
-        id: tables.users.id,
-        name: tables.users.name,
-        initials: tables.users.initials,
-        email: tables.users.email,
-        role: tables.users.role,
-        title: tables.users.title,
-        weeklyTargetUnits: tables.users.weeklyTargetUnits,
-        active: tables.users.active,
-        passwordHash: tables.users.passwordHash,
-      })
-      .from(tables.users)
-      .orderBy(asc(tables.users.name))
-  ).map(({ passwordHash, ...u }: any) => ({ ...u, pending: passwordHash === null }));
+  const users = await db()
+    .select({
+      id: tables.users.id,
+      name: tables.users.name,
+      initials: tables.users.initials,
+      email: tables.users.email,
+      role: tables.users.role,
+      title: tables.users.title,
+      weeklyTargetUnits: tables.users.weeklyTargetUnits,
+      active: tables.users.active,
+    })
+    .from(tables.users)
+    .orderBy(asc(tables.users.name));
 
   const rates = await db()
     .select()

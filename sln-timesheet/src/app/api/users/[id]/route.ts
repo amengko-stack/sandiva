@@ -101,8 +101,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ ok: true });
 }
 
-// Cancels a PENDING invite (no password set yet, so nothing depends on the
-// account). Activated users are deactivated instead — history must be kept.
+// Hard-deletes a user, but only if they have no real activity yet (never
+// engagement partner on a matter, never logged a time entry). Under
+// Entra-only auth there's no "pending invite" concept — a freshly created
+// account is deletable right up until it's actually been used; once it has,
+// deactivate instead so history is kept.
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   const auth = requireSession(["admin"]);
   if (!auth.ok) return auth.response;
@@ -112,8 +115,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
 
   const user = await db().query.users.findFirst({ where: eq(tables.users.id, id) });
   if (!user) return jsonError("User not found.", 404);
-  if (user.passwordHash !== null)
-    return jsonError("This account is already activated — deactivate it instead of deleting.", 409);
 
   const epMatters = await db()
     .select({ id: tables.matters.id })
@@ -134,6 +135,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
       409,
     );
 
+  // password_resets rows can still exist from before this migration (old
+  // invite/reset links) — the FK has no cascade, so clear them first or the
+  // delete below would fail for a user who was invited under the old system.
   await db().delete(tables.passwordResets).where(eq(tables.passwordResets.userId, id));
   await db().delete(tables.userRates).where(eq(tables.userRates.userId, id));
   await db().delete(tables.matterRates).where(eq(tables.matterRates.userId, id));
@@ -144,7 +148,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
 
   await db().insert(tables.auditLog).values({
     actorId: auth.session.userId,
-    action: "invite_cancelled",
+    action: "user_deleted",
     entity: "user",
     entityId: String(id),
     before: { name: user.name, initials: user.initials, email: user.email, role: user.role },

@@ -1,0 +1,63 @@
+# Deploys sln-timesheet to Azure App Service (Linux, Node 20) using the
+# Next.js "standalone" output (see sln-timesheet/next.config.mjs).
+#
+# Required GitHub repo secrets (Settings -> Secrets and variables -> Actions):
+#   AZURE_WEBAPP_NAME             Name of the Azure Web App resource.
+#   AZURE_WEBAPP_PUBLISH_PROFILE  Contents of the publish profile XML.
+#     Get it from: Azure Portal -> the Web App resource -> "Get publish profile"
+#     (top toolbar of the Overview blade), or via CLI:
+#       az webapp deployment list-publishing-profiles \
+#         --name <app-name> --resource-group <resource-group> --xml
+#
+# NOTE: this triggers on `feature/timesheet-m1` because that's the app's
+# current active branch. Once/if this branch is merged, change the trigger
+# branch below to `main`.
+
+name: Deploy sln-timesheet to Azure
+
+on:
+  push:
+    branches:
+      - feature/timesheet-m1
+    paths:
+      - "sln-timesheet/**"
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sln-timesheet
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.15.0"
+          cache: "npm"
+          cache-dependency-path: sln-timesheet/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # `output: "standalone"` does not automatically include public/ or
+      # .next/static — copy them into the standalone output per Microsoft's
+      # documented pattern for Next.js on App Service.
+      - name: Copy static assets into standalone output
+        run: |
+          cp -r public .next/standalone/public
+          cp -r .next/static .next/standalone/.next/static
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: sln-timesheet/.next/standalone

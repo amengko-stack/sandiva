@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 interface RateRow { billingRateIdr: string | null; billingRateUsd: string | null; costRateIdr: string | null; effectiveFrom: string }
 interface UserRow {
   id: number; name: string; initials: string; email: string; role: string;
-  title: string | null; weeklyTargetUnits: string; active: boolean; pending: boolean;
+  title: string | null; weeklyTargetUnits: string; active: boolean;
   rate: RateRow | null;
   rateHistory: RateRow[];
 }
@@ -25,8 +25,6 @@ interface DelegateMapping {
   principalName: string;
 }
 
-interface InvitePanel { name: string; email: string; url: string; emailSent: boolean; kind: "invite" | "reset" }
-
 export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; delegates?: DelegateMapping[] }) {
   const router = useRouter();
   const [dDelegate, setDDelegate] = useState<number | "">("");
@@ -36,8 +34,6 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
   const [rateFor, setRateFor] = useState<UserRow | null>(null);
   const [historyFor, setHistoryFor] = useState<number | null>(null);
   const [editFor, setEditFor] = useState<UserRow | null>(null);
-  const [invite, setInvite] = useState<InvitePanel | null>(null);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: "", initials: "", email: "", role: "member", title: "",
@@ -49,21 +45,6 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
     setForm((f) => ({ ...f, [k]: e.target.value }));
   const setE = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setEdit((f) => ({ ...f, [k]: e.target.value }));
-
-  function showInvite(panel: InvitePanel) {
-    setInvite(panel);
-    setCopied(false);
-  }
-
-  async function copyInvite() {
-    if (!invite) return;
-    try {
-      await navigator.clipboard.writeText(invite.url);
-      setCopied(true);
-    } catch {
-      // Clipboard blocked — the link is visible for manual selection.
-    }
-  }
 
   async function addUser() {
     setError(null);
@@ -83,25 +64,6 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
     setAdding(false);
     setShowRates(false);
     setForm({ name: "", initials: "", email: "", role: "member", title: "", weeklyTargetUnits: "40", billingRateIdr: "", billingRateUsd: "", costRateIdr: "" });
-    showInvite({ name: form.name, email: data.user.email, url: data.inviteUrl, emailSent: data.emailSent, kind: "invite" });
-    router.refresh();
-  }
-
-  async function sendLink(u: UserRow) {
-    setError(null);
-    const res = await fetch(`/api/users/${u.id}/invite`, { method: "POST" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setError(data.error ?? "Could not create the link.");
-    showInvite({ name: u.name, email: u.email, url: data.inviteUrl, emailSent: data.emailSent, kind: data.pending ? "invite" : "reset" });
-  }
-
-  async function cancelInvite(u: UserRow) {
-    setError(null);
-    if (!window.confirm(`Cancel the invite for ${u.name}? The account will be removed.`)) return;
-    const res = await fetch(`/api/users/${u.id}`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setError(data.error ?? "Could not cancel the invite.");
-    if (invite && invite.email === u.email) setInvite(null);
     router.refresh();
   }
 
@@ -190,42 +152,17 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
         </p>
         <span className="flex-1" />
         <button onClick={() => setAdding((v) => !v)} className="flex-none rounded-lg bg-[var(--gold)] px-3 py-1.5 text-xs font-semibold text-[#20200a]">
-          + Invite user
+          + Add user
         </button>
       </div>
 
       {error && <p className="rounded-lg border border-burgundy/30 bg-burgundy/10 px-3 py-2 text-[13px] font-medium text-burgundy">{error}</p>}
 
-      {invite && (
-        <div className="rounded-card border border-good/40 bg-good/5 p-4 shadow-sm">
-          <div className="flex items-start gap-2">
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold text-good">
-                {invite.kind === "invite" ? `Invite link for ${invite.name}` : `Password-reset link for ${invite.name}`}
-              </h3>
-              <p className="mt-0.5 text-[12.5px] text-[var(--text-2)]">
-                {invite.emailSent
-                  ? `Email sent to ${invite.email}. You can also send the link yourself (e.g. WhatsApp):`
-                  : `Email could not be sent to ${invite.email} — copy the link and send it yourself (e.g. WhatsApp):`}
-              </p>
-            </div>
-            <button onClick={() => setInvite(null)} aria-label="Dismiss" className="rounded p-1 text-[var(--text-3)] hover:bg-[var(--surface-2)]">✕</button>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <code className="min-w-0 flex-1 break-all rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-[11.5px]">{invite.url}</code>
-            <button onClick={copyInvite} className="rounded-lg bg-[var(--gold)] px-3 py-2 text-xs font-semibold text-[#20200a] hover:brightness-105">
-              {copied ? "✓ Copied" : "Copy link"}
-            </button>
-          </div>
-          <p className="mt-1.5 text-[11.5px] text-[var(--text-3)]">Single-use, valid 7 days. Re-issuing a link invalidates this one.</p>
-        </div>
-      )}
-
       {adding && (
         <div className="rounded-card border border-[var(--border)] bg-[var(--surface)] p-4 shadow-sm">
-          <h3 className="mb-1 text-sm font-semibold">Invite a new user</h3>
+          <h3 className="mb-1 text-sm font-semibold">Add a new user</h3>
           <p className="mb-3 text-[12.5px] text-[var(--text-2)]">
-            No password needed — they get a link to set their own and sign straight in.
+            No password to set — they sign in with their Sandiva Microsoft 365 account as soon as the email matches.
           </p>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div><label className={labelCls}>Name</label><input className={inputCls} value={form.name} onChange={set("name")} /></div>
@@ -251,7 +188,7 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
             </div>
           )}
           <div className="mt-4 flex gap-2">
-            <button onClick={addUser} className="rounded-lg bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#20200a]">Create &amp; get invite link</button>
+            <button onClick={addUser} className="rounded-lg bg-[var(--gold)] px-4 py-2 text-sm font-semibold text-[#20200a]">Add user</button>
             <button onClick={() => setAdding(false)} className="rounded-lg border border-[var(--border-strong)] px-4 py-2 text-sm font-semibold">Cancel</button>
           </div>
         </div>
@@ -341,7 +278,6 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
                     <td className="px-4 py-2">
                       <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full border border-[var(--border)] bg-[var(--surface-3)] align-middle text-[9px] font-bold text-[var(--text-2)]">{u.initials}</span>
                       {u.name}
-                      {u.pending && <span className="ml-2 rounded-full bg-[var(--gold-soft)] px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--gold-ink)]">invited</span>}
                       {!u.active && <span className="ml-2 rounded-full bg-[var(--surface-3)] px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--text-3)]">inactive</span>}
                     </td>
                     <td className="px-2 py-2 capitalize">{u.title ?? u.role}</td>
@@ -351,22 +287,6 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
                     <td className="num px-2 py-2 text-right">{Number(u.weeklyTargetUnits)}</td>
                     <td className="px-2 py-2 text-right">
                       <span className="inline-flex flex-wrap justify-end gap-1.5">
-                        {u.pending ? (
-                          <>
-                            <button onClick={() => sendLink(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
-                              Invite link
-                            </button>
-                            <button onClick={() => cancelInvite(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:border-burgundy hover:text-burgundy">
-                              Cancel invite
-                            </button>
-                          </>
-                        ) : (
-                          u.active && (
-                            <button onClick={() => sendLink(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]" title="Issue a password-reset link">
-                              Reset link
-                            </button>
-                          )
-                        )}
                         <button onClick={() => openEdit(u)} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
                           Edit
                         </button>
@@ -376,14 +296,12 @@ export function UsersScreen({ users, delegates = [] }: { users: UserRow[]; deleg
                         <button onClick={() => { setRateFor(u); setError(null); }} className="rounded-md border border-[var(--border-strong)] px-2.5 py-1 text-xs font-semibold hover:bg-[var(--surface-2)]">
                           New rate
                         </button>
-                        {!u.pending && (
-                          <button
-                            onClick={() => toggleActive(u)}
-                            className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${u.active ? "border-[var(--border-strong)] hover:border-burgundy hover:text-burgundy" : "border-good text-good hover:bg-good/10"}`}
-                          >
-                            {u.active ? "Deactivate" : "Reactivate"}
-                          </button>
-                        )}
+                        <button
+                          onClick={() => toggleActive(u)}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-semibold ${u.active ? "border-[var(--border-strong)] hover:border-burgundy hover:text-burgundy" : "border-good text-good hover:bg-good/10"}`}
+                        >
+                          {u.active ? "Deactivate" : "Reactivate"}
+                        </button>
                       </span>
                     </td>
                   </tr>
