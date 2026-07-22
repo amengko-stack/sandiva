@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { acquireEmailByCode, ENTRA_STATE_COOKIE } from "@/lib/auth/entra";
-import { mintSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth/session";
+import { mintSessionToken, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -46,12 +46,6 @@ export async function GET(req: NextRequest) {
 
   const res = NextResponse.redirect(`${base(req)}/`);
   res.cookies.delete(ENTRA_STATE_COOKIE);
-  res.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_TTL_SECONDS,
-  });
+  res.cookies.set(SESSION_COOKIE, token, sessionCookieOptions());
   return res;
 }

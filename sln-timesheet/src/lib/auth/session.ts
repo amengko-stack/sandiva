@@ -21,6 +21,21 @@ export interface Session {
   expiresAtMs: number;
 }
 
+/** Cookie flags for the session cookie. Production uses SameSite=None so the
+ *  cookie is sent inside the Microsoft Teams tab iframe (third-party context);
+ *  the CSRF exposure None creates is compensated by the Origin check in
+ *  middleware.ts. Dev stays Lax because localhost is http (None requires Secure). */
+export function sessionCookieOptions() {
+  const prod = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: true,
+    secure: prod,
+    sameSite: prod ? ("none" as const) : ("lax" as const),
+    path: "/",
+    maxAge: SESSION_TTL_SECONDS,
+  };
+}
+
 function getSecret(): string | undefined {
   return process.env.APP_SESSION_TOKEN;
 }

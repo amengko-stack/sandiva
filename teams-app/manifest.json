@@ -1,0 +1,42 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "d54712ab-3bc5-40a7-9072-595bff65f370",
+  "developer": {
+    "name": "Sandiva Lawyer Network",
+    "websiteUrl": "https://sandiva-timesheet-g5hqesava4bme7ha.southeastasia-01.azurewebsites.net",
+    "privacyUrl": "https://sandiva-timesheet-g5hqesava4bme7ha.southeastasia-01.azurewebsites.net",
+    "termsOfUseUrl": "https://sandiva-timesheet-g5hqesava4bme7ha.southeastasia-01.azurewebsites.net"
+  },
+  "name": {
+    "short": "Sandiva Timesheets",
+    "full": "Sandiva Timesheets"
+  },
+  "description": {
+    "short": "Log time, approve entries, and manage invoices.",
+    "full": "Sandiva Timesheets lets lawyers log billable time, submit entries for approval, and manage client invoices directly inside Microsoft Teams."
+  },
+  "accentColor": "#003D5A",
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "staticTabs": [
+    {
+      "entityId": "dashboard",
+      "name": "Timesheets",
+      "contentUrl": "https://sandiva-timesheet-g5hqesava4bme7ha.southeastasia-01.azurewebsites.net/teams",
+      "websiteUrl": "https://sandiva-timesheet-g5hqesava4bme7ha.southeastasia-01.azurewebsites.net/",
+      "scopes": ["personal"]
+    }
+  ],
+  "permissions": ["identity"],
+  "validDomains": [
+    "sandiva-timesheet-g5hqesava4bme7ha.southeastasia-01.azurewebsites.net"
+  ],
+  "webApplicationInfo": {
+    "id": "d54712ab-3bc5-40a7-9072-595bff65f370",
+    "resource": "api://sandiva-timesheet-g5hqesava4bme7ha.southeastasia-01.azurewebsites.net/d54712ab-3bc5-40a7-9072-595bff65f370"
+  }
+}
