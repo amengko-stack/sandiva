@@ -26,7 +26,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   if (parsed.data.engagementPartnerId) {
     const partner = await db().query.users.findFirst({ where: eq(tables.users.id, parsed.data.engagementPartnerId) });
-    if (!partner || partner.role !== "partner") return jsonError("Engagement partner must be a partner.");
+    // Admins can also serve as engagement partner — members/accounting cannot.
+    if (!partner || (partner.role !== "partner" && partner.role !== "admin"))
+      return jsonError("Engagement partner must be a partner or admin.");
   }
 
   const [updated] = await db()

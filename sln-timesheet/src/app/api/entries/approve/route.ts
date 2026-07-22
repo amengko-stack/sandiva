@@ -20,9 +20,10 @@ const bodySchema = z.object({
 
 // Approve submitted entries (with optional write-down). The state machine
 // guarantees only the matter's ENGAGEMENT PARTNER can do this — not other
-// partners, not admin.
+// partners, and not an admin who isn't that matter's engagement partner
+// (admins can be one, same as partners — see matters/route.ts).
 export async function POST(req: NextRequest) {
-  const auth = requireSession(["partner"]);
+  const auth = requireSession(["partner", "admin"]);
   if (!auth.ok) return auth.response;
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));

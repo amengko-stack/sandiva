@@ -27,7 +27,10 @@ export async function POST(req: NextRequest) {
   if (dup) return jsonError(`Matter ${parsed.data.matterCode} already exists.`);
 
   const partner = await db().query.users.findFirst({ where: eq(tables.users.id, parsed.data.engagementPartnerId) });
-  if (!partner || partner.role !== "partner") return jsonError("Engagement partner must be a partner.");
+  // Admins can also serve as engagement partner (common at a small firm where
+  // the owner is both) — members and accounting still can never be one.
+  if (!partner || (partner.role !== "partner" && partner.role !== "admin"))
+    return jsonError("Engagement partner must be a partner or admin.");
 
   const [matter] = await db()
     .insert(tables.matters)

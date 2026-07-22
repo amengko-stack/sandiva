@@ -11,10 +11,11 @@ const bodySchema = z.object({
   note: z.string().trim().max(500).optional(),
 });
 
-// Send a submitted entry back to draft — engagement partner only. The note
-// (reason) is stored on the entry, shown to the owner, and emailed.
+// Send a submitted entry back to draft — engagement partner only (partner or
+// admin, whichever role that matter's engagement partner actually holds). The
+// note (reason) is stored on the entry, shown to the owner, and emailed.
 export async function POST(req: NextRequest) {
-  const auth = requireSession(["partner"]);
+  const auth = requireSession(["partner", "admin"]);
   if (!auth.ok) return auth.response;
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));

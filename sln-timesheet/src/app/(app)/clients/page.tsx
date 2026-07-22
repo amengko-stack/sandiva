@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { requireUser } from "@/lib/auth/current-user";
 import { ClientsScreen } from "./screen";
@@ -29,7 +29,7 @@ export default async function ClientsPage() {
   const partners = await db()
     .select({ id: tables.users.id, initials: tables.users.initials, name: tables.users.name })
     .from(tables.users)
-    .where(eq(tables.users.role, "partner"));
+    .where(inArray(tables.users.role, ["partner", "admin"]));
 
   return <ClientsScreen clients={clients as any} matters={matters as any} partners={partners as any} />;
 }

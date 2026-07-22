@@ -6,7 +6,9 @@ import Link from "next/link";
 // Role-scoped navigation — matches the approved mockup exactly:
 // member: Dashboard / Log time / My timesheet
 // partner: + Firm: Approvals / Invoices / Reports
-// admin: operations only (NO Approvals — admin never approves timesheets)
+// admin: operations, + Approvals (admins can also be a matter's engagement
+// partner — see matters/route.ts — so they need a way to approve that
+// matter's time; the badge/page itself is empty for admins who aren't one)
 type NavItem = { href: string; label: string; badge?: number };
 type NavGroup = { label?: string; items: NavItem[] };
 
@@ -48,7 +50,14 @@ function navFor(role: ShellUser["role"], pendingApprovals: number): NavGroup[] {
       },
     ];
   return [
-    { items: [{ href: "/", label: "Dashboard" }, { href: "/invoices", label: "Invoices" }, { href: "/reports", label: "Reports" }] },
+    {
+      items: [
+        { href: "/", label: "Dashboard" },
+        { href: "/approvals", label: "Approvals", badge: pendingApprovals || undefined },
+        { href: "/invoices", label: "Invoices" },
+        { href: "/reports", label: "Reports" },
+      ],
+    },
     {
       label: "Administration",
       items: [
@@ -84,6 +93,7 @@ function tabsFor(role: ShellUser["role"]): NavItem[] {
     ];
   return [
     { href: "/", label: "Home" },
+    { href: "/approvals", label: "Approvals" },
     { href: "/matters", label: "Matters" },
     { href: "/imports", label: "Import" },
   ];

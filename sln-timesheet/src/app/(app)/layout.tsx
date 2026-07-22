@@ -8,9 +8,10 @@ export const dynamic = "force-dynamic";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
 
-  // Partner nav badge: submitted entries on THEIR engagement matters.
+  // Partner nav badge: submitted entries on THEIR engagement matters. Admins
+  // can also be an engagement partner, so they get the same badge.
   let pendingApprovals = 0;
-  if (user.role === "partner") {
+  if (user.role === "partner" || user.role === "admin") {
     const myMatters = await db()
       .select({ id: tables.matters.id })
       .from(tables.matters)

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ApprovalsPage() {
   const user = await requireUser();
-  if (user.role !== "partner") redirect("/");
+  if (user.role !== "partner" && user.role !== "admin") redirect("/");
 
   const myMatters = await db()
     .select({

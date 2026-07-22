@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { db, tables } from "@/db";
 import { requireUser } from "@/lib/auth/current-user";
 import { budgetAlerts } from "@/lib/reports/aggregate";
@@ -29,7 +29,7 @@ export default async function MattersPage() {
   const partners = await db()
     .select({ id: tables.users.id, initials: tables.users.initials, name: tables.users.name })
     .from(tables.users)
-    .where(eq(tables.users.role, "partner"));
+    .where(inArray(tables.users.role, ["partner", "admin"]));
 
   const alerts = await budgetAlerts();
   const budgetByMatter = Object.fromEntries(alerts.map((a) => [a.matterId, { pct: a.pct, level: a.level }]));
