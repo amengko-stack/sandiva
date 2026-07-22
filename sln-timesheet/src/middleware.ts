@@ -79,7 +79,14 @@ export async function middleware(request: NextRequest) {
     if (origin) {
       let originHost: string | null = null;
       try { originHost = new URL(origin).host; } catch { originHost = null; }
-      if (!originHost || originHost !== request.nextUrl.host) {
+      // Compare against the PUBLIC host the browser addressed, not
+      // request.nextUrl.host — behind Azure App Service's proxy the latter can
+      // reflect the internal listener, which would reject legitimate
+      // same-site requests (Origin is sent on ALL browser POSTs, same-site
+      // included).
+      const requestHost =
+        request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
+      if (!originHost || originHost !== requestHost) {
         return NextResponse.json({ error: "Cross-origin request rejected." }, { status: 403 });
       }
     }
