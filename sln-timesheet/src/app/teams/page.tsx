@@ -54,13 +54,18 @@ function NoAccount() {
   );
 }
 
-function Failed() {
+function Failed({ detail }: { detail: string | null }) {
   return (
     <div className="pb-7">
       <h1 className="text-xl font-semibold">Couldn&apos;t sign you in here</h1>
       <p className="mb-4 mt-1 text-[13px] text-[var(--text-2)]">
         Teams sign-in didn&apos;t complete.
       </p>
+      {detail && (
+        <p className="mb-4 break-all rounded-lg bg-[var(--surface-2)] px-3 py-2 text-[11px] text-[var(--text-3)]">
+          Detail for your admin: {detail}
+        </p>
+      )}
       <a
         href="/"
         target="_blank"
@@ -75,6 +80,7 @@ function Failed() {
 
 export default function TeamsPage() {
   const [state, setState] = useState<TeamsState>("signing_in");
+  const [detail, setDetail] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,10 +112,17 @@ export default function TeamsPage() {
           }
         }
 
+        setDetail(`server responded ${res.status}`);
         setState("failed");
       } catch (err) {
         console.error("Teams sign-in failed:", err);
-        if (!cancelled) setState("failed");
+        if (!cancelled) {
+          // getAuthToken() failures carry the Entra error text (consent,
+          // resource mismatch, ...) — surface it so a non-technical user can
+          // relay the exact cause instead of a generic failure.
+          setDetail(err instanceof Error ? err.message : String(err));
+          setState("failed");
+        }
       }
     }
 
@@ -124,7 +137,7 @@ export default function TeamsPage() {
     <TeamsShell>
       {state === "signing_in" && <SigningIn />}
       {state === "no_account" && <NoAccount />}
-      {state === "failed" && <Failed />}
+      {state === "failed" && <Failed detail={detail} />}
     </TeamsShell>
   );
 }

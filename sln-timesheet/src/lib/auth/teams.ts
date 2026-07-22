@@ -48,11 +48,22 @@ export async function verifyTeamsTokenWith(
       audience: [clientId, `api://${host}/${clientId}`],
     });
     payload = result.payload;
-  } catch {
+  } catch (err) {
+    // Rejected tokens are expected input, but the REASON matters when
+    // debugging tenant config (wrong issuer = v1 token, wrong audience =
+    // Application ID URI mismatch, ...) — log it for the App Service
+    // log stream without leaking anything to the caller.
+    console.error(
+      "Teams token rejected:",
+      err instanceof Error ? `${(err as { code?: string }).code ?? err.name}: ${err.message}` : err,
+    );
     return null;
   }
 
-  if (payload.tid !== tenantId) return null;
+  if (payload.tid !== tenantId) {
+    console.error("Teams token rejected: tid mismatch");
+    return null;
+  }
 
   const email =
     (payload.preferred_username as string | undefined) ??
