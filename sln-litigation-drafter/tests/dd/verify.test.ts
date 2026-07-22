@@ -81,15 +81,24 @@ describe("verifyFindings", () => {
     expect(out[0].verified).toBe(true);
   });
 
-  it("throws when a target finding gets no verdict back", async () => {
+  it("passes a target through UNVERIFIED (never dropped) when it gets no verdict back", async () => {
+    // A partial verdict list is not a batch failure — the batch succeeded, one
+    // finding just has no verdict. That finding must survive, unverified, rather
+    // than aborting the run (old behavior) or being dropped.
     const a = finding({ id: "A", severity: "kritis" });
     const b = finding({ id: "B", severity: "kritis" });
     const client = fakeClient(() => ({ verdicts: [{ id: "A", upheld: true }] }));
 
-    await expect(verifyFindings(client, [a, b], "konteks dokumen")).rejects.toThrow(/tidak lengkap/);
+    const out = await verifyFindings(client, [a, b], "konteks dokumen");
+
+    expect(out).toHaveLength(2);
+    expect(out.find((f) => f.id === "A")?.verified).toBe(true);
+    const keptB = out.find((f) => f.id === "B");
+    expect(keptB).toBeDefined();
+    expect(keptB?.verified).toBe(false);
   });
 
-  it("throws when the model response is not JSON", async () => {
+  it("soft-fails a non-JSON batch: its findings pass through unverified instead of throwing", async () => {
     const a = finding({ id: "A", severity: "kritis" });
     const client = {
       messages: {
@@ -100,7 +109,11 @@ describe("verifyFindings", () => {
       },
     } as unknown as Anthropic;
 
-    await expect(verifyFindings(client, [a], "konteks dokumen")).rejects.toThrow();
+    const out = await verifyFindings(client, [a], "konteks dokumen");
+
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe("A");
+    expect(out[0].verified).toBe(false);
   });
 
   it("batches targets in groups of 10 and verifies survivors across every batch", async () => {
