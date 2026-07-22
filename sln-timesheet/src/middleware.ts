@@ -3,12 +3,20 @@ import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = [
   "/login",
+  "/teams", // Microsoft Teams tab entry point — no session cookie yet
   "/api/auth/entra", // Entra ID sign-in redirect + OAuth callback — no session cookie yet
+  "/api/auth/teams", // Teams tab SSO exchange — how Teams users get a session
   "/api/auth/logout",
   "/api/cron", // cron routes do their own CRON_SECRET bearer check
   "/manifest.json",
   "/api/health", // App Service health-check ping carries no session cookie
 ];
+
+// CSRF guard: the session cookie is SameSite=None in production (required for
+// the Teams tab iframe), so browsers attach it cross-site. Reject mutating
+// requests whose Origin doesn't match us. No Origin (curl, cron, server-to-
+// server) passes — those can't carry a victim's cookie automatically.
+const MUTATING = ["POST", "PATCH", "PUT", "DELETE"];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
@@ -65,6 +73,17 @@ async function isValidSession(token: string | undefined): Promise<boolean> {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  if (MUTATING.includes(request.method)) {
+    const origin = request.headers.get("origin");
+    if (origin) {
+      let originHost: string | null = null;
+      try { originHost = new URL(origin).host; } catch { originHost = null; }
+      if (!originHost || originHost !== request.nextUrl.host) {
+        return NextResponse.json({ error: "Cross-origin request rejected." }, { status: 403 });
+      }
+    }
+  }
 
   if (isPublicPath(pathname)) {
     return NextResponse.next();
