@@ -3,9 +3,22 @@ import Anthropic from "@anthropic-ai/sdk";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { ddKeys } from "@/lib/dd/blob-keys";
 import { consolidate } from "@/lib/dd/consolidate";
-import type { DDClassifiedDoc, DDFinding, DDGapItem, DDTransaction } from "@/types/dd";
+import type { DDClassifiedDoc, DDConsolidated, DDFinding, DDGapItem, DDTransaction } from "@/types/dd";
 
 export const maxDuration = 300;
+
+// Re-read a previously computed consolidation (mirrors GET /api/dd/findings).
+// Without this the client's local consolidated object is lost on reload — and
+// in a new tab the persisted `consolidated` flag is false even though the blob
+// exists — so Stage 5 looked like consolidation had never run.
+export async function GET(req: NextRequest) {
+  const sessionId = new URL(req.url).searchParams.get("sessionId");
+  if (!isValidSessionId(sessionId)) {
+    return NextResponse.json({ error: "sessionId tidak valid" }, { status: 400 });
+  }
+  const raw = await readBlobText(ddKeys.consolidated(sessionId));
+  return NextResponse.json({ consolidated: raw ? (JSON.parse(raw) as DDConsolidated) : null });
+}
 
 export async function POST(req: NextRequest) {
   try {

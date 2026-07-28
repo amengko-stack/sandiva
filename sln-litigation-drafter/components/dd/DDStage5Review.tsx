@@ -59,12 +59,19 @@ function FindingCard({ f, onAction, onOpenSource, readOnly }: {
   );
 }
 
+type SaveStatus = "idle" | "pending" | "saved" | "failed";
+
 export default function DDStage5Review() {
   const { state, dispatch } = useDD();
   const [findingsByEntity, setFindingsByEntity] = useState<Record<string, DDFinding[]>>({});
   const [progress, setProgress] = useState<Record<string, string>>({});
   const [running, setRunning] = useState<Record<string, boolean>>({});
   const [consolidated, setConsolidated] = useState<DDConsolidated | null>(null);
+  const [consolidating, setConsolidating] = useState(false);
+  // Per-entity save feedback: reviewer decisions auto-save on a debounce, so
+  // without a visible status the "Simpan review" button looks like a no-op.
+  const [saveStatus, setSaveStatus] = useState<Record<string, SaveStatus>>({});
+  const [savedAt, setSavedAt] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<{ entityId: string; sourceFile: string; verbatim: string } | null>(null);
   const t = state.transaction;
 
@@ -75,14 +82,22 @@ export default function DDStage5Review() {
 
   const persistEntity = async (eid: string, findings: DDFinding[]) => {
     const json = JSON.stringify(findings);
+    setSaveStatus((s) => ({ ...s, [eid]: "pending" }));
     try {
       const res = await fetch("/api/dd/findings", {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, findings }),
       });
-      if (!res.ok) { dispatch({ type: "SET_ERROR", error: (await res.json()).error ?? "Gagal menyimpan review" }); return; }
+      if (!res.ok) {
+        setSaveStatus((s) => ({ ...s, [eid]: "failed" }));
+        dispatch({ type: "SET_ERROR", error: (await res.json()).error ?? "Gagal menyimpan review" });
+        return;
+      }
       lastSavedRef.current[eid] = json;
+      setSaveStatus((s) => ({ ...s, [eid]: "saved" }));
+      setSavedAt((s) => ({ ...s, [eid]: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) }));
     } catch (err) {
+      setSaveStatus((s) => ({ ...s, [eid]: "failed" }));
       dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Gagal menyimpan review" });
     }
   };
@@ -108,6 +123,21 @@ export default function DDStage5Review() {
         })
         .catch(() => {});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-hydrate a previously computed consolidation the same way findings are.
+  // Self-healing: the boolean lives in sessionStorage (per-tab), so a new tab
+  // would otherwise show "not consolidated" even though the blob exists.
+  useEffect(() => {
+    fetch(`/api/dd/consolidate?sessionId=${state.sessionId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.consolidated) return;
+        setConsolidated((c) => c ?? d.consolidated);
+        if (!state.consolidated) dispatch({ type: "SET_CONSOLIDATED", value: true });
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -139,6 +169,10 @@ export default function DDStage5Review() {
   }, []);
 
   if (!t) return <div>Selesaikan Stage 1 dahulu.</div>;
+
+  // A one-company DD has nothing to consolidate ACROSS — the cross-entity step
+  // is hidden for it and its aspect rollup runs automatically instead.
+  const isSingleEntity = t.entities.length < 2;
 
   const analyze = async (eid: string) => {
     // Re-entrancy guard: prevent multiple concurrent analyses for the same entity
@@ -181,6 +215,12 @@ export default function DDStage5Review() {
         throw new Error("Stream analisis terputus sebelum selesai — jalankan ulang entitas ini.");
       }
       dispatch({ type: "MARK_PROGRESS", entityId: eid, patch: { analyzed: true } });
+
+      // Single-entity DD: "cross-entity consolidation" is meaningless, but the
+      // aspect rollup it computes still feeds the Word/Excel recap — and for one
+      // entity it runs with NO model call at all. Run it silently so the report
+      // is complete without making the lawyer click a confusing extra step.
+      if (isSingleEntity) void runConsolidate({ silent: true });
     } catch (err) {
       dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Error" });
     } finally {
@@ -198,18 +238,31 @@ export default function DDStage5Review() {
     void persistEntity(eid, findingsByEntity[eid] ?? []);
   };
 
-  const runConsolidate = async () => {
+  // opts.silent: the automatic single-entity rollup — a failure there must not
+  // throw a scary banner at a lawyer who never asked for "consolidation"; the
+  // export path already handles a missing rollup by omitting that section.
+  const runConsolidate = async (opts?: { silent?: boolean }) => {
+    if (consolidating) return;
+    setConsolidating(true);
     try {
       const res = await fetch("/api/dd/consolidate", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: state.sessionId }),
       });
       const data = await res.json();
-      if (!res.ok) { dispatch({ type: "SET_ERROR", error: data.error }); return; }
+      if (!res.ok) {
+        if (!opts?.silent) dispatch({ type: "SET_ERROR", error: data.error });
+        else console.error("[dd/stage5] rollup otomatis gagal:", data.error);
+        return;
+      }
       setConsolidated(data.consolidated);
       dispatch({ type: "SET_CONSOLIDATED", value: true });
     } catch (err) {
-      dispatch({ type: "SET_ERROR", error: err instanceof Error ? err.message : "Gagal konsolidasi" });
+      const message = err instanceof Error ? err.message : "Gagal konsolidasi";
+      if (!opts?.silent) dispatch({ type: "SET_ERROR", error: message });
+      else console.error("[dd/stage5] rollup otomatis gagal:", message);
+    } finally {
+      setConsolidating(false);
     }
   };
 
@@ -221,20 +274,45 @@ export default function DDStage5Review() {
     });
 
   const allAnalyzed = t.entities.every((e) => state.progress[e.id]?.analyzed);
+  const pendingEntities = t.entities.filter((e) => !state.progress[e.id]?.analyzed);
+
+  // Consolidation is NOT required to export: the builders omit that section
+  // when the rollup is missing (load-results returns null, docx/excel skip it).
+  // Multi-entity runs get an informed confirm instead of a hard block, so a
+  // failed consolidation can never lock the lawyer out of their deliverables.
+  const continueToExport = () => {
+    if (!isSingleEntity && !state.consolidated) {
+      const ok = window.confirm(
+        "Konsolidasi lintas-entitas belum dijalankan. Laporan akan dibuat tanpa temuan lintas-entitas dan tanpa rekap kelengkapan per aspek. Lanjutkan ke ekspor?"
+      );
+      if (!ok) return;
+    }
+    dispatch({ type: "SET_STAGE", stage: 6 });
+  };
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <h1>5 — Temuan & Review (exceptions-first)</h1>
       <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        Keputusan review (Terima / Tolak / Edit) tersimpan otomatis. Tombol “Simpan review” hanya untuk menyimpan segera.
         Data sesi analisis tersimpan 24 jam — simpan hasil ke SharePoint sebelum mengakhiri hari kerja.
       </div>
       {t.entities.map((e) => (
         <div key={e.id} style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <strong>{e.name}</strong>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {saveStatus[e.id] === "pending" && (
+                <span style={{ fontSize: 13, color: "var(--text-muted)" }}>Menyimpan…</span>
+              )}
+              {saveStatus[e.id] === "saved" && (
+                <span style={{ fontSize: 13, color: "var(--success)" }}>✓ Tersimpan {savedAt[e.id]}</span>
+              )}
+              {saveStatus[e.id] === "failed" && (
+                <span style={{ fontSize: 13, color: "var(--error)" }}>Gagal menyimpan</span>
+              )}
               <button onClick={() => analyze(e.id)} disabled={running[e.id]}>{running[e.id] ? "Menganalisis…" : "Jalankan analisis"}</button>
-              <button onClick={() => saveReview(e.id)} disabled={!findingsByEntity[e.id]}>Simpan review</button>
+              <button onClick={() => saveReview(e.id)} disabled={!findingsByEntity[e.id] || saveStatus[e.id] === "pending"}>Simpan review</button>
             </div>
           </div>
           {progress[e.id] && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{progress[e.id]}</div>}
@@ -249,20 +327,45 @@ export default function DDStage5Review() {
         </div>
       ))}
 
-      <div style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <strong>Konsolidasi lintas-entitas</strong>
-          <button onClick={runConsolidate} disabled={!allAnalyzed}>Jalankan konsolidasi</button>
+      {isSingleEntity ? (
+        // One company: no cross-entity step to show. The aspect rollup that
+        // feeds the report's "Rekap Kelengkapan per Aspek" runs automatically
+        // after analysis (no model call), so there is nothing to click here.
+        state.consolidated && (
+          <div style={{ fontSize: 13, color: "var(--success)" }}>✓ Rekap kelengkapan aspek siap untuk laporan</div>
+        )
+      ) : (
+        <div style={{ border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <strong>Konsolidasi lintas-entitas</strong>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {state.consolidated && !consolidating && (
+                <span style={{ fontSize: 13, color: "var(--success)" }}>
+                  ✓ Konsolidasi selesai
+                  {consolidated?.generatedAt
+                    ? ` — ${new Date(consolidated.generatedAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
+                    : ""}
+                </span>
+              )}
+              <button onClick={() => runConsolidate()} disabled={!allAnalyzed || consolidating}>
+                {consolidating ? "Menjalankan konsolidasi…" : state.consolidated ? "Jalankan ulang konsolidasi" : "Jalankan konsolidasi"}
+              </button>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Membandingkan temuan antar-perusahaan dan menghasilkan rekap kelengkapan per aspek untuk laporan. Opsional —
+            ekspor tetap bisa dijalankan tanpa ini.
+          </div>
+          {consolidated && (
+            <>
+              {consolidated.crossEntityFindings.length === 0 && <div style={{ fontSize: 13 }}>Tidak ada temuan lintas-entitas.</div>}
+              {consolidated.crossEntityFindings.map((f) => (
+                <FindingCard key={f.id} f={f} onAction={() => {}} onOpenSource={() => {}} readOnly />
+              ))}
+            </>
+          )}
         </div>
-        {consolidated && (
-          <>
-            {consolidated.crossEntityFindings.length === 0 && <div style={{ fontSize: 13 }}>Tidak ada temuan lintas-entitas.</div>}
-            {consolidated.crossEntityFindings.map((f) => (
-              <FindingCard key={f.id} f={f} onAction={() => {}} onOpenSource={() => {}} readOnly />
-            ))}
-          </>
-        )}
-      </div>
+      )}
 
       {preview && (
         <DDSourcePreview
@@ -272,7 +375,12 @@ export default function DDStage5Review() {
         />
       )}
 
-      <button onClick={() => dispatch({ type: "SET_STAGE", stage: 6 })} disabled={!allAnalyzed || !state.consolidated} style={{ padding: 12, fontWeight: 600 }}>
+      {!allAnalyzed && (
+        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
+          Belum bisa ekspor — analisis belum dijalankan untuk: {pendingEntities.map((e) => e.name).join(", ")}.
+        </div>
+      )}
+      <button onClick={continueToExport} disabled={!allAnalyzed} style={{ padding: 12, fontWeight: 600 }}>
         Lanjut ke Ekspor →
       </button>
     </div>
