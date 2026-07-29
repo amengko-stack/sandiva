@@ -79,3 +79,59 @@ describe("applyCurrency", () => {
     expect(out[0].currencyStatus).toBeUndefined();
   });
 });
+
+describe("checkCurrency batching", () => {
+  beforeEach(() => { process.env.PERPLEXITY_API_KEY = "test-key"; });
+
+  // Regression: a single call for many refs made sonar answer "unknown" for
+  // nearly all of them (measured 1/46 real verdicts). Refs must be split into
+  // batches of <=10 so each call researches a small set.
+  it("splits many refs into batches of 10 and merges every verdict", async () => {
+    const refs = Array.from({ length: 23 }, (_, i) => `UU ${i + 1}/2020`);
+    const seenBatches: string[][] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const asked = String(body.messages[0].content)
+        .split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
+      seenBatches.push(asked);
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({
+            results: asked.map((ref) => ({ ref, status: "superseded", note: "diganti" })),
+          }) } }],
+        }),
+        { status: 200 }
+      );
+    }) as unknown as typeof fetch;
+
+    const map = await checkCurrency(refs, fetchImpl);
+
+    expect(seenBatches).toHaveLength(3);                    // 10 + 10 + 3
+    expect(seenBatches.every((b) => b.length <= 10)).toBe(true);
+    expect(Object.keys(map)).toHaveLength(23);
+    expect(Object.values(map).every((v) => v.status === "superseded")).toBe(true);
+  });
+
+  it("keeps one failing batch from poisoning the others", async () => {
+    const refs = Array.from({ length: 20 }, (_, i) => `UU ${i + 1}/2020`);
+    let call = 0;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const asked = String(JSON.parse(String(init.body)).messages[0].content)
+        .split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
+      if (call++ === 0) return new Response("boom", { status: 502 });
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({
+            results: asked.map((ref) => ({ ref, status: "current", note: "berlaku" })),
+          }) } }],
+        }),
+        { status: 200 }
+      );
+    }) as unknown as typeof fetch;
+
+    const map = await checkCurrency(refs, fetchImpl);
+    const statuses = Object.values(map).map((v) => v.status);
+    expect(statuses.filter((s) => s === "unknown")).toHaveLength(10); // failed batch only
+    expect(statuses.filter((s) => s === "current")).toHaveLength(10);
+  });
+});
