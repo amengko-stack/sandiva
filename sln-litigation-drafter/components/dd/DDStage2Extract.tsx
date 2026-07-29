@@ -51,6 +51,11 @@ const STALE_DOWNSTREAM_NOTICE = "Dokumen berubah — jalankan ulang Klasifikasi 
 // prior chunks' text/report instead of overwriting them.
 const EXTRACT_BATCH_SIZE = 60;
 
+// OCR-recheck files are re-extracted with no cache and are typically large
+// scans, so they run far slower per file than a normal extraction pass —
+// hence a much smaller cap than EXTRACT_BATCH_SIZE. See extractOcrResults.
+const OCR_BATCH_SIZE = 8;
+
 export default function DDStage2Extract() {
   const { state, dispatch } = useDD();
   const [runs, setRuns] = useState<Record<string, EntityRun>>({});
@@ -252,49 +257,71 @@ export default function DDStage2Extract() {
     }
   };
 
+  // One /api/dd/recheck-ocr request: streams per-file events into the log and
+  // returns how many files succeeded. Same reader shape as streamExtract.
+  const streamOcrChunk = async (eid: string, files: OcrMatch[]): Promise<number> => {
+    const res = await fetch("/api/dd/recheck-ocr", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, files }),
+    });
+    if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Gagal memulai ekstraksi OCR");
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let successCount = 0;
+    let sawComplete = false;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop() ?? "";
+      for (const ev of events) {
+        const line = ev.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        const msg = JSON.parse(line.slice(6));
+        if (msg.type === "done") { appendLog(eid, `✓ ${msg.name}${msg.charCount ? ` (${msg.charCount} kar)` : ""}`); successCount++; }
+        if (msg.type === "error") appendLog(eid, `✗ ${msg.name}: ${msg.reason}`);
+        if (msg.type === "ocr_required") appendLog(eid, `✗ ${msg.name}: hasil OCR masih tanpa teks`);
+        if (msg.type === "complete") sawComplete = true;
+        if (msg.error) throw new Error(msg.error);
+      }
+    }
+    if (!sawComplete) {
+      throw new Error(
+        "Ekstraksi OCR terputus sebelum selesai — dokumen yang sudah selesai tetap tersimpan; ulangi untuk sisanya."
+      );
+    }
+    return successCount;
+  };
+
   // Step 2 — send the matched (and new) OCR files to the recheck route, which
   // patches the server-side report (perlu_ocr→selesai, new docs appended).
-  // Streamed (SSE), same reader shape as streamExtract, so per-file progress
-  // is visible instead of one blocking call with no feedback until it resolves
-  // or dies — the prior single-JSON version surfaced a mid-run timeout as an
-  // opaque "Gagal mengekstrak hasil OCR" with no indication how far it got.
+  // Chunked: a measured run of 17 OCR'd scans (incl. 49MB/33MB PDFs) took 275s
+  // of the route's 300s budget — no headroom. At ~46s per concurrency-3 wave,
+  // 8 files/request keeps each call near 140s. Splitting is safe because the
+  // route re-reads the existing text/report and appends, and its idempotency
+  // guard skips anything already "selesai".
   const extractOcrResults = async (eid: string) => {
     const matches = runs[eid]?.ocrMatches;
     if (!matches || matches.length === 0) return;
     patch(eid, { ocrExtracting: true });
     try {
-      appendLog(eid, `— Ekstraksi hasil OCR (${matches.length} dokumen) —`);
-      const res = await fetch("/api/dd/recheck-ocr", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: state.sessionId, entityId: eid, files: matches }),
-      });
-      if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Gagal memulai ekstraksi OCR");
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
+      const chunks: OcrMatch[][] =
+        matches.length > OCR_BATCH_SIZE
+          ? Array.from(
+              { length: Math.ceil(matches.length / OCR_BATCH_SIZE) },
+              (_, i) => matches.slice(i * OCR_BATCH_SIZE, (i + 1) * OCR_BATCH_SIZE)
+            )
+          : [matches];
+      appendLog(
+        eid,
+        `— Ekstraksi hasil OCR (${matches.length} dokumen${chunks.length > 1 ? `, ${chunks.length} batch` : ""}) —`
+      );
       let successCount = 0;
-      let sawComplete = false;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += dec.decode(value, { stream: true });
-        const events = buf.split("\n\n");
-        buf = events.pop() ?? "";
-        for (const ev of events) {
-          const line = ev.split("\n").find((l) => l.startsWith("data: "));
-          if (!line) continue;
-          const msg = JSON.parse(line.slice(6));
-          if (msg.type === "done") { appendLog(eid, `✓ ${msg.name}${msg.charCount ? ` (${msg.charCount} kar)` : ""}`); successCount++; }
-          if (msg.type === "error") appendLog(eid, `✗ ${msg.name}: ${msg.reason}`);
-          if (msg.type === "ocr_required") appendLog(eid, `✗ ${msg.name}: hasil OCR masih tanpa teks`);
-          if (msg.type === "complete") sawComplete = true;
-          if (msg.error) throw new Error(msg.error);
-        }
-      }
-      if (!sawComplete) {
-        throw new Error(
-          "Ekstraksi OCR terputus sebelum selesai — dokumen yang sudah selesai tetap tersimpan; ulangi untuk sisanya."
-        );
+      for (let c = 0; c < chunks.length; c++) {
+        if (chunks.length > 1) appendLog(eid, `— Batch ${c + 1}/${chunks.length} (${chunks[c].length} dokumen) —`);
+        successCount += await streamOcrChunk(eid, chunks[c]);
       }
       patch(eid, { ocrMatches: null });
       await refreshReport(eid);
