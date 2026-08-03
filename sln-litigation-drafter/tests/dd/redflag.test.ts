@@ -107,3 +107,17 @@ describe("legalConsequence", () => {
     expect(out[0].legalConsequence).toContain("KUHPerdata Pasal 1243");
   });
 });
+
+// A live run cited KUP penalty percentages (50%, 150%) that predate UU 7/2021
+// (HPP), which amended those very provisions — the hint named only UU 28/2007,
+// so the grounding itself was propagating stale tax law.
+describe("tax sanction hint currency", () => {
+  it("names the amending statute and forbids unverified penalty percentages", () => {
+    const p = buildRedFlagPrompt({
+      entityName: "PT Alpha", aspectId: "perpajakan", docsText: "x", transactionType: "akuisisi_saham",
+    });
+    expect(p).toContain("UU 7/2021");
+    expect(p).toContain("JANGAN menyebutkan persentase sanksi tertentu");
+    expect(p).toContain("PERLU VERIFIKASI");
+  });
+});

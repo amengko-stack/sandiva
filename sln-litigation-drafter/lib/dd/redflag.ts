@@ -30,7 +30,7 @@ const ASPECT_SANCTION_HINTS: Record<DDAspectId, string> = {
   ketenagakerjaan:
     "Pelanggaran ketenagakerjaan dapat diancam sanksi administratif maupun pidana menurut UU 13/2003 (sebagaimana diubah oleh UU 6/2023) dan peraturan pelaksananya.",
   perpajakan:
-    "Pelanggaran kewajiban perpajakan umumnya diancam SANKSI ADMINISTRASI berupa bunga, denda, atau kenaikan menurut UU 28/2007 (KUP).",
+    "Pelanggaran kewajiban perpajakan umumnya diancam SANKSI ADMINISTRASI berupa bunga, denda, atau kenaikan menurut UU 28/2007 (KUP) sebagaimana telah diubah, terakhir oleh UU 7/2021 (Harmonisasi Peraturan Perpajakan). PENTING: UU 7/2021 mengubah tarif dan rumusan sanksi dalam KUP (antara lain menggantikan beberapa sanksi kenaikan dengan sanksi bunga berdasarkan suku bunga acuan). JANGAN menyebutkan persentase sanksi tertentu kecuali kamu yakin persentase itu masih berlaku setelah UU 7/2021; bila tidak yakin, sebut jenis sanksinya tanpa angka dan tambahkan \"[PERLU VERIFIKASI — tarif sanksi setelah UU 7/2021]\".",
   asuransi:
     "Premi yang tidak dilunasi atau perubahan tertanggung yang tidak dilaporkan berkonsekuensi batalnya/berakhirnya pertanggungan — konsekuensi kontraktual, bukan sanksi publik.",
   perkara:
