@@ -54,6 +54,22 @@ const INSTRUMENTS: { pattern: RegExp; canonical: string }[] = [
   { pattern: /^POJK\s*(?:No\.?\s*)?8[\/\s]*(?:POJK\.04[\/\s]*)?2017\b/i, canonical: "POJK No. 8/POJK.04/2017 tentang Bentuk dan Isi Prospektus dan Prospektus Ringkas" },
 ];
 
+/**
+ * Reduce the many ways Indonesian lawyers write an instrument to one shape
+ * before matching: "UU No. 40 Tahun 2007", "UU No.40/2007" and "UU 40 / 2007"
+ * all become "UU 40/2007". Without this, the long form fell through unmatched
+ * and landed in its own currency group.
+ */
+function preNormalise(ref: string): string {
+  return ref
+    .replace(/\bNomor\b/gi, "No.")
+    .replace(/\bNo\.?\s*/gi, "")
+    .replace(/(\d+)\s*Tahun\s*(\d{4})/gi, "$1/$2")
+    .replace(/\s*\/\s*/g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** The article/paragraph tail of a reference, e.g. "Pasal 94 ayat (1)". */
 function articleTail(ref: string): string {
   const m = ref.match(/\b(Pasal\s+\d+[A-Za-z]?(?:\s*[-–]\s*\d+)?(?:\s*ayat\s*\(\d+\))?(?:\s*huruf\s*[a-z])?)/i);
@@ -67,17 +83,34 @@ function articleTail(ref: string): string {
  * honest "unknown" than a guessed title.
  */
 export function expandRefForQuery(ref: string): string {
-  const trimmed = ref.trim();
+  const normalised = preNormalise(ref);
   for (const inst of INSTRUMENTS) {
-    if (inst.pattern.test(trimmed)) {
-      const tail = articleTail(trimmed);
+    if (inst.pattern.test(normalised)) {
+      const tail = articleTail(normalised);
       return tail ? `${inst.canonical}, ${tail}` : inst.canonical;
     }
   }
-  return trimmed;
+  return ref.trim();
 }
 
 /** True when the ref maps to a known instrument (so an "unknown" verdict is informative). */
 export function isKnownInstrument(ref: string): boolean {
-  return INSTRUMENTS.some((i) => i.pattern.test(ref.trim()));
+  const normalised = preNormalise(ref);
+  return INSTRUMENTS.some((i) => i.pattern.test(normalised));
+}
+
+/**
+ * Grouping key at instrument + article granularity, deliberately ignoring the
+ * ayat/huruf tail.
+ *
+ * A live run produced "UUPT Pasal 33" => superseded and
+ * "UU 40/2007 Pasal 33 ayat (1)" => amended in the SAME report: one provision
+ * contradicting itself, because the differing tail made them two queries
+ * against a non-deterministic oracle. Currency is a property of the provision,
+ * not of which sub-paragraph an author happened to cite, so refs that share a
+ * key are asked once and share one verdict.
+ */
+export function currencyGroupKey(ref: string): string {
+  const expanded = expandRefForQuery(ref);
+  return expanded.replace(/,?\s*ayat\s*\(\d+\)/gi, "").replace(/,?\s*huruf\s*[a-z]\b/gi, "").trim();
 }

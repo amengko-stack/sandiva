@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { expandRefForQuery, isKnownInstrument } from "@/lib/dd/reg-refs";
+import { currencyGroupKey, expandRefForQuery, isKnownInstrument } from "@/lib/dd/reg-refs";
 
 // A live run on 2026-08-03 showed the currency check returning opposite verdicts
 // for the same provision depending only on how it was written, and "unknown" for
@@ -40,6 +40,26 @@ describe("expandRefForQuery", () => {
     expect(expandRefForQuery("Permen ESDM 7/2020")).toBe("Permen ESDM 7/2020");
     expect(isKnownInstrument("Permen ESDM 7/2020")).toBe(false);
     expect(isKnownInstrument("UUPT Pasal 1")).toBe(true);
+  });
+
+  it("groups every spelling of one provision under a single key", () => {
+    // A live run showed "UUPT Pasal 33" => superseded and
+    // "UU 40/2007 Pasal 33 ayat (1)" => amended in the SAME report. Currency is
+    // a property of the provision, not of which sub-paragraph was cited.
+    const variants = [
+      "UUPT Pasal 33",
+      "UU 40/2007 Pasal 33",
+      "UU 40/2007 Pasal 33 ayat (1)",
+      "UU No. 40 Tahun 2007 Pasal 33 ayat (2)",
+    ];
+    expect(new Set(variants.map(currencyGroupKey)).size).toBe(1);
+  });
+
+  it("keeps genuinely different articles in different groups", () => {
+    expect(currencyGroupKey("UUPT Pasal 33")).not.toBe(currencyGroupKey("UUPT Pasal 34"));
+    expect(currencyGroupKey("UUPT Pasal 94")).not.toBe(currencyGroupKey("UUPM Pasal 94"));
+    // Instrument with no article must not collide with the same instrument's articles.
+    expect(currencyGroupKey("UU 8/1995")).not.toBe(currencyGroupKey("UU 8/1995 Pasal 80"));
   });
 
   it("tolerates whitespace and 'No.' variants", () => {

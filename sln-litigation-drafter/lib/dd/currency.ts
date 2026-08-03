@@ -1,5 +1,5 @@
 import { queryPerplexity } from "@/lib/dd/perplexity";
-import { expandRefForQuery } from "@/lib/dd/reg-refs";
+import { currencyGroupKey } from "@/lib/dd/reg-refs";
 import { repairTruncatedJson } from "@/lib/json-repair";
 import type { DDCurrencyStatus, DDFinding } from "@/types/dd";
 
@@ -33,17 +33,28 @@ export async function checkCurrency(
   const map: Record<string, CurrencyVerdict> = {};
   for (const ref of refs) map[ref] = UNKNOWN;
 
-  const batches: string[][] = [];
-  for (let i = 0; i < refs.length; i += REF_BATCH) batches.push(refs.slice(i, i + REF_BATCH));
+  // Group refs that denote the same provision (differing only by ayat/huruf, or
+  // by alias vs numeric form) so each provision is asked ONCE and every spelling
+  // of it receives the same verdict. Without this, one report could show the
+  // same article as both superseded and amended.
+  const groups = new Map<string, string[]>();
+  for (const ref of refs) {
+    const key = currencyGroupKey(ref);
+    const existing = groups.get(key);
+    if (existing) existing.push(ref);
+    else groups.set(key, [ref]);
+  }
+  const queryKeys = Array.from(groups.keys());
 
+  const batches: string[][] = [];
+  for (let i = 0; i < queryKeys.length; i += REF_BATCH) {
+    batches.push(queryKeys.slice(i, i + REF_BATCH));
+  }
+
+  // Batch elements are already fully-qualified query strings (number + year +
+  // title); a bare number gets "nomor ini perlu verifikasi judulnya" back.
   const askBatch = async (batch: string[]): Promise<[string, CurrencyVerdict][]> => {
     try {
-      // Query with the fully-qualified name (number + year + title); a bare
-      // number returns "nomor ini perlu verifikasi judulnya". Answers come back
-      // keyed by the expanded string, so keep a map back to the lawyer's form.
-      const expanded = new Map<string, string>();
-      for (const r of batch) expanded.set(expandRefForQuery(r), r);
-
       const prompt = `Untuk setiap ketentuan hukum Indonesia berikut, tentukan status KETENTUAN YANG DIKUTIP ITU SENDIRI — bukan status undang-undang induknya secara umum.
 
 Gunakan salah satu status berikut.
@@ -55,7 +66,7 @@ status "unknown" = tidak dapat dipastikan dari sumber yang tersedia.
 PENTING: fakta bahwa undang-undang induknya pernah diubah pada bagian LAIN tidak membuat ketentuan yang dikutip menjadi "amended" atau "superseded". Nilai hanya ketentuan yang dikutip. Bila hanya penomoran pasalnya bergeser, sebut "amended", bukan "superseded".
 
 Daftar ketentuan yang dinilai (setiap baris diawali tanda hubung):
-${Array.from(expanded.keys()).map((r) => `- ${r}`).join("\n")}
+${batch.map((r) => `- ${r}`).join("\n")}
 
 Jawab HANYA JSON: {"results":[{"ref":"<persis seperti daftar>","status":"current|amended|superseded|unknown","note":"penjelasan singkat + peraturan pengubah/pengganti bila ada"}]}`;
       const raw = await queryPerplexity(prompt, undefined, fetchImpl);
@@ -68,17 +79,23 @@ Jawab HANYA JSON: {"results":[{"ref":"<persis seperti daftar>","status":"current
         parsed = JSON.parse(repairTruncatedJson(match[0]));
       }
       const out: [string, CurrencyVerdict][] = [];
+      const inBatch = new Set(batch);
       for (const r of parsed.results ?? []) {
         if (!r.ref) continue;
-        // Accept either the expanded form we asked with or the original.
-        const original = expanded.get(r.ref) ?? (expanded.has(r.ref) ? r.ref : undefined) ??
-          (batch.indexOf(r.ref) !== -1 ? r.ref : undefined);
-        if (!original) continue;
+        // The model usually echoes the expanded string it was given, but it may
+        // shorten it. Fall back to re-deriving the group key so a correct verdict
+        // is never discarded merely because the echo was abbreviated.
+        const groupKey = inBatch.has(r.ref)
+          ? r.ref
+          : inBatch.has(currencyGroupKey(r.ref))
+            ? currencyGroupKey(r.ref)
+            : null;
+        if (!groupKey) continue;
         const status: DDCurrencyStatus =
           r.status === "current" || r.status === "amended" || r.status === "superseded"
             ? r.status
             : "unknown";
-        out.push([original, { status, note: String(r.note ?? "") }]);
+        out.push([groupKey, { status, note: String(r.note ?? "") }]);
       }
       return out;
     } catch (e) {
@@ -92,7 +109,11 @@ Jawab HANYA JSON: {"results":[{"ref":"<persis seperti daftar>","status":"current
     const settled = await Promise.allSettled(wave.map(askBatch));
     for (const r of settled) {
       if (r.status !== "fulfilled") continue;
-      for (const [ref, verdict] of r.value) map[ref] = verdict;
+      // Verdicts come back keyed by group; apply each to every ref in that group
+      // so all spellings of one provision agree.
+      for (const [groupKey, verdict] of r.value) {
+        for (const original of groups.get(groupKey) ?? []) map[original] = verdict;
+      }
     }
   }
 
