@@ -6,7 +6,9 @@ import type { DDFinding } from "@/types/dd";
 
 const CONTEXT_CAP = 50_000;
 const BATCH = 10;
-const VERIFY_CONCURRENCY = 3;
+// Raised alongside ASPECT_CONCURRENCY: verification is the stage that ran out
+// of budget once the aspect calls grew to carry the report's analysis.
+const VERIFY_CONCURRENCY = 5;
 
 type Verdict = { id: string; upheld: boolean };
 

@@ -19,7 +19,12 @@ export const maxDuration = 300;
 // aspects × ~20s each, a sequential loop alone approached the 300s ceiling and
 // deterministically timed out on document-dense entities. Matches the
 // CONCURRENCY=3 pattern already used by /api/dd/extract and /api/dd/recheck-ocr.
-const ASPECT_CONCURRENCY = 3;
+// Raised from 3 after a live run overran the 300s ceiling: the same call now
+// returns per-sub-section analysis as well as findings, so max_tokens went
+// 3000 -> 8000 and each wave costs roughly 2.7x what it did. Running the
+// aspects in ONE wave instead of two is what buys the budget back. The steps
+// reached the currency check but not adversarial verification at 295s.
+const ASPECT_CONCURRENCY = 6;
 
 const enc = new TextEncoder();
 type Msg = { type: "step"; label: string } | { type: "done"; findings: DDFinding[] } | { type: "error"; message: string };
