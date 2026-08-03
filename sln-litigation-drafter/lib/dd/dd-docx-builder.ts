@@ -559,6 +559,15 @@ export async function buildDdReportDocx(args: {
   // ---------------- Daftar Isi ----------------
   children.push(
     h1("DAFTAR ISI"),
+    // A Word TOC is a field: it renders EMPTY until the reader refreshes it, which
+    // makes the report look as though it has no chapters at all. Say so on the
+    // page rather than expecting the reader to know the shortcut.
+    p(
+      "Daftar isi di bawah ini akan terisi otomatis setelah dimuat ulang di Microsoft Word: tekan Ctrl+A lalu F9, " +
+        "kemudian pilih \"Update entire table\". Seluruh bab tetap tersedia pada halaman-halaman berikutnya meskipun " +
+        "daftar isi ini masih kosong.",
+      { italics: true }
+    ),
     new TableOfContents("Daftar Isi", { hyperlink: true, headingStyleRange: "1-3" }),
     pageBreak()
   );
