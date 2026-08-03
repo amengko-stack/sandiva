@@ -7,6 +7,36 @@ import type { DDAspectId, DDExtractionRow, DDFinding, DDRegime, DDSeverity, DDTr
 const ASPECT_CHAR_CAP = 40_000;
 const SEVERITIES = new Set(["kritis", "material", "minor"]);
 
+/**
+ * Where sanctions for each aspect typically live. This grounds the
+ * legalConsequence field: without it the model either omitted the consequence
+ * or would have had to guess at an instrument. Instruments only — the model is
+ * told to cite an article only where it actually knows it, because a wrong
+ * article in a client report is worse than a general citation.
+ */
+const ASPECT_SANCTION_HINTS: Record<DDAspectId, string> = {
+  pendirian_ad:
+    "Pelanggaran anggaran dasar umumnya TIDAK diancam sanksi pidana atau administratif; konsekuensinya keperdataan/korporasi — keabsahan tindakan korporasi, dan tanggung jawab pribadi anggota Direksi (UUPT Pasal 97) atau Dewan Komisaris (UUPT Pasal 114) atas kesalahan/kelalaian.",
+  permodalan_saham:
+    "Kekurangan penyetoran modal dan cacat pengalihan saham umumnya berkonsekuensi keperdataan — keabsahan kepemilikan, tanggung jawab pemegang saham atas kekurangan setoran — bukan sanksi pidana.",
+  pengurus:
+    "Cacat pengangkatan/kewenangan pengurus umumnya berkonsekuensi keperdataan atas keabsahan tindakan korporasi, disertai tanggung jawab pribadi pengurus (UUPT Pasal 97 dan Pasal 114).",
+  perizinan:
+    "Ketiadaan atau kedaluwarsanya perizinan berusaha umumnya diancam SANKSI ADMINISTRATIF bertingkat (teguran tertulis, denda, penghentian sementara kegiatan, pencabutan izin) menurut PP 5/2021 dan peraturan sektoral terkait.",
+  harta_kekayaan:
+    "Jaminan fidusia yang tidak didaftarkan tidak melahirkan hak kebendaan (UU 42/1999 Pasal 14 ayat (3)); hak tanggungan lahir pada saat pendaftaran (UU 4/1996). Konsekuensinya kebendaan/keperdataan.",
+  perjanjian_penting:
+    "Pelanggaran ketentuan perjanjian berkonsekuensi WANPRESTASI: ganti rugi (KUHPerdata Pasal 1243), percepatan pelunasan, atau pengakhiran perjanjian — bukan sanksi publik.",
+  ketenagakerjaan:
+    "Pelanggaran ketenagakerjaan dapat diancam sanksi administratif maupun pidana menurut UU 13/2003 (sebagaimana diubah oleh UU 6/2023) dan peraturan pelaksananya.",
+  perpajakan:
+    "Pelanggaran kewajiban perpajakan umumnya diancam SANKSI ADMINISTRASI berupa bunga, denda, atau kenaikan menurut UU 28/2007 (KUP).",
+  asuransi:
+    "Premi yang tidak dilunasi atau perubahan tertanggung yang tidak dilaporkan berkonsekuensi batalnya/berakhirnya pertanggungan — konsekuensi kontraktual, bukan sanksi publik.",
+  perkara:
+    "Perkara berjalan umumnya tidak menimbulkan sanksi tersendiri; konsekuensinya risiko eksekusi putusan, sita jaminan, dan kewajiban pengungkapan kepada pembeli.",
+};
+
 export function buildRedFlagPrompt(args: {
   entityName: string; aspectId: DDAspectId; docsText: string; transactionType: DDTransactionType;
 }): string {
@@ -17,8 +47,12 @@ ${args.docsText.slice(0, ASPECT_CHAR_CAP)}
 === AKHIR DOKUMEN ===
 
 Identifikasi red flag hukum yang NYATA dari dokumen di atas untuk transaksi ini (mis. izin kedaluwarsa, modal belum disetor penuh, aset dibebani jaminan, perkara berjalan, ketidaksesuaian anggaran dasar).
+
+PETUNJUK KONSEKUENSI HUKUM UNTUK ASPEK INI: ${ASPECT_SANCTION_HINTS[args.aspectId]}
+Isi "legalConsequence" pada SETIAP temuan. Bila ada sanksi, sebutkan sanksinya beserta pasal yang mengaturnya — kutip nomor pasal HANYA bila kamu yakin; bila tidak yakin, sebut peraturannya saja. Bila tidak ada sanksi pidana/administratif, nyatakan hal itu secara tegas lalu sebutkan konsekuensi keperdataan/korporasinya. Kolom ini TIDAK BOLEH kosong dan TIDAK BOLEH diisi sanksi yang kamu karang.
+
 Kembalikan HANYA JSON:
-{"findings":[{"severity":"kritis|material|minor","anchor":"kutipan verbatim (maks 40 kata)","sourceFile":"nama file","problem":"masalahnya","whyItMatters":"dampaknya bagi transaksi","suggestedFix":"tindak lanjut","regulationRefs":["UU 40/2007"]}]}
+{"findings":[{"severity":"kritis|material|minor","anchor":"kutipan verbatim (maks 40 kata)","sourceFile":"nama file","problem":"masalahnya","whyItMatters":"dampaknya bagi transaksi","legalConsequence":"sanksi beserta pasalnya, ATAU pernyataan tegas bahwa tidak ada sanksi + konsekuensi keperdataannya","suggestedFix":"tindak lanjut","regulationRefs":["UU 40/2007 Pasal 94 ayat (1)"]}]}
 Bila tidak ada red flag, kembalikan {"findings":[]}.`;
 }
 
@@ -54,6 +88,9 @@ export function parseRedFlagResponse(
       problem: String(o.problem ?? ""),
       whyItMatters: String(o.whyItMatters ?? ""),
       suggestedFix: String(o.suggestedFix ?? ""),
+      // Absence is recorded rather than silently tolerated, so a run that drops
+      // the field is measurable instead of merely producing weaker findings.
+      legalConsequence: o.legalConsequence ? String(o.legalConsequence) : undefined,
       regulationRefs: Array.isArray(o.regulationRefs) ? o.regulationRefs.map(String) : undefined,
       verified: false,
       status: "open" as const,
@@ -94,6 +131,8 @@ export function promoteDealTriggeredCells(rows: DDExtractionRow[], entityId: str
         sourceFile: cell.sourceFile || row.memberFiles[0] || null,
         problem: `Klausul "${cell.fieldId.replace(/_/g, " ")}" dalam ${row.agreementLabel} terpicu oleh transaksi ini: ${cell.value}`,
         whyItMatters: "Klausul ini dapat mensyaratkan persetujuan/pemberitahuan pihak ketiga atau memicu wanprestasi bila transaksi dilanjutkan tanpa penanganan.",
+        legalConsequence:
+          "Tidak terdapat sanksi pidana atau administratif; konsekuensinya bersifat kontraktual — wanprestasi yang dapat menimbulkan kewajiban ganti rugi (KUHPerdata Pasal 1243), percepatan pelunasan, atau pengakhiran perjanjian oleh pihak lawan.",
         suggestedFix: "Masukkan sebagai condition precedent: minta persetujuan/waiver tertulis sebelum closing.",
         verified: false,
         status: "open",

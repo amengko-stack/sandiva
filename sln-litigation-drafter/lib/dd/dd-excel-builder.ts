@@ -95,7 +95,7 @@ export async function buildDdWorkbook(args: {
 
   // --- Temuan ---
   const temuan = wb.addWorksheet("Temuan");
-  headerRow(temuan, ["Entitas", "Aspek", "Bagian Laporan", "Dimensi", "Severitas", "Status Review", "Temuan", "Dampak", "Tindak Lanjut", "Sumber", "Kutipan", "Keberlakuan"]);
+  headerRow(temuan, ["Entitas", "Aspek", "Bagian Laporan", "Dimensi", "Severitas", "Status Review", "Temuan", "Dampak", "Konsekuensi Hukum", "Tindak Lanjut", "Sumber", "Kutipan", "Keberlakuan"]);
   const allFindings = [
     ...results.flatMap((r) => r.findings.map((f) => ({ f, entityName: r.entity.name }))),
     ...(consolidated?.crossEntityFindings ?? []).map((f) => ({ f, entityName: "KONSOLIDASI" })),
@@ -103,7 +103,7 @@ export async function buildDdWorkbook(args: {
   for (const { f, entityName } of allFindings) {
     temuan.addRow([
       entityName, f.aspectId ? aspectLabel(f.aspectId) : "—", reportSectionLabel(f.aspectId), f.dimension, f.severity, f.status,
-      f.editedProblem ?? f.problem, f.whyItMatters, f.suggestedFix,
+      f.editedProblem ?? f.problem, f.whyItMatters, f.legalConsequence ?? "—", f.suggestedFix,
       f.sourceFile ?? "—", f.anchor, f.currencyStatus ?? "—",
     ]);
   }

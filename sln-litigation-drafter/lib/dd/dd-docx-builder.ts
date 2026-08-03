@@ -177,6 +177,9 @@ function findingParas(f: DDFinding): Paragraph[] {
     out.push(p("Kutipan:"), quote(`"${f.anchor}"`));
   }
   out.push(labelled("Analisis:", f.whyItMatters));
+  if (f.legalConsequence) {
+    out.push(labelled("Konsekuensi hukum:", f.legalConsequence));
+  }
   out.push(labelled("Rekomendasi:", f.suggestedFix));
   if (f.regulationRefs && f.regulationRefs.length > 0) {
     out.push(labelled("Dasar hukum:", f.regulationRefs.join("; ")));

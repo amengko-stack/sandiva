@@ -199,6 +199,18 @@ export interface DDFinding {
   problem: string;
   whyItMatters: string;
   suggestedFix: string;
+  /**
+   * The legal consequence of the non-compliance: either the sanction with the
+   * article imposing it, or an explicit statement that none attaches plus the
+   * civil/corporate consequence.
+   *
+   * This is a first-class field rather than prose inside whyItMatters because
+   * asking for it in the prompt alone did not work — a live run produced it in
+   * 0 of 17 findings, since there was no slot for it and no way to detect its
+   * absence. A named field the model must fill is enforceable; a buried
+   * instruction is not.
+   */
+  legalConsequence?: string;
   regulationRefs?: string[];
   currencyStatus?: DDCurrencyStatus;
   currencyNote?: string;
