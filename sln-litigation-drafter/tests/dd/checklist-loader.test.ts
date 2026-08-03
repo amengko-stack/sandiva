@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { buildChecklistWorkbook, parseChecklistWorkbook, resolveChecklist } from "@/lib/dd/checklist-loader";
 import { SEED_CHECKLIST } from "@/config/ddChecklist.seed";
-import type { DDChecklist, DDExpectedDoc } from "@/types/dd";
+import type { DDChecklist, DDExpectedDoc, DDRegime } from "@/types/dd";
+
+const regimeWith = (layers: DDRegime["layers"]): DDRegime => ({
+  layers,
+  capitalMarkets: layers.some((l) => l === "pasar_modal_langsung" || l === "pasar_modal_induk"),
+  parentTbkName: layers.includes("pasar_modal_induk") ? "PT Induk Tbk" : null,
+});
 
 describe("checklist workbook round-trip", () => {
   it("build → parse preserves docs, overlays, and extraction fields", async () => {
@@ -107,5 +113,32 @@ describe("resolveChecklist", () => {
     expect(ids).toContain("perizinan.iup");                 // tailored
     expect(ids).not.toContain("permodalan_saham.persetujuan_coc"); // akuisisi_saham overlay
     expect(new Set(ids).size).toBe(ids.length);             // dedup by id
+  });
+
+  it("with no regime, no requiresLayer doc appears (today's behaviour preserved)", () => {
+    const r = resolveChecklist(SEED_CHECKLIST, "akuisisi_saham");
+    const ids = r.expected.map((d) => d.id);
+    expect(ids).not.toContain("regime.pm_penawaran_tender_wajib");
+    expect(ids).not.toContain("regime.pm_triwulan_induk_tbk");
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("with a pasar_modal_langsung regime, tender-offer / continuous-disclosure docs appear", () => {
+    const regime = regimeWith(["uupt", "pasar_modal_langsung"]);
+    const r = resolveChecklist(SEED_CHECKLIST, "akuisisi_saham", undefined, regime);
+    const ids = r.expected.map((d) => d.id);
+    expect(ids).toContain("regime.pm_penawaran_tender_wajib");
+    expect(ids).toContain("regime.pm_keterbukaan_berkelanjutan");
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("with a pasar_modal_induk regime, parent-financial-statement docs appear but pasar_modal_langsung-only tender-offer docs do not", () => {
+    const regime = regimeWith(["uupt", "pasar_modal_induk"]);
+    const r = resolveChecklist(SEED_CHECKLIST, "akuisisi_saham", undefined, regime);
+    const ids = r.expected.map((d) => d.id);
+    expect(ids).toContain("regime.pm_triwulan_induk_tbk");
+    expect(ids).not.toContain("regime.pm_penawaran_tender_wajib");
+    expect(ids).not.toContain("regime.pm_keterbukaan_berkelanjutan");
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

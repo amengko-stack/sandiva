@@ -4,6 +4,7 @@ import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { loadChecklist, resolveChecklist } from "@/lib/dd/checklist-loader";
 import { computeGaps } from "@/lib/dd/gap-engine";
 import { rematchTailored } from "@/lib/dd/tailor";
+import { resolveRegime } from "@/lib/dd/regime";
 import type { DDClassifiedDoc, DDTailorResult, DDTransaction } from "@/types/dd";
 
 export const maxDuration = 60;
@@ -37,6 +38,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Klasifikasi belum tersedia." }, { status: 400 });
       }
       const txn = JSON.parse(txnRaw) as DDTransaction;
+      const entity = txn.entities.find((e) => e.id === entityId);
+      if (!entity) return NextResponse.json({ error: "Entitas tidak dikenal." }, { status: 400 });
       const tailored = tailoredRaw ? (JSON.parse(tailoredRaw) as DDTailorResult) : null;
 
       // Classification runs before tailoring, so AI-added checklist items are
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
       await writeBlobText(ddKeys.classified(sessionId, entityId), JSON.stringify(classified));
 
       const cl = await loadChecklist();
-      const resolved = resolveChecklist(cl, txn.type, tailored?.added);
+      const resolved = resolveChecklist(cl, txn.type, tailored?.added, resolveRegime(entity));
       const gaps = computeGaps({
         expected: resolved.expected,
         classified,

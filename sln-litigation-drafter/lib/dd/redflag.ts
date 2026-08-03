@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
 import { redflagSystem } from "@/lib/dd/prompts";
-import type { DDAspectId, DDExtractionRow, DDFinding, DDSeverity, DDTransactionType } from "@/types/dd";
+import type { DDAspectId, DDExtractionRow, DDFinding, DDRegime, DDSeverity, DDTransactionType } from "@/types/dd";
 
 const ASPECT_CHAR_CAP = 40_000;
 const SEVERITIES = new Set(["kritis", "material", "minor"]);
@@ -65,13 +65,13 @@ export async function analyzeAspect(
   client: Anthropic,
   args: {
     entityId: string; entityName: string; aspectId: DDAspectId;
-    docsText: string; transactionType: DDTransactionType;
+    docsText: string; transactionType: DDTransactionType; regime: DDRegime;
   }
 ): Promise<DDFinding[]> {
   const response = await client.messages.create({
     model: MODELS.ddRedFlag,
     max_tokens: 3000,
-    system: redflagSystem(),
+    system: redflagSystem(args.regime, args.entityName),
     messages: [{ role: "user", content: buildRedFlagPrompt(args) }],
   });
   const raw = response.content.find((b) => b.type === "text")?.text ?? "";

@@ -5,6 +5,7 @@ import { splitDocBlocks } from "@/lib/extract-format";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { classifyDoc } from "@/lib/dd/classify";
 import { loadChecklist, resolveChecklist } from "@/lib/dd/checklist-loader";
+import { resolveRegime } from "@/lib/dd/regime";
 import type { DDClassifiedDoc, DDTransaction } from "@/types/dd";
 
 export const maxDuration = 300;
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
   if (!entity) return NextResponse.json({ error: "Entitas tidak dikenal." }, { status: 400 });
 
   const cl = await loadChecklist();
-  const resolved = resolveChecklist(cl, txn.type);
+  const resolved = resolveChecklist(cl, txn.type, undefined, resolveRegime(entity));
 
   const allBlocks = splitDocBlocks(combined);
   const blocks = allBlocks.slice(offset, offset + MAX_DOCS_PER_RUN);

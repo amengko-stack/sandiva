@@ -23,6 +23,34 @@ export type DDAspectId =
   | "asuransi"
   | "perkara";
 
+// ---------- listing status & applicable-regime axis ----------
+// A PT Tertutup is bound by UUPT only; a PT Tbk carries the capital-markets
+// overlay (UUPM/OJK/IDX) on top. A private company whose ultimate parent is Tbk
+// is itself unbound, but its transaction can be a Transaksi Material *for the
+// parent* — POJK 17/2020 covers transactions by a "Perusahaan Terbuka atau
+// perusahaan terkendali", measured against the parent's figures.
+export type DDListingStatus = "tbk" | "non_tbk";
+
+export type DDRegimeLayer =
+  | "uupt"                  // baseline, always applies
+  | "pasar_modal_langsung"  // entity is itself Tbk
+  | "pasar_modal_induk"     // entity is private but has a Tbk ultimate parent
+  | "bumn";                 // state-owned layer (question framework only)
+
+export interface DDRegime {
+  layers: DDRegimeLayer[];
+  capitalMarkets: boolean;      // any pasar_modal layer active
+  parentTbkName: string | null; // set only when "pasar_modal_induk" is active
+}
+
+// Report conclusions use the tri-state form mandated by the professional
+// standard, NOT a severity histogram. "memenuhi_dengan_catatan" obliges the
+// note to spell out the legal risk.
+export type DDComplianceVerdict =
+  | "memenuhi"
+  | "memenuhi_dengan_catatan"
+  | "tidak_memenuhi";
+
 export type DDImportance = "wajib" | "penting" | "opsional";
 export type DDGapStatus = "present" | "incomplete" | "expired" | "missing" | "not_applicable";
 export type DDSeverity = "kritis" | "material" | "minor";
@@ -45,7 +73,8 @@ export interface DDExpectedDoc {
   keywords: string[];       // filename/content hints for the classifier
   expiryRule?: DDExpiryRule;
   appliesTo?: DDTransactionType[]; // omitted = applies to all transaction types
-  source: "base" | "overlay" | "ai_tailored";
+  requiresLayer?: DDRegimeLayer[]; // omitted = regime-independent; else only when one of these layers is active
+  source: "base" | "overlay" | "regime" | "ai_tailored";
 }
 
 // One key-terms column definition (Harvey review-table style).
@@ -63,12 +92,13 @@ export interface DDChecklist {
   updatedAt: string;        // ISO
   base: DDExpectedDoc[];
   overlays: Partial<Record<DDTransactionType, DDExpectedDoc[]>>;
+  regimeOverlays?: Partial<Record<DDRegimeLayer, DDExpectedDoc[]>>;
   extractionFields: DDExtractionField[];
 }
 
 export interface ResolvedChecklist {
   version: string;
-  expected: DDExpectedDoc[];       // base ∪ overlay[txn] ∪ tailored, filtered by appliesTo
+  expected: DDExpectedDoc[];       // base ∪ overlay[txn] ∪ regimeOverlay[layers] ∪ tailored, filtered by appliesTo/requiresLayer
   extractionFields: DDExtractionField[];
 }
 
@@ -78,6 +108,25 @@ export interface DDEntity {
   role: string;             // "target" | "penjual" | "pembeli" | free text
   dataRoomPath: string;     // SharePoint folder path / sharing link
   files: FileEntry[];
+  // Optional so sessions persisted before the regime axis existed still hydrate;
+  // resolveRegime() treats an absent listingStatus as "non_tbk".
+  listingStatus?: DDListingStatus;
+  ultimateParentTbk?: string; // name of the Tbk ultimate parent; "" / absent = none
+  isBumn?: boolean;
+}
+
+// Fields a report needs that cannot be inferred from the data room.
+export interface DDReportMeta {
+  matterRef: string;         // firm matter / reference number
+  clientName: string;        // client on whose instruction the DD was run
+  addressee: string;         // to whom the report is addressed
+  relianceScope: string;     // who may rely on the report (gates the reliance clause)
+  clientRelease: boolean;    // false = draft/internal watermark, no client release
+  ddStartDateISO: string;    // "YYYY-MM-DD" — start of the examination period
+  taxInScope: boolean;       // whether tax was within the agreed scope
+  assumptionsVariant: "ringkas" | "panjang"; // (i)–(iv) vs the 11-item (a)–(k) variant
+  signatoryName: string;
+  signatoryTitle: string;
 }
 
 export interface DDTransaction {
@@ -88,6 +137,7 @@ export interface DDTransaction {
   cutoffDateISO: string;    // "YYYY-MM-DD" — expiry comparisons use this date
   entities: DDEntity[];
   checklistVersion: string;
+  reportMeta?: DDReportMeta; // absent = builder falls back to placeholders
 }
 
 export interface DDClassifiedDoc {

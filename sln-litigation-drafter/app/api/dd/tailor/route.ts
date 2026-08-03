@@ -4,6 +4,7 @@ import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { loadChecklist, resolveChecklist } from "@/lib/dd/checklist-loader";
 import { tailorChecklist } from "@/lib/dd/tailor";
+import { resolveRegime } from "@/lib/dd/regime";
 import type { DDClassifiedDoc, DDTransaction } from "@/types/dd";
 
 export const maxDuration = 120;
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     const classified = JSON.parse(classifiedRaw) as DDClassifiedDoc[];
 
     const cl = await loadChecklist();
-    const resolved = resolveChecklist(cl, txn.type);
+    const resolved = resolveChecklist(cl, txn.type, undefined, resolveRegime(entity));
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const tailored = await tailorChecklist(client, {
       entityName: entity.name, transactionType: txn.type,

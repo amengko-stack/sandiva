@@ -5,7 +5,7 @@ import { DD_ASPECTS } from "@/config/ddAspects";
 import { DD_TRANSACTION_TYPES } from "@/config/ddTransactionTypes";
 import type {
   DDAspectId, DDCellType, DDChecklist, DDExpectedDoc, DDExtractionField,
-  DDImportance, DDTransactionType, ResolvedChecklist,
+  DDImportance, DDRegime, DDRegimeLayer, DDTransactionType, ResolvedChecklist,
 } from "@/types/dd";
 
 export const CHECKLIST_DIR = "SLN-AI/due-diligence";
@@ -149,13 +149,32 @@ export async function loadChecklist(): Promise<DDChecklist> {
 export function resolveChecklist(
   cl: DDChecklist,
   txn: DDTransactionType,
-  tailored?: DDExpectedDoc[]
+  tailored?: DDExpectedDoc[],
+  regime?: DDRegime
 ): ResolvedChecklist {
-  const byId = new Map<string, DDExpectedDoc>();
-  for (const d of [...cl.base, ...(cl.overlays[txn] ?? []), ...(tailored ?? [])]) {
-    if (!byId.has(d.id)) byId.set(d.id, d);
+  // No regime passed = old behavior exactly: no regime-overlay docs are
+  // contributed, and any doc with requiresLayer set is filtered out below
+  // (activeLayers stays empty, so the "shares no layer" test always excludes it).
+  const activeLayers: DDRegimeLayer[] = regime?.layers ?? [];
+  const regimeDocs: DDExpectedDoc[] = [];
+  for (const layer of activeLayers) {
+    for (const d of cl.regimeOverlays?.[layer] ?? []) regimeDocs.push(d);
   }
-  return { version: cl.version, expected: Array.from(byId.values()), extractionFields: cl.extractionFields };
+
+  // Later sources win for a given id; Map preserves first-seen key order, so
+  // ordering stays deterministic: base, then transaction overlay, then each
+  // active regime layer (in regime.layers order), then tailored docs.
+  const byId = new Map<string, DDExpectedDoc>();
+  for (const d of [...cl.base, ...(cl.overlays[txn] ?? []), ...regimeDocs, ...(tailored ?? [])]) {
+    byId.set(d.id, d);
+  }
+
+  const activeLayerSet = new Set<DDRegimeLayer>(activeLayers);
+  const expected = Array.from(byId.values()).filter(
+    (d) => !d.requiresLayer || d.requiresLayer.some((l) => activeLayerSet.has(l))
+  );
+
+  return { version: cl.version, expected, extractionFields: cl.extractionFields };
 }
 
 export async function generateChecklistTemplate(): Promise<void> {

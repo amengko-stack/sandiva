@@ -7,6 +7,7 @@ import { gapToFinding } from "@/lib/dd/gap-engine";
 import { analyzeAspect, promoteDealTriggeredCells } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { verifyFindings } from "@/lib/dd/verify";
+import { resolveRegime } from "@/lib/dd/regime";
 import type {
   DDAspectId, DDClassifiedDoc, DDExtractionRow, DDFinding, DDGapItem, DDTransaction,
 } from "@/types/dd";
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
   const classified = JSON.parse(classifiedRaw) as DDClassifiedDoc[];
   const gaps = JSON.parse(gapsRaw) as DDGapItem[];
   const tables = tablesRaw ? (JSON.parse(tablesRaw) as DDExtractionRow[]) : [];
+  const regime = resolveRegime(entity);
 
   const blocks = splitDocBlocks(combined);
   const contentByFile = new Map(blocks.map((b) => [b.fileName, b.content]));
@@ -97,6 +99,7 @@ export async function POST(req: NextRequest) {
               aspectId: aspectJobs[i].aspectId,
               docsText: aspectJobs[i].docsText,
               transactionType: txn.type,
+              regime,
             });
           } catch (e) {
             // Per-aspect soft-fail: one malformed aspect response must not abort

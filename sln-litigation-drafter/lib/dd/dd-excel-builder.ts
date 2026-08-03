@@ -1,7 +1,16 @@
 import ExcelJS from "exceljs";
 import { aspectLabel } from "@/config/ddAspects";
 import { transactionLabel } from "@/config/ddTransactionTypes";
+import { sectionForAspect } from "@/config/ddReportSections";
 import type { DDConsolidated, DDEntityResult, DDGapItem, DDTransaction } from "@/types/dd";
+
+const REPORT_SECTION_LABEL_CROSS_ENTITY = "— (temuan konsolidasi/lintas entitas)";
+
+function reportSectionLabel(aspectId: DDEntityResult["findings"][number]["aspectId"]): string {
+  if (aspectId === null) return REPORT_SECTION_LABEL_CROSS_ENTITY;
+  const section = sectionForAspect(aspectId);
+  return `${section.numeral} — ${section.title}`;
+}
 
 const GAP_LABEL: Record<DDGapItem["status"], string> = {
   present: "Ada", incomplete: "Tidak lengkap", expired: "Kedaluwarsa",
@@ -86,14 +95,14 @@ export async function buildDdWorkbook(args: {
 
   // --- Temuan ---
   const temuan = wb.addWorksheet("Temuan");
-  headerRow(temuan, ["Entitas", "Aspek", "Dimensi", "Severitas", "Status Review", "Temuan", "Dampak", "Tindak Lanjut", "Sumber", "Kutipan", "Keberlakuan"]);
+  headerRow(temuan, ["Entitas", "Aspek", "Bagian Laporan", "Dimensi", "Severitas", "Status Review", "Temuan", "Dampak", "Tindak Lanjut", "Sumber", "Kutipan", "Keberlakuan"]);
   const allFindings = [
     ...results.flatMap((r) => r.findings.map((f) => ({ f, entityName: r.entity.name }))),
     ...(consolidated?.crossEntityFindings ?? []).map((f) => ({ f, entityName: "KONSOLIDASI" })),
   ];
   for (const { f, entityName } of allFindings) {
     temuan.addRow([
-      entityName, f.aspectId ? aspectLabel(f.aspectId) : "—", f.dimension, f.severity, f.status,
+      entityName, f.aspectId ? aspectLabel(f.aspectId) : "—", reportSectionLabel(f.aspectId), f.dimension, f.severity, f.status,
       f.editedProblem ?? f.problem, f.whyItMatters, f.suggestedFix,
       f.sourceFile ?? "—", f.anchor, f.currencyStatus ?? "—",
     ]);
