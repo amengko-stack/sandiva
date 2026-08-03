@@ -13,6 +13,7 @@ import {
   openingBlocks, verdictLabel,
 } from "@/lib/dd/report-boilerplate";
 import { obligationsForLayer, resolveRegime } from "@/lib/dd/regime";
+import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
 import type {
   DDConsolidated, DDEntity, DDEntityResult, DDFinding, DDGapItem, DDRegime,
   DDReportMeta, DDTransaction,
@@ -110,6 +111,67 @@ const labelled = (lbl: string, value: string) =>
   });
 
 const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
+
+/**
+ * Renders the narrative blocks for Bagian I in the precedents' style: prose that
+ * describes what the documents say, with qualifications as an indented
+ * "Catatan:" attached to the passage they concern.
+ */
+function narrativeElements(blocks: DDNarrativeBlock[]): (Paragraph | Table)[] {
+  const out: (Paragraph | Table)[] = [];
+  for (const b of blocks) {
+    if (b.kind === "heading") {
+      out.push(h3(b.text));
+    } else if (b.kind === "para") {
+      out.push(p(b.text));
+    } else if (b.kind === "note") {
+      // "Catatan:" is a label on its own line, then the qualification indented,
+      // matching how the precedents set these apart from the narrative.
+      out.push(
+        new Paragraph({
+          spacing: { before: 120, after: 60 },
+          indent: { left: 720 },
+          children: [t("Catatan:", { bold: true })],
+        })
+      );
+      if (b.text) {
+        out.push(
+          new Paragraph({
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 120 },
+            indent: { left: 720 },
+            children: [t(b.text, { italics: true })],
+          })
+        );
+      }
+    } else if (b.kind === "list") {
+      for (const item of b.items) {
+        out.push(
+          new Paragraph({
+            numbering: { reference: "bullets", level: 0 },
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            indent: { left: 1080, hanging: 360 },
+            children: [t(item)],
+          })
+        );
+      }
+    } else if (b.kind === "defs") {
+      for (const [label, value] of b.rows) {
+        out.push(
+          new Paragraph({
+            spacing: { after: 60 },
+            indent: { left: 720 },
+            children: [t(`${label} : `, { bold: true }), t(value)],
+          })
+        );
+      }
+    } else {
+      out.push(simpleTable(b.headers, b.rows));
+    }
+  }
+  return out;
+}
 
 const cell = (text: string, opts: { bold?: boolean; fill?: string } = {}) =>
   new TableCell({
@@ -554,6 +616,25 @@ export async function buildDdReportDocx(args: {
         (f) => f.aspectId !== null && sectionForAspect(f.aspectId).id === section.id
       );
 
+      // Bagian I leads with the narrative when it has been generated, the way
+      // the precedents do — description of the documents first, qualifications
+      // as inline "Catatan:". The completeness matrix moves to Lampiran B so the
+      // body of the report reads as a legal narrative rather than a work paper.
+      if (section.id === "I" && r.narrative) {
+        for (const el of narrativeElements(renderNarrativeSectionI(r.narrative, r.entity.name))) {
+          children.push(el);
+        }
+        if (sectionFindings.length > 0) {
+          children.push(h3("Temuan Lain atas Aspek Korporasi"));
+          for (const sev of SEV_ORDER) {
+            for (const f of sectionFindings.filter((x) => x.severity === sev)) {
+              for (const para of findingParas(f)) children.push(para);
+            }
+          }
+        }
+        continue;
+      }
+
       if (sectionGaps.length === 0 && sectionFindings.length === 0) {
         children.push(
           p(
@@ -711,6 +792,29 @@ export async function buildDdReportDocx(args: {
         ])
       )
     );
+  }
+
+  // ---------------- Lampiran B: completeness matrix ----------------
+  // The matrix is a working instrument, not narrative, so it sits in an annex
+  // where the precedents put their document schedules — the body of Bagian I now
+  // carries the description instead.
+  const anyNarrative = results.some((r) => r.narrative);
+  if (anyNarrative) {
+    children.push(pageBreak(), h1("LAMPIRAN B — STATUS KELENGKAPAN DOKUMEN"));
+    for (const r of results) {
+      children.push(h2(r.entity.name));
+      children.push(
+        simpleTable(
+          ["Aspek", "Dokumen yang diharapkan", "Status", "Keterangan"],
+          r.gaps.map((g) => [
+            aspectLabel(g.aspectId),
+            g.expectedLabel,
+            GAP_LABEL[g.status],
+            g.matchedFiles.length ? g.matchedFiles.join(", ") : g.note,
+          ])
+        )
+      );
+    }
   }
 
   // ---------------- Signature block ----------------

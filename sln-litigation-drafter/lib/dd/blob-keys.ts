@@ -16,5 +16,6 @@ export const ddKeys = {
   gaps: (sid: string, eid: string) => `${ent(sid, eid)}/gaps.json`,
   tables: (sid: string, eid: string) => `${ent(sid, eid)}/tables.json`,
   findings: (sid: string, eid: string) => `${ent(sid, eid)}/findings.json`,
+  narrative: (sid: string, eid: string) => `${ent(sid, eid)}/narrative_i.json`,
   consolidated: (sid: string) => `sessions/${sid}/dd/consolidated.json`,
 };

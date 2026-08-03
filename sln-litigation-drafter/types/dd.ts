@@ -145,6 +145,87 @@ export interface DDTransaction {
   reportMeta?: DDReportMeta; // absent = builder falls back to placeholders
 }
 
+// ---------- narrative layer (Bagian I) ----------
+// The precedents lead with a DESCRIPTION of what the documents say, with the
+// citation chain woven into the prose, and raise issues as an indented "Catatan:"
+// attached to the relevant passage. The pipeline previously produced only
+// exceptions (a gap matrix plus severity-tagged findings), which is working-paper
+// vocabulary, not a client report. These types carry the facts that description
+// needs. Every entry keeps its source file and a verbatim quote so no sentence in
+// the report is unattributable.
+
+export interface DDDeedRef {
+  number: string;          // "16"
+  dateISO: string;         // "2009-04-15" (or "" when illegible)
+  notary: string;          // "Raden Johanes Sarwono, S.H., Notaris di Jakarta"
+  purpose: string;         // "Pendirian" | "Perubahan Pasal 3 dan Dewan Komisaris"
+  menkumhamRef: string;    // approval/notification number + date ("" if absent)
+  registrationRef: string; // company-registry / TDP-NIB reference ("" if absent)
+  bnriRef: string;         // State Gazette no. + date + supplement ("" if absent)
+  sourceFile: string;
+  verbatim: string;
+}
+
+export interface DDCapitalEntry {
+  basis: string;           // which deed established this structure
+  authorized: string;      // modal dasar, as written
+  issued: string;          // modal ditempatkan
+  paidUp: string;          // modal disetor
+  shareCount: string;
+  nominalPerShare: string;
+  sourceFile: string;
+}
+
+export interface DDShareholderEntry {
+  name: string;
+  shares: string;
+  amount: string;
+  percentage: string;
+  sourceFile: string;
+}
+
+export interface DDOfficerEntry {
+  role: string;            // "Direktur Utama" | "Komisaris"
+  name: string;
+  appointedBy: string;     // deed reference
+  termUntil: string;       // as stated ("" when not stated)
+  sourceFile: string;
+}
+
+/** A qualification attached to a specific passage, rendered as "Catatan:". */
+export interface DDNarrativeNote {
+  /** Which sub-section the note belongs under. */
+  anchor:
+    | "pendirian"
+    | "anggaran_dasar"
+    | "kegiatan_usaha"
+    | "permodalan"
+    | "pemegang_saham"
+    | "pengurus"
+    // Catch-all. A note whose anchor cannot be resolved is rendered under its
+    // own heading rather than filed under a guessed sub-section: misplacing a
+    // qualification is worse than presenting it separately.
+    | "lainnya";
+  text: string;
+  sourceFile: string | null;
+}
+
+export interface DDNarrativeSectionI {
+  entityId: string;
+  establishment: DDDeedRef | null;
+  amendments: DDDeedRef[];
+  businessPurpose: string;      // maksud dan tujuan, as stated in the AoA
+  businessActivities: string[]; // kegiatan usaha
+  businessBasis: string;        // which deed/article states them
+  capitalHistory: DDCapitalEntry[];
+  currentCapital: DDCapitalEntry | null;
+  shareholders: DDShareholderEntry[];
+  directors: DDOfficerEntry[];
+  commissioners: DDOfficerEntry[];
+  notes: DDNarrativeNote[];
+  generatedAt: string;         // ISO
+}
+
 export interface DDClassifiedDoc {
   fileName: string;
   entityId: string;
@@ -254,6 +335,8 @@ export interface DDEntityResult {
   rows: DDExtractionRow[];
   findings: DDFinding[];
   extractReport: ExtractReport | null;
+  /** Bagian I narrative; null when the narrative stage has not been run. */
+  narrative?: DDNarrativeSectionI | null;
 }
 
 // ---------- client wizard state ----------
