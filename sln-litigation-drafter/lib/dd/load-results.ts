@@ -1,7 +1,7 @@
 import { readBlobText } from "@/lib/blob";
 import { ddKeys } from "@/lib/dd/blob-keys";
 import type {
-  DDClassifiedDoc, DDConsolidated, DDNarrativeSectionI, DDEntityResult, DDExtractionRow, DDFinding, DDGapItem, DDTransaction,
+  DDClassifiedDoc, DDConsolidated, DDNarrativeSectionI, DDSubsectionAnalysis, DDEntityResult, DDExtractionRow, DDFinding, DDGapItem, DDTransaction,
 } from "@/types/dd";
 import type { ExtractReport } from "@/types";
 
@@ -14,13 +14,14 @@ export async function loadEntityResults(sessionId: string): Promise<{
 
   const results: DDEntityResult[] = [];
   for (const e of transaction.entities) {
-    const [c, g, t, f, rep, nar] = await Promise.all([
+    const [c, g, t, f, rep, nar, ana] = await Promise.all([
       readBlobText(ddKeys.classified(sessionId, e.id)),
       readBlobText(ddKeys.gaps(sessionId, e.id)),
       readBlobText(ddKeys.tables(sessionId, e.id)),
       readBlobText(ddKeys.findings(sessionId, e.id)),
       readBlobText(ddKeys.report(sessionId, e.id)),
       readBlobText(ddKeys.narrative(sessionId, e.id)),
+      readBlobText(ddKeys.analyses(sessionId, e.id)),
     ]);
     results.push({
       entity: e,
@@ -32,6 +33,7 @@ export async function loadEntityResults(sessionId: string): Promise<{
       // Optional stage: absent narrative simply means Bagian I falls back to the
       // completeness table, so an older session still exports.
       narrative: nar ? (JSON.parse(nar) as DDNarrativeSectionI) : null,
+      analyses: ana ? (JSON.parse(ana) as DDSubsectionAnalysis[]) : [],
     });
   }
   const consRaw = await readBlobText(ddKeys.consolidated(sessionId));

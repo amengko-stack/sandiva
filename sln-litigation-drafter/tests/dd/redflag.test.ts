@@ -10,7 +10,7 @@ describe("parseRedFlagResponse", () => {
       problem: "Izin usaha kedaluwarsa", whyItMatters: "Operasi tanpa izin",
       suggestedFix: "Perpanjang izin", regulationRefs: ["PP 5/2021"],
     }]});
-    const out = parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "perizinan" });
+    const out = parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "perizinan" }).findings;
     expect(out).toHaveLength(1);
     expect(out[0].id).toBe("e1-risiko-perizinan-0");
     expect(out[0].dimension).toBe("risiko");
@@ -19,8 +19,8 @@ describe("parseRedFlagResponse", () => {
   });
   it("coerces unknown severity to material and tolerates empty findings", () => {
     const raw = JSON.stringify({ findings: [{ severity: "wrong", anchor: "", problem: "p", whyItMatters: "w", suggestedFix: "s" }] });
-    expect(parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "perkara" })[0].severity).toBe("material");
-    expect(parseRedFlagResponse('{"findings":[]}', null, { entityId: "e1", aspectId: "perkara" })).toEqual([]);
+    expect(parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "perkara" }).findings[0].severity).toBe("material");
+    expect(parseRedFlagResponse('{"findings":[]}', null, { entityId: "e1", aspectId: "perkara" }).findings).toEqual([]);
   });
   it("throws on garbage", () => {
     expect(() => parseRedFlagResponse("oops", null, { entityId: "e1", aspectId: "perkara" })).toThrow();
@@ -86,13 +86,13 @@ describe("legalConsequence", () => {
     const withField = parseRedFlagResponse(
       JSON.stringify({ findings: [{ severity: "material", anchor: "q", problem: "p", whyItMatters: "w", suggestedFix: "s", legalConsequence: "Pasal 32 ayat (1) UUWDP: pidana kurungan 3 bulan" }] }),
       null, { entityId: "e1", aspectId: "perizinan" }
-    );
+    ).findings;
     expect(withField[0].legalConsequence).toContain("Pasal 32 ayat (1) UUWDP");
 
     const without = parseRedFlagResponse(
       JSON.stringify({ findings: [{ severity: "material", anchor: "q", problem: "p", whyItMatters: "w", suggestedFix: "s" }] }),
       null, { entityId: "e1", aspectId: "perizinan" }
-    );
+    ).findings;
     expect(without[0].legalConsequence).toBeUndefined();
   });
 
@@ -119,5 +119,69 @@ describe("tax sanction hint currency", () => {
     expect(p).toContain("UU 7/2021");
     expect(p).toContain("JANGAN menyebutkan persentase sanksi tertentu");
     expect(p).toContain("PERLU VERIFIKASI");
+  });
+});
+
+// The analysis chapters rendered as hollow scaffolding because Stage 5 produced
+// only findings. The same call now also returns per-sub-section analysis.
+describe("sub-section analysis", () => {
+  const SUBS = ["Keabsahan Pendirian dan Anggaran Dasar", "Kepatuhan RUPS dan Kewenangan Organ Perseroan"];
+
+  it("asks for analysis per named sub-section, with a worked quality bar", () => {
+    const p = buildRedFlagPrompt({
+      entityName: "PT Alpha", aspectId: "pendirian_ad", docsText: "x",
+      transactionType: "akuisisi_saham", subsections: SUBS,
+    });
+    expect(p).toContain("SUB-BAGIAN ANALISIS YANG HARUS DIISI");
+    expect(p).toContain("1. Keabsahan Pendirian dan Anggaran Dasar");
+    expect(p).toContain("2. Kepatuhan RUPS dan Kewenangan Organ Perseroan");
+    expect(p).toContain("bukan kalimat pengantar");
+    expect(p).toContain('"analisis"');
+    expect(p).toContain("Pasal 7 ayat (1) UUPT"); // the worked example
+  });
+
+  it("omits the analysis block when no sub-sections are supplied", () => {
+    const p = buildRedFlagPrompt({
+      entityName: "PT Alpha", aspectId: "pendirian_ad", docsText: "x", transactionType: "akuisisi_saham",
+    });
+    expect(p).not.toContain("SUB-BAGIAN ANALISIS YANG HARUS DIISI");
+  });
+
+  it("parses analyses, keeps the table, and routes findings to their sub-section", () => {
+    const raw = JSON.stringify({
+      findings: [{ severity: "material", anchor: "q", problem: "p", whyItMatters: "w", suggestedFix: "s", subsection: SUBS[1] }],
+      analisis: [
+        { subsection: SUBS[0], analysis: ["Pendirian sesuai Pasal 7 ayat (1) UUPT.", "Akta No. 8 disahkan."], verification: ["AD konsolidasi"] },
+        { subsection: SUBS[1], analysis: ["Seluruh RUPS memenuhi kuorum."], verification: [], table: { headers: ["Tanggal", "Sah?"], rows: [["29 Jan 2019", "Ya"]] } },
+      ],
+    });
+    const out = parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "pendirian_ad", subsections: SUBS });
+    expect(out.analyses).toHaveLength(2);
+    expect(out.analyses[0].analysis[0]).toContain("Pasal 7 ayat (1) UUPT");
+    expect(out.analyses[0].verification).toEqual(["AD konsolidasi"]);
+    expect(out.analyses[1].table?.headers).toEqual(["Tanggal", "Sah?"]);
+    expect(out.findings[0].subsectionTitle).toBe(SUBS[1]);
+  });
+
+  // A misfiled analysis is worse than a missing one: it would appear under a
+  // heading it does not answer.
+  it("drops an analysis whose sub-section title is not one of those offered", () => {
+    const raw = JSON.stringify({
+      findings: [],
+      analisis: [{ subsection: "Sub-bagian Yang Tidak Diminta", analysis: ["…"], verification: [] }],
+    });
+    const out = parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "pendirian_ad", subsections: SUBS });
+    expect(out.analyses).toHaveLength(0);
+  });
+
+  it("drops an analysis with no prose, and tolerates a missing analisis key", () => {
+    const empty = parseRedFlagResponse(
+      JSON.stringify({ findings: [], analisis: [{ subsection: SUBS[0], analysis: [], verification: [] }] }),
+      null, { entityId: "e1", aspectId: "pendirian_ad", subsections: SUBS }
+    );
+    expect(empty.analyses).toHaveLength(0);
+
+    const absent = parseRedFlagResponse('{"findings":[]}', null, { entityId: "e1", aspectId: "pendirian_ad", subsections: SUBS });
+    expect(absent.analyses).toEqual([]);
   });
 });

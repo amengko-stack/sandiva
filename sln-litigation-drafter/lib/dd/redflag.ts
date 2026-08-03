@@ -2,7 +2,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
 import { redflagSystem } from "@/lib/dd/prompts";
-import type { DDAspectId, DDExtractionRow, DDFinding, DDRegime, DDSeverity, DDTransactionType } from "@/types/dd";
+import type {
+  DDAspectId, DDExtractionRow, DDFinding, DDRegime, DDSeverity, DDSubsectionAnalysis, DDTransactionType,
+} from "@/types/dd";
 
 const ASPECT_CHAR_CAP = 40_000;
 const SEVERITIES = new Set(["kritis", "material", "minor"]);
@@ -39,8 +41,34 @@ const ASPECT_SANCTION_HINTS: Record<DDAspectId, string> = {
 
 export function buildRedFlagPrompt(args: {
   entityName: string; aspectId: DDAspectId; docsText: string; transactionType: DDTransactionType;
+  /** Sub-section titles of the analysis chapter this aspect belongs to. */
+  subsections?: string[];
 }): string {
+  // The analysis chapters previously rendered as hollow scaffolding: each
+  // sub-section repeated one templated sentence and every finding piled into a
+  // single "Temuan" sub-section. The reference report puts real legal analysis
+  // under each numbered topic, so the same call now produces that analysis too —
+  // no extra model round-trip, just a longer response.
+  const subs = args.subsections ?? [];
+  const analysisBlock =
+    subs.length === 0
+      ? ""
+      : `
+=== SUB-BAGIAN ANALISIS YANG HARUS DIISI ===
+${subs.map((s, i) => `${i + 1}. ${s}`).join("\n")}
+
+Untuk SETIAP sub-bagian di atas, tulis analisis hukum yang sesungguhnya — bukan kalimat pengantar. Pola yang wajib diikuti:
+(a) sebutkan ketentuan yang berlaku beserta pasalnya bila kamu yakin;
+(b) terapkan ketentuan itu pada FAKTA dari dokumen, dengan menyebut nomor dan tanggal akta/dokumennya;
+(c) simpulkan apakah fakta tersebut memenuhi ketentuan, dan bila tidak, sebutkan letak ketidaksesuaiannya.
+Contoh mutu yang dituju: "Pendirian Perseroan dilakukan sesuai Pasal 7 ayat (1) UUPT yang mensyaratkan paling sedikit dua pendiri. Para pendiri adalah A dan B, keduanya badan hukum Perseroan Terbatas. Akta Pendirian No. 08 tanggal 7 Juli 2017 telah disahkan Menkumham melalui SK AHU-… sebagaimana disyaratkan Pasal 7 ayat (4) UUPT, sehingga Perseroan memperoleh status badan hukum yang sah."
+Bila sebuah sub-bagian tidak dapat dianalisis karena dokumennya tidak ada, katakan hal itu secara tegas dan sebutkan dokumen apa yang dibutuhkan — JANGAN menulis kalimat pengantar kosong.
+Isi "verification" dengan hal yang belum dapat dipastikan pada sub-bagian itu (boleh kosong).
+Sertakan "table" HANYA bila daftar/register lebih mudah dibaca sebagai tabel daripada prosa (mis. daftar RUPS: Tanggal, Jenis, Agenda, Kuorum, Sah?).
+Pada setiap temuan, isi "subsection" dengan judul sub-bagian yang paling tepat dari daftar di atas.
+`;
   return `Entitas: ${args.entityName}. Aspek: ${args.aspectId.replace(/_/g, " ")}. Transaksi: ${args.transactionType.replace(/_/g, " ")}.
+${analysisBlock}
 
 === DOKUMEN ASPEK INI ===
 ${args.docsText.slice(0, ASPECT_CHAR_CAP)}
@@ -52,21 +80,64 @@ PETUNJUK KONSEKUENSI HUKUM UNTUK ASPEK INI: ${ASPECT_SANCTION_HINTS[args.aspectI
 Isi "legalConsequence" pada SETIAP temuan. Bila ada sanksi, sebutkan sanksinya beserta pasal yang mengaturnya — kutip nomor pasal HANYA bila kamu yakin; bila tidak yakin, sebut peraturannya saja. Bila tidak ada sanksi pidana/administratif, nyatakan hal itu secara tegas lalu sebutkan konsekuensi keperdataan/korporasinya. Kolom ini TIDAK BOLEH kosong dan TIDAK BOLEH diisi sanksi yang kamu karang.
 
 Kembalikan HANYA JSON:
-{"findings":[{"severity":"kritis|material|minor","anchor":"kutipan verbatim (maks 40 kata)","sourceFile":"nama file","problem":"masalahnya","whyItMatters":"dampaknya bagi transaksi","legalConsequence":"sanksi beserta pasalnya, ATAU pernyataan tegas bahwa tidak ada sanksi + konsekuensi keperdataannya","suggestedFix":"tindak lanjut","regulationRefs":["UU 40/2007 Pasal 94 ayat (1)"]}]}
-Bila tidak ada red flag, kembalikan {"findings":[]}.`;
+{"findings":[{"severity":"kritis|material|minor","anchor":"kutipan verbatim (maks 40 kata)","sourceFile":"nama file","problem":"masalahnya","whyItMatters":"dampaknya bagi transaksi","legalConsequence":"sanksi beserta pasalnya, ATAU pernyataan tegas bahwa tidak ada sanksi + konsekuensi keperdataannya","suggestedFix":"tindak lanjut","subsection":"judul sub-bagian","regulationRefs":["UU 40/2007 Pasal 94 ayat (1)"]}],
+ "analisis":[{"subsection":"judul sub-bagian persis seperti daftar","analysis":["paragraf 1","paragraf 2"],"verification":["hal yang perlu diverifikasi"],"table":{"headers":["..."],"rows":[["..."]]}}]}
+Bila tidak ada red flag, kembalikan {"findings":[]} namun TETAP isi "analisis".`;
+}
+
+export interface DDAspectAnalysisResult {
+  findings: DDFinding[];
+  analyses: DDSubsectionAnalysis[];
+}
+
+/** Parse the sub-section analyses. Unknown sub-section titles are dropped rather
+ *  than guessed into a section they may not belong to. */
+function parseAnalyses(
+  raw: unknown,
+  aspectId: DDAspectId,
+  allowed: string[]
+): DDSubsectionAnalysis[] {
+  if (!Array.isArray(raw)) return [];
+  const ok = new Set(allowed);
+  const out: DDSubsectionAnalysis[] = [];
+  for (const item of raw) {
+    const o = item as Record<string, unknown>;
+    const title = String(o.subsection ?? "").trim();
+    if (!title || (allowed.length > 0 && !ok.has(title))) continue;
+    const analysis = Array.isArray(o.analysis)
+      ? o.analysis.map(String).map((x) => x.trim()).filter(Boolean)
+      : [];
+    if (analysis.length === 0) continue;
+    const verification = Array.isArray(o.verification)
+      ? o.verification.map(String).map((x) => x.trim()).filter(Boolean)
+      : [];
+    const tbl = o.table as Record<string, unknown> | undefined;
+    const headers = tbl && Array.isArray(tbl.headers) ? tbl.headers.map(String) : [];
+    const rows = tbl && Array.isArray(tbl.rows)
+      ? (tbl.rows as unknown[]).filter(Array.isArray).map((r) => (r as unknown[]).map(String))
+      : [];
+    out.push({
+      aspectId,
+      subsectionTitle: title,
+      analysis,
+      verification,
+      table: headers.length > 0 && rows.length > 0 ? { headers, rows } : undefined,
+    });
+  }
+  return out;
 }
 
 export function parseRedFlagResponse(
   raw: string,
   stopReason: string | null,
-  args: { entityId: string; aspectId: DDAspectId }
-): DDFinding[] {
+  args: { entityId: string; aspectId: DDAspectId; subsections?: string[] }
+): DDAspectAnalysisResult {
   const clean = raw.replace(/```json|```/g, "").trim();
   const match = clean.match(/\{[\s\S]*\}?/);
   if (!match) throw new Error(`Hasil red-flag bukan JSON (${args.aspectId})`);
   let jsonStr = match[0];
   if (stopReason === "max_tokens") jsonStr = repairTruncatedJson(jsonStr);
-  let p: { findings?: unknown[] };
+  let p: { findings?: unknown[]; analisis?: unknown[] };
   try {
     p = JSON.parse(jsonStr);
   } catch {
@@ -74,7 +145,7 @@ export function parseRedFlagResponse(
   }
   if (!Array.isArray(p.findings)) throw new Error(`Hasil red-flag tanpa "findings" (${args.aspectId})`);
 
-  return p.findings.map((f, n) => {
+  const findings = p.findings.map((f, n) => {
     const o = f as Record<string, unknown>;
     const sev = String(o.severity ?? "");
     return {
@@ -91,11 +162,17 @@ export function parseRedFlagResponse(
       // Absence is recorded rather than silently tolerated, so a run that drops
       // the field is measurable instead of merely producing weaker findings.
       legalConsequence: o.legalConsequence ? String(o.legalConsequence) : undefined,
+      subsectionTitle: o.subsection ? String(o.subsection) : undefined,
       regulationRefs: Array.isArray(o.regulationRefs) ? o.regulationRefs.map(String) : undefined,
       verified: false,
       status: "open" as const,
     };
   });
+
+  return {
+    findings,
+    analyses: parseAnalyses(p.analisis, args.aspectId, args.subsections ?? []),
+  };
 }
 
 export async function analyzeAspect(
@@ -103,11 +180,14 @@ export async function analyzeAspect(
   args: {
     entityId: string; entityName: string; aspectId: DDAspectId;
     docsText: string; transactionType: DDTransactionType; regime: DDRegime;
+    subsections?: string[];
   }
-): Promise<DDFinding[]> {
+): Promise<DDAspectAnalysisResult> {
   const response = await client.messages.create({
     model: MODELS.ddRedFlag,
-    max_tokens: 3000,
+    // Higher than before: the same call now returns per-sub-section analysis
+    // alongside the findings, which is most of the report body.
+    max_tokens: 8000,
     system: redflagSystem(args.regime, args.entityName),
     messages: [{ role: "user", content: buildRedFlagPrompt(args) }],
   });

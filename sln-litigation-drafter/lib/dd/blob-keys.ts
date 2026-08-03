@@ -17,5 +17,6 @@ export const ddKeys = {
   tables: (sid: string, eid: string) => `${ent(sid, eid)}/tables.json`,
   findings: (sid: string, eid: string) => `${ent(sid, eid)}/findings.json`,
   narrative: (sid: string, eid: string) => `${ent(sid, eid)}/narrative_i.json`,
+  analyses: (sid: string, eid: string) => `${ent(sid, eid)}/analyses.json`,
   consolidated: (sid: string) => `sessions/${sid}/dd/consolidated.json`,
 };

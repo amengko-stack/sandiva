@@ -401,28 +401,61 @@ function renderPasarModalChapter(
   }
 }
 
-/** BAB for the analysis-per-aspect chapter, closing with the findings table and verdict line. */
+/** BAB for the analysis-per-aspect chapter: each sub-section carries its own analysis, findings, and verification. */
 function renderAnalisisAspekChapter(
   chNo: number, chapter: DDChapterPlan, r: DDEntityResult, out: (Paragraph | Table)[]
 ): void {
+  const chapterFindings = findingsForChapter(r, chapter);
+  const analyses = r.analyses ?? [];
+  const nonFindingsSubTitles = chapter.subs.filter((s) => !s.findings).map((s) => s.title);
+
   chapter.subs.forEach((sub, i) => {
     out.push(h2(`${subNumber(chNo, i)} ${sub.title}`));
+
     if (sub.findings) {
-      const findings = findingsForChapter(r, chapter);
-      const blocks = renderFindingsTable(findings);
+      const leftover = chapterFindings.filter(
+        (f) => !f.subsectionTitle || nonFindingsSubTitles.indexOf(f.subsectionTitle) === -1
+      );
+      const blocks = renderFindingsTable(leftover);
       if (blocks.length === 0) {
-        out.push(p("Tidak terdapat temuan untuk bab ini berdasarkan Dokumen Yang Diperiksa."));
+        out.push(p("Tidak terdapat temuan tambahan yang belum diuraikan pada sub-bagian di atas."));
       } else {
         for (const el of renderBlocks(blocks)) out.push(el);
       }
-      out.push(p(renderVerdictLine(findings), { bold: true }));
-    } else {
+      out.push(p(renderVerdictLine(chapterFindings), { bold: true }));
+      return;
+    }
+
+    const analysis = analyses.find((a) => a.subsectionTitle === sub.title);
+    if (!analysis) {
       out.push(
         p(
-          `Bagian ini menguraikan ${sub.title.toLowerCase()} berdasarkan Dokumen Yang Diperiksa untuk aspek ` +
-            `${(sub.aspectIds ?? chapter.aspectIds).map(aspectLabel).join(", ")}.`
+          `Sub-bagian "${sub.title}" belum dapat dianalisis berdasarkan Dokumen Yang Diperiksa dalam uji tuntas ini.`
         )
       );
+      return;
+    }
+
+    for (const para of analysis.analysis) out.push(p(para));
+    if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+
+    const subFindings = chapterFindings.filter((f) => f.subsectionTitle === sub.title);
+    const findingBlocks = renderFindingsTable(subFindings);
+    for (const el of renderBlocks(findingBlocks)) out.push(el);
+
+    if (analysis.verification.length > 0) {
+      out.push(p("Hal yang perlu diverifikasi:", { bold: true }));
+      for (const item of analysis.verification) {
+        out.push(
+          new Paragraph({
+            numbering: { reference: "bullets", level: 0 },
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            indent: { left: 1080, hanging: 360 },
+            children: [t(item)],
+          })
+        );
+      }
     }
   });
 }

@@ -240,6 +240,29 @@ export interface DDNarrativeSectionI {
   generatedAt: string;         // ISO
 }
 
+/**
+ * The analysis body of one sub-section of an analysis chapter (BAB III onwards).
+ *
+ * Without this the analysis chapters rendered as hollow scaffolding: every
+ * sub-section carried the same templated sentence with its own title substituted
+ * in, and all findings piled into the chapter's single "Temuan" sub-section. The
+ * reference report instead puts real legal analysis under each numbered topic —
+ * the applicable provision, the facts from the profile chapter, the conclusion on
+ * compliance — plus a purpose-built table where one helps (e.g. an RUPS register
+ * derived from the same deeds the profile chapter tabulates).
+ */
+export interface DDSubsectionAnalysis {
+  aspectId: DDAspectId;
+  /** Must match a DDChapterSub.title so the builder can place it. */
+  subsectionTitle: string;
+  /** Paragraphs: applicable provision, application to the facts, conclusion. */
+  analysis: string[];
+  /** What could not be established and must be verified. May be empty. */
+  verification: string[];
+  /** Optional table where a register reads better than prose. */
+  table?: { headers: string[]; rows: string[][] };
+}
+
 export interface DDClassifiedDoc {
   fileName: string;
   entityId: string;
@@ -306,6 +329,8 @@ export interface DDFinding {
    * instruction is not.
    */
   legalConsequence?: string;
+  /** Sub-section this finding belongs under; falls back to the chapter's Temuan. */
+  subsectionTitle?: string;
   regulationRefs?: string[];
   currencyStatus?: DDCurrencyStatus;
   currencyNote?: string;
@@ -351,6 +376,8 @@ export interface DDEntityResult {
   extractReport: ExtractReport | null;
   /** Bagian I narrative; null when the narrative stage has not been run. */
   narrative?: DDNarrativeSectionI | null;
+  /** Per-sub-section analysis for the analysis chapters; empty before Stage 5. */
+  analyses?: DDSubsectionAnalysis[];
 }
 
 // ---------- client wizard state ----------

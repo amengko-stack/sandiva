@@ -8,8 +8,9 @@ import { analyzeAspect, promoteDealTriggeredCells } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
+import { chapterForAspect, planChapters } from "@/config/ddChapters";
 import type {
-  DDAspectId, DDClassifiedDoc, DDExtractionRow, DDFinding, DDGapItem, DDTransaction,
+  DDAspectId, DDClassifiedDoc, DDExtractionRow, DDFinding, DDGapItem, DDSubsectionAnalysis, DDTransaction,
 } from "@/types/dd";
 
 export const maxDuration = 300;
@@ -61,8 +62,13 @@ export async function POST(req: NextRequest) {
         // Checkpoint after every stage so a worst-case timeout never discards
         // findings already computed (mirrors extract/recheck-ocr's per-batch
         // persistence). JSON.stringify([]) is "[]" — always a non-empty body.
+        // Both are checkpointed together: a maxDuration kill runs no catch or
+        // finally, so anything not written before the kill is simply lost.
         const persist = () =>
-          writeBlobText(ddKeys.findings(sessionId, entityId), JSON.stringify(findings));
+          Promise.all([
+            writeBlobText(ddKeys.findings(sessionId, entityId), JSON.stringify(findings)),
+            writeBlobText(ddKeys.analyses(sessionId, entityId), JSON.stringify(aspectAnalyses)),
+          ]);
 
         emit(controller, { type: "step", label: "Temuan gap (kelengkapan)" });
         findings.push(...gaps.map(gapToFinding).filter((f): f is DDFinding => f !== null));
@@ -90,17 +96,34 @@ export async function POST(req: NextRequest) {
           }))
           .filter((j) => j.docsText.trim().length >= 50);
 
+        // The chapter plan tells each aspect which sub-sections it must fill.
+        // Without this the analysis chapters render as hollow scaffolding.
+        const chapterPlan = planChapters({
+          transactionType: txn.type,
+          regime,
+          presentAspects: Array.from(new Set(classified.map((c) => c.aspectId))) as DDAspectId[],
+        });
+        const subsectionsFor = (aspectId: DDAspectId): string[] => {
+          const ch = chapterForAspect(chapterPlan, aspectId);
+          if (!ch) return [];
+          return ch.subs.filter((sub) => !sub.findings).map((sub) => sub.title);
+        };
+
         const aspectFindings: (DDFinding[] | null)[] = new Array(aspectJobs.length).fill(null);
+        const aspectAnalyses: DDSubsectionAnalysis[] = [];
         const processAspect = async (i: number) => {
           try {
-            aspectFindings[i] = await analyzeAspect(client, {
+            const res = await analyzeAspect(client, {
               entityId,
               entityName: entity.name,
               aspectId: aspectJobs[i].aspectId,
               docsText: aspectJobs[i].docsText,
               transactionType: txn.type,
               regime,
+              subsections: subsectionsFor(aspectJobs[i].aspectId),
             });
+            aspectFindings[i] = res.findings;
+            for (const a of res.analyses) aspectAnalyses.push(a);
           } catch (e) {
             // Per-aspect soft-fail: one malformed aspect response must not abort
             // the whole run (mirrors extract/recheck-ocr per-item catch).
