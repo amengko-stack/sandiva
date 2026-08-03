@@ -1,4 +1,5 @@
 import { queryPerplexity } from "@/lib/dd/perplexity";
+import { expandRefForQuery } from "@/lib/dd/reg-refs";
 import { repairTruncatedJson } from "@/lib/json-repair";
 import type { DDCurrencyStatus, DDFinding } from "@/types/dd";
 
@@ -37,10 +38,26 @@ export async function checkCurrency(
 
   const askBatch = async (batch: string[]): Promise<[string, CurrencyVerdict][]> => {
     try {
-      const prompt = `Untuk setiap peraturan Indonesia berikut, apakah masih berlaku per hari ini, sudah diubah, atau sudah dicabut/diganti? Perhatikan UU Cipta Kerja dan peraturan turunannya.
-${batch.map((r) => `- ${r}`).join("\n")}
+      // Query with the fully-qualified name (number + year + title); a bare
+      // number returns "nomor ini perlu verifikasi judulnya". Answers come back
+      // keyed by the expanded string, so keep a map back to the lawyer's form.
+      const expanded = new Map<string, string>();
+      for (const r of batch) expanded.set(expandRefForQuery(r), r);
 
-Jawab HANYA JSON: {"results":[{"ref":"<persis seperti daftar>","status":"current|superseded|unknown","note":"penjelasan singkat + peraturan pengganti bila ada"}]}`;
+      const prompt = `Untuk setiap ketentuan hukum Indonesia berikut, tentukan status KETENTUAN YANG DIKUTIP ITU SENDIRI — bukan status undang-undang induknya secara umum.
+
+Gunakan salah satu status berikut.
+status "current" = ketentuan yang dikutip masih berlaku dan rumusannya tidak diubah.
+status "amended" = ketentuan yang dikutip MASIH BERLAKU tetapi rumusannya telah diubah (mis. oleh UU Cipta Kerja); sebutkan peraturan pengubahnya.
+status "superseded" = ketentuan yang dikutip telah DICABUT atau DIGANTI sehingga tidak lagi berlaku.
+status "unknown" = tidak dapat dipastikan dari sumber yang tersedia.
+
+PENTING: fakta bahwa undang-undang induknya pernah diubah pada bagian LAIN tidak membuat ketentuan yang dikutip menjadi "amended" atau "superseded". Nilai hanya ketentuan yang dikutip. Bila hanya penomoran pasalnya bergeser, sebut "amended", bukan "superseded".
+
+Daftar ketentuan yang dinilai (setiap baris diawali tanda hubung):
+${Array.from(expanded.keys()).map((r) => `- ${r}`).join("\n")}
+
+Jawab HANYA JSON: {"results":[{"ref":"<persis seperti daftar>","status":"current|amended|superseded|unknown","note":"penjelasan singkat + peraturan pengubah/pengganti bila ada"}]}`;
       const raw = await queryPerplexity(prompt, undefined, fetchImpl);
       const match = raw.replace(/```json|```/g, "").match(/\{[\s\S]*\}?/);
       if (!match) throw new Error("bukan JSON");
@@ -51,11 +68,17 @@ Jawab HANYA JSON: {"results":[{"ref":"<persis seperti daftar>","status":"current
         parsed = JSON.parse(repairTruncatedJson(match[0]));
       }
       const out: [string, CurrencyVerdict][] = [];
-      const inBatch = new Set(batch);
       for (const r of parsed.results ?? []) {
-        if (!r.ref || !inBatch.has(r.ref)) continue;
-        const status = r.status === "current" || r.status === "superseded" ? r.status : "unknown";
-        out.push([r.ref, { status, note: String(r.note ?? "") }]);
+        if (!r.ref) continue;
+        // Accept either the expanded form we asked with or the original.
+        const original = expanded.get(r.ref) ?? (expanded.has(r.ref) ? r.ref : undefined) ??
+          (batch.indexOf(r.ref) !== -1 ? r.ref : undefined);
+        if (!original) continue;
+        const status: DDCurrencyStatus =
+          r.status === "current" || r.status === "amended" || r.status === "superseded"
+            ? r.status
+            : "unknown";
+        out.push([original, { status, note: String(r.note ?? "") }]);
       }
       return out;
     } catch (e) {
@@ -85,6 +108,9 @@ export function applyCurrency(
     if (refs.length === 0) return f;
     const verdicts = refs.map((r) => map[r]).filter(Boolean);
     if (verdicts.length === 0) return f;
+    // Only genuine supersession escalates severity. Escalating on "amended"
+    // would re-introduce the defect this split exists to fix: an in-force
+    // provision whose wording changed is not a reason to upgrade a finding.
     const superseded = verdicts.find((v) => v.status === "superseded");
     if (superseded) {
       return {
@@ -93,6 +119,10 @@ export function applyCurrency(
         currencyNote: superseded.note,
         severity: f.severity === "minor" ? "material" : f.severity,
       };
+    }
+    const amended = verdicts.find((v) => v.status === "amended");
+    if (amended) {
+      return { ...f, currencyStatus: "amended", currencyNote: amended.note };
     }
     const allCurrent = verdicts.every((v) => v.status === "current");
     return { ...f, currencyStatus: allCurrent ? "current" : "unknown", currencyNote: verdicts.map((v) => v.note).filter(Boolean).join(" ") };

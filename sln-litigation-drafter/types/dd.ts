@@ -56,7 +56,12 @@ export type DDGapStatus = "present" | "incomplete" | "expired" | "missing" | "no
 export type DDSeverity = "kritis" | "material" | "minor";
 export type DDDimension = "kelengkapan" | "currency" | "risiko" | "konsistensi";
 export type DDConfidence = "tinggi" | "sedang" | "rendah";
-export type DDCurrencyStatus = "current" | "superseded" | "unknown";
+// "amended" exists because conflating it with "superseded" made the check
+// actively misleading: a live run marked eight in-force UUPT articles
+// "superseded" merely because UU Cipta Kerja amended the statute elsewhere.
+// A provision still in force but reworded is materially different from one
+// that has been repealed, and only the latter should alarm the reader.
+export type DDCurrencyStatus = "current" | "amended" | "superseded" | "unknown";
 export type DDFindingReviewStatus = "open" | "accepted" | "dismissed" | "edited";
 export type DDCellType = "text" | "date" | "currency" | "number" | "verbatim" | "category" | "boolean";
 

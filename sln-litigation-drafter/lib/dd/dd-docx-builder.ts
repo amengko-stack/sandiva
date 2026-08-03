@@ -181,12 +181,19 @@ function findingParas(f: DDFinding): Paragraph[] {
   if (f.regulationRefs && f.regulationRefs.length > 0) {
     out.push(labelled("Dasar hukum:", f.regulationRefs.join("; ")));
   }
-  if (f.currencyStatus === "superseded" && f.currencyNote) {
+  // A repealed provision is a hard warning; one still in force but reworded is
+  // a note. Rendering both identically is what made the check untrustworthy.
+  if ((f.currencyStatus === "superseded" || f.currencyStatus === "amended") && f.currencyNote) {
+    const repealed = f.currencyStatus === "superseded";
     out.push(
       new Paragraph({
         spacing: { after: 120 },
         children: [
-          t(`Catatan kekinian peraturan: ${f.currencyNote}`, { bold: true, color: "C2410C" }),
+          t(
+            `${repealed ? "Peringatan — ketentuan dicabut/diganti" : "Catatan — ketentuan telah diubah namun masih berlaku"}: ${f.currencyNote} ` +
+              `(hasil pemeriksaan otomatis atas sumber terbuka; wajib diverifikasi terhadap teks peraturan sebelum diandalkan)`,
+            { bold: repealed, color: repealed ? "C2410C" : "6B7280" }
+          ),
         ],
       })
     );

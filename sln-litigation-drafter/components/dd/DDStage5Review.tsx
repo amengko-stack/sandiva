@@ -28,7 +28,8 @@ function FindingCard({ f, onAction, onOpenSource, readOnly }: {
         <span>{DIM_LABEL[f.dimension]}</span>
         {f.aspectId && <span>· {aspectLabel(f.aspectId)}</span>}
         {f.verified && <span style={{ color: "#059669" }}>✓ terverifikasi</span>}
-        {f.currencyStatus === "superseded" && <span style={{ color: "#b45309" }}>⚠ peraturan diganti</span>}
+        {f.currencyStatus === "superseded" && <span style={{ color: "#b45309" }}>⚠ ketentuan dicabut/diganti</span>}
+        {f.currencyStatus === "amended" && <span style={{ color: "#6b7280" }}>· ketentuan diubah, masih berlaku</span>}
         {f.currencyStatus === "unknown" && (f.regulationRefs?.length ?? 0) > 0 && <span style={{ color: "#6b7280" }}>? keberlakuan belum dicek</span>}
         <span style={{ marginLeft: "auto", color: "#6b7280" }}>{f.status}</span>
       </div>

@@ -10,7 +10,10 @@ Kembalikan HANYA JSON yang valid, tanpa markdown, tanpa teks lain.`;
 // Citation-chain / sanction quality bar + prohibitions for findings-producing
 // analysis prompts. Kept as one shared block so redflagSystem (and any future
 // findings prompt) states it identically and economically.
-const DD_FINDING_QUALITY_BAR = `Setiap temuan HARUS memuat, dalam urutan ini: (1) fakta, lalu (2) rantai kutipan LENGKAP sejauh didukung jenis dokumennya — nomor akta, tanggal, nama notaris, nomor keputusan/persetujuan Menkumham, nomor pendaftaran, dan nomor pengumuman BNRI; (3) ketidaksesuaian spesifiknya; (4) sanksi BESERTA pasal yang mengaturnya. Fakta harus mendahului opini. Contoh standar kualitas (keterlambatan pendaftaran menurut UUWDP): "Pasal 32 Ayat (1) UUWDP: pidana kurungan 3 bulan atau denda Rp3.000.000".
+const DD_FINDING_QUALITY_BAR = `Setiap temuan HARUS memuat, dalam urutan ini: (1) fakta, lalu (2) rantai kutipan LENGKAP sejauh didukung jenis dokumennya — nomor akta, tanggal, nama notaris, nomor keputusan/persetujuan Menkumham, nomor pendaftaran, dan nomor pengumuman BNRI; (3) ketidaksesuaian spesifiknya; (4) KONSEKUENSI HUKUMNYA, yang WAJIB kamu nyatakan secara tegas dengan memilih salah satu dari dua bentuk berikut — tidak boleh dikosongkan:
+   (a) bila ketidaksesuaian itu diancam sanksi oleh peraturan: sebutkan sanksinya BESERTA pasal yang mengaturnya. Contoh standar kualitas (keterlambatan pendaftaran menurut UUWDP): "Pasal 32 ayat (1) UUWDP: pidana kurungan 3 bulan atau denda Rp3.000.000";
+   (b) bila TIDAK ada sanksi pidana/administratif yang melekat (mis. pelanggaran anggaran dasar atau wanprestasi kontraktual): nyatakan hal itu secara tegas dan sebutkan konsekuensi keperdataan/korporasinya — misalnya "tidak terdapat sanksi pidana atau administratif; konsekuensinya bersifat keperdataan, yaitu risiko keabsahan tindakan korporasi dan potensi gugatan pemegang saham".
+   JANGAN mengarang sanksi yang tidak ada dasar pasalnya, dan JANGAN melewatkan butir (4) begitu saja. Fakta harus mendahului opini.
 LARANGAN: (a) jangan membuat pernyataan prediktif atau memberi jaminan mengenai tindakan regulator di masa depan; (b) jangan memberi opini di luar kompetensi konsultan hukum Indonesia (keuangan, teknis, pajak-akuntansi, atau kewajaran komersial); (c) bila suatu fakta tidak dapat dipastikan dari dokumen yang diperiksa, gunakan penanda "[PERLU VERIFIKASI]" beserta alasan singkat — jangan menerka atau berlindung di balik lindungan yang kabur. Ini mengikuti doktrin aspek yuridis formil vs materiil: kebenaran aspek materiil diasumsikan berdasarkan pernyataan manajemen.`;
 
 export function classifySystem(): string {
@@ -36,7 +39,7 @@ export function redflagSystem(regime?: DDRegime, entityName?: string): string {
       : "";
   return `Kamu adalah partner uji tuntas Indonesia yang menandai risiko hukum (red flags) per aspek.
 Setiap temuan HARUS berlabuh pada kutipan verbatim dari dokumen. Tanpa kutipan = tanpa temuan.
-Sebutkan peraturan yang relevan dalam format singkat (mis. "UU 40/2007", "PP 5/2021") pada regulationRefs.
+Sebutkan peraturan yang relevan pada regulationRefs dalam format yang DAPAT DIIDENTIFIKASI SECARA UNIK: nomor, tahun, dan pasal bila ada — mis. "UU 40/2007 Pasal 94 ayat (1)", "PP 5/2021", "POJK 17/POJK.04/2020". Gunakan nomor dan tahun yang lengkap; jangan menyingkat menjadi nama panggilan saja (mis. jangan hanya "UUPT" atau "Cipta Kerja") karena rujukan itu diperiksa kekiniannya secara otomatis.
 ${DD_FINDING_QUALITY_BAR}
 ${guardBlock}${DD_DATA_FRAMING}`;
 }
