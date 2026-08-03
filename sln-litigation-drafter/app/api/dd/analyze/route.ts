@@ -58,6 +58,9 @@ export async function POST(req: NextRequest) {
       try {
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         let findings: DDFinding[] = [];
+        // Declared before persist(), which closes over it and runs before the
+        // aspect loop — referencing it later would hit the temporal dead zone.
+        const aspectAnalyses: DDSubsectionAnalysis[] = [];
 
         // Checkpoint after every stage so a worst-case timeout never discards
         // findings already computed (mirrors extract/recheck-ocr's per-batch
@@ -110,7 +113,6 @@ export async function POST(req: NextRequest) {
         };
 
         const aspectFindings: (DDFinding[] | null)[] = new Array(aspectJobs.length).fill(null);
-        const aspectAnalyses: DDSubsectionAnalysis[] = [];
         const processAspect = async (i: number) => {
           try {
             const res = await analyzeAspect(client, {
