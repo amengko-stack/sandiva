@@ -121,7 +121,7 @@ describe("buildDdReportDocx — listing-status regime", () => {
     return docxText(buf);
   };
 
-  it("applies the UUPT baseline and section VII.A at every status", async () => {
+  it("applies the UUPT baseline and the transaction chapter at every status", async () => {
     for (const patch of [
       { listingStatus: "non_tbk" as const },
       { listingStatus: "non_tbk" as const, ultimateParentTbk: "PT Induk Tbk" },
@@ -129,15 +129,15 @@ describe("buildDdReportDocx — listing-status regime", () => {
     ]) {
       const text = await build(patch);
       expect(text).toContain("LAPORAN UJI TUNTAS DARI SEGI HUKUM");
-      expect(text).toContain("VII.A");
+      expect(text).toContain("KEPATUHAN PROSEDUR PENGAMBILALIHAN SAHAM");
       expect(text).toContain("Pasal 127 ayat (2) UUPT");
-      expect(text).toContain("Kesimpulan keseluruhan");
+      expect(text).toContain("KESIMPULAN DAN REKOMENDASI");
     }
   });
 
-  it("omits the capital-markets section for a plain private company", async () => {
+  it("omits the capital-markets chapter for a plain private company", async () => {
     const text = await build({ listingStatus: "non_tbk" });
-    expect(text).not.toContain("VII.B");
+    expect(text).not.toContain("KEPATUHAN KETENTUAN PASAR MODAL");
     // Citing rules that do not bind the company would be a material defect.
     expect(text).not.toContain("POJK 17");
     expect(text).not.toContain("Penawaran Tender Wajib");
@@ -145,7 +145,7 @@ describe("buildDdReportDocx — listing-status regime", () => {
 
   it("places obligations at the parent for a private company with a Tbk parent", async () => {
     const text = await build({ listingStatus: "non_tbk", ultimateParentTbk: "PT Induk Tbk" });
-    expect(text).toContain("VII.B");
+    expect(text).toContain("KEPATUHAN KETENTUAN PASAR MODAL PADA TINGKAT INDUK");
     expect(text).toContain("PT Induk Tbk");
     expect(text).toContain("perusahaan terkendali");
     expect(text).toContain("Pengujian Ambang Transaksi Material terhadap Induk");
@@ -157,18 +157,24 @@ describe("buildDdReportDocx — listing-status regime", () => {
 
   it("applies the direct capital-markets regime when the entity is itself Tbk", async () => {
     const text = await build({ listingStatus: "tbk" });
-    expect(text).toContain("VII.B");
+    expect(text).toContain("KEPATUHAN KETENTUAN PASAR MODAL");
     expect(text).toContain("POJK 9/POJK.04/2018");
     expect(text).toContain("Penawaran Tender Wajib");
     // Thresholds are measured against the entity, not a parent.
     expect(text).not.toContain("Pengujian Ambang Transaksi Material terhadap Induk");
   });
 
-  it("adds the BUMN section only as open questions", async () => {
+  it("adds the BUMN chapter only as open questions", async () => {
     const text = await build({ listingStatus: "non_tbk", isBumn: true });
-    expect(text).toContain("VII.C");
+    expect(text).toContain("LAPISAN BADAN USAHA MILIK NEGARA");
     expect(text).toContain("PERTANYAAN WAJIB");
     expect(text).toContain("belum diverifikasi");
+  });
+
+  it("never prints a severity/risk rating anywhere in the document", async () => {
+    const text = await build({ listingStatus: "non_tbk" });
+    expect(text).not.toMatch(/\[KRITIS\]|\[MATERIAL\]|\[MINOR\]/);
+    expect(text).not.toMatch(/Tinggi\/Sedang\/Rendah/);
   });
 });
 

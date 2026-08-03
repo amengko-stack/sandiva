@@ -145,6 +145,20 @@ export interface DDTransaction {
   reportMeta?: DDReportMeta; // absent = builder falls back to placeholders
 }
 
+/**
+ * One rendered element of the report. Declared here rather than in a renderer so
+ * the boilerplate and narrative renderers can both emit it without importing
+ * each other (narrative-render already depends on report-boilerplate for date
+ * formatting, so the reverse import would cycle).
+ */
+export type DDReportBlock =
+  | { kind: "heading"; text: string }
+  | { kind: "para"; text: string }
+  | { kind: "note"; text: string }
+  | { kind: "list"; items: string[] }
+  | { kind: "defs"; rows: [string, string][] }
+  | { kind: "table"; headers: string[]; rows: string[][] };
+
 // ---------- narrative layer (Bagian I) ----------
 // The precedents lead with a DESCRIPTION of what the documents say, with the
 // citation chain woven into the prose, and raise issues as an indented "Catatan:"

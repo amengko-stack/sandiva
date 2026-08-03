@@ -5,18 +5,17 @@ import {
 } from "docx";
 import { aspectLabel } from "@/config/ddAspects";
 import { transactionLabel } from "@/config/ddTransactionTypes";
+import { planChapters, subNumber, type DDChapterPlan, type DDChapterSub } from "@/config/ddChapters";
 import {
-  DD_REPORT_SECTIONS, DD_VII_A_FRAMING, regimeSubsectionsForVII, sectionForAspect,
-} from "@/config/ddReportSections";
-import {
-  confidentialityLegend, deriveVerdict, draftLegend, formatIndonesianDate,
-  openingBlocks, verdictLabel,
+  confidentialityLegend, deriveVerdict, draftLegend, formatIndonesianDate, verdictLabel,
 } from "@/lib/dd/report-boilerplate";
-import { obligationsForLayer, resolveRegime } from "@/lib/dd/regime";
+import { obligationsForLayer, resolveRegime, type DDObligation } from "@/lib/dd/regime";
 import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
+import { renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
+import { chapterDisclaimer, chapterPendahuluan } from "@/lib/dd/report-chapters";
 import type {
-  DDConsolidated, DDEntity, DDEntityResult, DDFinding, DDGapItem, DDRegime,
-  DDReportMeta, DDTransaction,
+  DDAspectId, DDConsolidated, DDEntity, DDEntityResult, DDFinding, DDGapItem, DDRegime,
+  DDReportBlock, DDReportMeta, DDTransaction,
 } from "@/types/dd";
 
 // Same defect class lib/docx-builder.ts guards against — control chars corrupt Word XML.
@@ -94,16 +93,6 @@ const center = (
     children: [t(text, { bold: opts.bold, italics: opts.italics, size: opts.size })],
   });
 
-// Verbatim quotations are indented and italicised — the precedents rely on the
-// quote being visually separable from counsel's own analysis.
-const quote = (text: string) =>
-  new Paragraph({
-    alignment: AlignmentType.JUSTIFIED,
-    spacing: { after: 120 },
-    indent: { left: 720, right: 720 },
-    children: [t(text, { italics: true })],
-  });
-
 const labelled = (lbl: string, value: string) =>
   new Paragraph({
     spacing: { after: 60 },
@@ -112,12 +101,30 @@ const labelled = (lbl: string, value: string) =>
 
 const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
 
+const cell = (text: string, opts: { bold?: boolean; fill?: string } = {}) =>
+  new TableCell({
+    shading: opts.fill ? { fill: opts.fill } : undefined,
+    children: [new Paragraph({ children: [t(text, { bold: opts.bold, size: 20 })] })],
+  });
+
+function simpleTable(headers: string[], rows: string[][]): Table {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({ children: headers.map((hd) => cell(hd, { bold: true })) }),
+      ...rows.map((r) => new TableRow({ children: r.map((c) => cell(c)) })),
+    ],
+  });
+}
+
 /**
- * Renders the narrative blocks for Bagian I in the precedents' style: prose that
- * describes what the documents say, with qualifications as an indented
- * "Catatan:" attached to the passage they concern.
+ * Renders the block union shared by narrative-render.ts and report-chapters.ts
+ * (DDNarrativeBlock / DDReportBlock are structurally identical) into docx
+ * elements: headings as H3, justified paragraphs, an indented italic
+ * "Catatan:" for qualifications, bulleted lists, "label : value" defs, and
+ * tables at full width with a bold header row.
  */
-function narrativeElements(blocks: DDNarrativeBlock[]): (Paragraph | Table)[] {
+function renderBlocks(blocks: (DDNarrativeBlock | DDReportBlock)[]): (Paragraph | Table)[] {
   const out: (Paragraph | Table)[] = [];
   for (const b of blocks) {
     if (b.kind === "heading") {
@@ -125,8 +132,6 @@ function narrativeElements(blocks: DDNarrativeBlock[]): (Paragraph | Table)[] {
     } else if (b.kind === "para") {
       out.push(p(b.text));
     } else if (b.kind === "note") {
-      // "Catatan:" is a label on its own line, then the qualification indented,
-      // matching how the precedents set these apart from the narrative.
       out.push(
         new Paragraph({
           spacing: { before: 120, after: 60 },
@@ -173,22 +178,6 @@ function narrativeElements(blocks: DDNarrativeBlock[]): (Paragraph | Table)[] {
   return out;
 }
 
-const cell = (text: string, opts: { bold?: boolean; fill?: string } = {}) =>
-  new TableCell({
-    shading: opts.fill ? { fill: opts.fill } : undefined,
-    children: [new Paragraph({ children: [t(text, { bold: opts.bold, size: 20 })] })],
-  });
-
-function simpleTable(headers: string[], rows: string[][]): Table {
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [
-      new TableRow({ children: headers.map((hd) => cell(hd, { bold: true })) }),
-      ...rows.map((r) => new TableRow({ children: r.map((c) => cell(c)) })),
-    ],
-  });
-}
-
 const GAP_LABEL: Record<DDGapItem["status"], string> = {
   present: "Ada", incomplete: "Tidak lengkap", expired: "Kedaluwarsa",
   missing: "TIDAK ADA", not_applicable: "Tidak berlaku",
@@ -196,10 +185,6 @@ const GAP_LABEL: Record<DDGapItem["status"], string> = {
 const GAP_FILL: Record<DDGapItem["status"], string> = {
   present: "D1FAE5", incomplete: "FEF3C7", expired: "FED7AA",
   missing: "FEE2E2", not_applicable: "E5E7EB",
-};
-const SEV_ORDER: DDFinding["severity"][] = ["kritis", "material", "minor"];
-const SEV_COLOR: Record<DDFinding["severity"], string> = {
-  kritis: "B91C1C", material: "B45309", minor: "374151",
 };
 
 const PLACEHOLDER_META: DDReportMeta = {
@@ -215,74 +200,17 @@ const PLACEHOLDER_META: DDReportMeta = {
   signatoryTitle: "[JABATAN]",
 };
 
-/**
- * A finding rendered in the house style the precedents and the published IDX
- * LUT converge on: fact, then the verbatim quotation, then the analysis, then
- * the recommendation. The verbatim quote sits between fact and analysis so a
- * reader can check counsel's reading against the source text.
- */
-function findingParas(f: DDFinding): Paragraph[] {
-  const out: Paragraph[] = [
-    new Paragraph({
-      spacing: { before: 160, after: 80 },
-      children: [
-        t(`[${f.severity.toUpperCase()}] `, { bold: true, color: SEV_COLOR[f.severity] }),
-        t(f.editedProblem ?? f.problem, { bold: true }),
-        ...(f.verified ? [t("  ✓ terverifikasi", { color: "059669" })] : []),
-      ],
-    }),
-  ];
-  if (f.sourceFile) {
-    out.push(labelled("Sumber:", f.sourceFile));
-  }
-  if (f.anchor) {
-    out.push(p("Kutipan:"), quote(`"${f.anchor}"`));
-  }
-  out.push(labelled("Analisis:", f.whyItMatters));
-  if (f.legalConsequence) {
-    out.push(labelled("Konsekuensi hukum:", f.legalConsequence));
-  }
-  out.push(labelled("Rekomendasi:", f.suggestedFix));
-  if (f.regulationRefs && f.regulationRefs.length > 0) {
-    out.push(labelled("Dasar hukum:", f.regulationRefs.join("; ")));
-  }
-  // A repealed provision is a hard warning; one still in force but reworded is
-  // a note. Rendering both identically is what made the check untrustworthy.
-  if ((f.currencyStatus === "superseded" || f.currencyStatus === "amended") && f.currencyNote) {
-    const repealed = f.currencyStatus === "superseded";
-    out.push(
-      new Paragraph({
-        spacing: { after: 120 },
-        children: [
-          t(
-            `${repealed ? "Peringatan — ketentuan dicabut/diganti" : "Catatan — ketentuan telah diubah namun masih berlaku"}: ${f.currencyNote} ` +
-              `(hasil pemeriksaan otomatis atas sumber terbuka; wajib diverifikasi terhadap teks peraturan sebelum diandalkan)`,
-            { bold: repealed, color: repealed ? "C2410C" : "6B7280" }
-          ),
-        ],
-      })
-    );
-  }
-  return out;
-}
-
-/** Obligation table for one VII sub-section. */
-function obligationTable(layer: Parameters<typeof obligationsForLayer>[0], txnType: DDTransaction["type"]): Table {
-  const obligations = obligationsForLayer(layer, txnType);
+/** Obligation table for one layer, optionally filtered to a subset of ids. */
+function obligationTable(obligations: DDObligation[]): Table {
   return simpleTable(
     ["Kewajiban", "Dasar hukum", "Jangka waktu / ambang"],
     obligations.map((ob) => [ob.label, ob.basis, ob.timing])
   );
 }
 
-function obligationNotes(
-  layer: Parameters<typeof obligationsForLayer>[0],
-  txnType: DDTransaction["type"]
-): Paragraph[] {
-  const withNotes = obligationsForLayer(layer, txnType).filter((ob) => ob.note);
-  if (withNotes.length === 0) {
-    return [];
-  }
+function obligationNotes(obligations: DDObligation[]): Paragraph[] {
+  const withNotes = obligations.filter((ob) => ob.note);
+  if (withNotes.length === 0) return [];
   const out: Paragraph[] = [p("Catatan:", { bold: true })];
   for (const ob of withNotes) {
     out.push(
@@ -296,17 +224,98 @@ function obligationNotes(
   return out;
 }
 
-/** VII.B — the capital-markets sub-section, whose content depends on which layer applies. */
-function capitalMarketsSection(
-  regime: DDRegime,
+function byId(obligations: DDObligation[], ids: string[]): DDObligation[] {
+  return obligations.filter((o) => ids.indexOf(o.id) !== -1);
+}
+
+/** Aspects an entity's checklist actually engaged, derived from gaps/classification. */
+function presentAspectsFor(r: DDEntityResult): DDAspectId[] {
+  const ids: DDAspectId[] = [];
+  for (const g of r.gaps) ids.push(g.aspectId);
+  for (const c of r.classified) ids.push(c.aspectId);
+  for (const f of r.findings) if (f.aspectId) ids.push(f.aspectId);
+  return Array.from(new Set(ids));
+}
+
+/** Coarse document-category summary for BAB 1.4, grouped by aspect. */
+function docCategoriesFor(r: DDEntityResult): { category: string; period: string; status: string }[] {
+  const byAspect = new Map<DDAspectId, number>();
+  for (const c of r.classified) {
+    byAspect.set(c.aspectId, (byAspect.get(c.aspectId) ?? 0) + 1);
+  }
+  return Array.from(byAspect.entries()).map(([aspectId, count]) => ({
+    category: aspectLabel(aspectId),
+    period: "—",
+    status: `${count} dokumen diperiksa`,
+  }));
+}
+
+/**
+ * BAB II fix: narrative-render.ts hardcodes the "Status" definition row as
+ * "Tertutup". Post-process the first "defs" block (the Data Korporasi block)
+ * to reflect the entity's actual listing status, and append the parent row
+ * when the entity sits under a Tbk ultimate parent.
+ */
+function fixStatusRow(
+  blocks: DDNarrativeBlock[],
   entity: DDEntity,
-  txnType: DDTransaction["type"]
-): (Paragraph | Table)[] {
-  const out: (Paragraph | Table)[] = [];
+  regime: DDRegime
+): DDNarrativeBlock[] {
+  const statusValue =
+    entity.listingStatus === "tbk"
+      ? "Perusahaan Terbuka (Tbk)"
+      : "Perseroan Terbatas Tertutup (non-Tbk)";
+  let fixed = false;
+  return blocks.map((b) => {
+    if (!fixed && b.kind === "defs") {
+      const rows = b.rows.map((row): [string, string] => (row[0] === "Status" ? ["Status", statusValue] : row));
+      if (regime.parentTbkName) {
+        rows.push(["Induk utama", regime.parentTbkName]);
+      }
+      fixed = true;
+      return { kind: "defs", rows };
+    }
+    return b;
+  });
+}
+
+/** Findings belonging to a chapter's aspects, active (non-dismissed) only. */
+function findingsForChapter(r: DDEntityResult, chapter: DDChapterPlan): DDFinding[] {
+  const aspectSet = new Set(chapter.aspectIds);
+  return r.findings.filter((f) => f.status !== "dismissed" && f.aspectId !== null && aspectSet.has(f.aspectId));
+}
+
+/** BAB for the transaction-specific chapter: framing paragraphs, then the UUPT obligation table. */
+function renderTransaksiChapter(
+  chNo: number, sub: DDChapterSub[], txnType: DDTransaction["type"], out: (Paragraph | Table)[]
+): void {
+  sub.forEach((s, i) => {
+    out.push(h2(`${subNumber(chNo, i)} ${s.title}`));
+    out.push(
+      p(
+        `Bagian ini menguraikan pemenuhan ketentuan Undang-Undang Perseroan Terbatas terkait ${s.title.toLowerCase()} ` +
+          `sehubungan dengan rencana ${transactionLabel(txnType).toLowerCase()}.`
+      )
+    );
+  });
+  const obligations = obligationsForLayer("uupt", txnType);
+  out.push(p("Kewajiban yang relevan berdasarkan Undang-Undang Perseroan Terbatas adalah sebagai berikut:"));
+  out.push(obligationTable(obligations));
+  for (const para of obligationNotes(obligations)) out.push(para);
+}
+
+/** BAB for the capital-markets chapter — content depends on whether the layer binds directly or via a parent. */
+function renderPasarModalChapter(
+  chNo: number, subs: DDChapterSub[], regime: DDRegime, entity: DDEntity,
+  txnType: DDTransaction["type"], out: (Paragraph | Table)[]
+): void {
   const viaParent = regime.parentTbkName !== null;
   const layer = viaParent ? "pasar_modal_induk" : "pasar_modal_langsung";
+  const obligations = obligationsForLayer(layer, txnType);
 
   if (viaParent) {
+    // 1: kedudukan
+    out.push(h2(`${subNumber(chNo, 0)} ${subs[0].title}`));
     out.push(
       p(
         `${entity.name} bukan merupakan Perusahaan Terbuka dan karena itu tidak terikat secara langsung oleh ` +
@@ -314,124 +323,179 @@ function capitalMarketsSection(
           `Perusahaan Terbuka. POJK 17/POJK.04/2020 mencakup setiap transaksi yang dilakukan oleh Perusahaan ` +
           `Terbuka atau perusahaan terkendali, dengan ambang materialitas diukur terhadap angka induk. Karena itu ` +
           `transaksi atas saham atau aset ${entity.name} dapat merupakan Transaksi Material bagi ` +
-          `${regime.parentTbkName}, dan kewajiban yang timbul melekat pada induk tersebut — bukan pada ` +
-          `${entity.name}.`
-      ),
+          `${regime.parentTbkName}, dan kewajiban yang timbul melekat pada induk tersebut — bukan pada ${entity.name}.`
+      )
+    );
+    // 2: pengujian ambang
+    out.push(h2(`${subNumber(chNo, 1)} ${subs[1].title}`));
+    out.push(
       p(
         `Angka keuangan induk berada di luar lingkup uji tuntas dari segi hukum. Hasil pengujian rasio di bawah ` +
           `ini hanya dapat dipastikan setelah data keuangan induk disediakan dan diverifikasi oleh pihak yang ` +
           `berkompeten; sepanjang data tersebut tidak tersedia, hasilnya ditandai ` +
           `"[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]".`
-      ),
-      h3("Pengujian Ambang Transaksi Material terhadap Induk"),
+      )
+    );
+    out.push(
       simpleTable(
         ["Rasio yang diuji", "Ambang", "Hasil"],
         [
-          [
-            "Nilai transaksi terhadap ekuitas induk",
-            "20% (10% dari total aset bila ekuitas induk negatif)",
-            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]",
-          ],
-          [
-            "Total aset objek transaksi terhadap total aset induk",
-            "20%",
-            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]",
-          ],
-          [
-            "Laba bersih objek transaksi terhadap laba bersih induk",
-            "20%",
-            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]",
-          ],
-          [
-            "Pendapatan objek transaksi terhadap pendapatan induk",
-            "20%",
-            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]",
-          ],
+          ["Nilai transaksi terhadap ekuitas induk", "20% (10% dari total aset bila ekuitas induk negatif)",
+            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]"],
+          ["Total aset objek transaksi terhadap total aset induk", "20%",
+            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]"],
+          ["Laba bersih objek transaksi terhadap laba bersih induk", "20%",
+            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]"],
+          ["Pendapatan objek transaksi terhadap pendapatan induk", "20%",
+            "[PERLU VERIFIKASI — data keuangan induk di luar lingkup uji tuntas hukum]"],
         ]
-      ),
-      p(
-        `Dasar penghitungan adalah laporan keuangan triwulanan terakhir induk yang telah direviu atau diaudit.`
-      ),
-      h3("Kewajiban yang Timbul pada Tingkat Induk")
+      )
     );
-  } else {
-    out.push(
-      p(
-        `${entity.name} berstatus Perusahaan Terbuka. Selain Undang-Undang Perseroan Terbatas, ${entity.name} ` +
-          `tunduk pada Undang-Undang Pasar Modal beserta peraturan pelaksanaannya, peraturan Otoritas Jasa ` +
-          `Keuangan, dan peraturan Bursa Efek. Bagian ini menguji kepatuhan terhadap ketentuan Transaksi ` +
-          `Material, Transaksi Afiliasi dan Benturan Kepentingan, serta — sepanjang transaksi mengakibatkan ` +
-          `perubahan Pengendali — ketentuan Pengambilalihan Perusahaan Terbuka.`
-      ),
-      h3("Kewajiban Berdasarkan Ketentuan Pasar Modal")
-    );
-  }
-
-  out.push(obligationTable(layer, txnType));
-  for (const para of obligationNotes(layer, txnType)) {
-    out.push(para);
-  }
-  return out;
-}
-
-/** VIII — tri-state conclusions, per report section then overall. */
-function conclusionSection(r: DDEntityResult): (Paragraph | Table)[] {
-  const out: (Paragraph | Table)[] = [];
-  const active = r.findings.filter((f) => f.status !== "dismissed");
-
-  out.push(
-    p(
-      `Kesimpulan di bawah ini disusun untuk setiap bagian Laporan ini dengan tiga kemungkinan penilaian: ` +
-        `memenuhi ketentuan; memenuhi ketentuan dengan catatan, dalam hal mana catatan tersebut menguraikan ` +
-        `risiko hukumnya; atau tidak memenuhi ketentuan.`
-    )
-  );
-
-  const rows: string[][] = [];
-  for (const section of DD_REPORT_SECTIONS) {
-    if (section.aspectIds.length === 0) {
-      continue;
+    out.push(p("Dasar penghitungan adalah laporan keuangan triwulanan terakhir induk yang telah direviu atau diaudit."));
+    // 3: kewajiban tingkat induk
+    out.push(h2(`${subNumber(chNo, 2)} ${subs[2].title}`));
+    const kewajiban = byId(obligations, ["induk.kewajiban_terpicu", "induk.pengecualian_99"]);
+    out.push(obligationTable(kewajiban));
+    for (const para of obligationNotes(kewajiban)) out.push(para);
+    // 4: kedalaman rantai
+    out.push(h2(`${subNumber(chNo, 3)} ${subs[3].title}`));
+    const kedalaman = byId(obligations, ["induk.kedalaman_rantai"]);
+    if (kedalaman.length > 0) {
+      out.push(p(kedalaman[0].label));
+      out.push(labelled("Catatan:", kedalaman[0].note ?? ""));
     }
-    const sectionFindings = active.filter(
-      (f) => f.aspectId !== null && sectionForAspect(f.aspectId).id === section.id
-    );
-    const verdict = deriveVerdict(sectionFindings);
-    const counts = SEV_ORDER.map(
-      (sev) => `${sectionFindings.filter((f) => f.severity === sev).length} ${sev}`
-    ).join(", ");
-    rows.push([
-      `${section.numeral}. ${section.title}`,
-      verdictLabel(verdict),
-      sectionFindings.length === 0 ? "tidak ada temuan" : counts,
-    ]);
-  }
-  out.push(simpleTable(["Bagian", "Penilaian", "Temuan"], rows));
-
-  const overall = deriveVerdict(active);
-  out.push(
-    new Paragraph({
-      spacing: { before: 240, after: 120 },
-      children: [
-        t("Kesimpulan keseluruhan: ", { bold: true }),
-        t(
-          `berdasarkan Dokumen Yang Diperiksa dan dengan memperhatikan seluruh asumsi dan pembatasan dalam ` +
-            `Laporan ini, ${r.entity.name} `,
-        ),
-        t(verdictLabel(overall), { bold: true }),
-        t("."),
-      ],
-    })
-  );
-
-  if (overall !== "memenuhi") {
+  } else {
+    out.push(h2(`${subNumber(chNo, 0)} ${subs[0].title}`));
     out.push(
       p(
-        `Uraian atas setiap catatan dan ketidaksesuaian, beserta dasar hukum dan sanksinya, disajikan pada ` +
-          `bagian-bagian terkait di atas.`
+        `${entity.name} berstatus Perusahaan Terbuka. Bagian ini menguji ambang Transaksi Material berdasarkan ` +
+          `POJK 17/POJK.04/2020, diukur terhadap angka Perseroan sendiri.`
+      )
+    );
+    const ambang = byId(obligations, [
+      "pojk17.ambang", "pojk17.penilai", "pojk17.keterbukaan", "pojk17.rups", "pojk17.pengecualian", "pojk17.laporan_tahunan",
+    ]);
+    out.push(obligationTable(ambang));
+    for (const para of obligationNotes(ambang)) out.push(para);
+
+    out.push(h2(`${subNumber(chNo, 1)} ${subs[1].title}`));
+    const afiliasi = byId(obligations, ["pojk42.afiliasi", "pojk42.benturan"]);
+    out.push(p("Kewajiban yang timbul apabila transaksi mengandung unsur Transaksi Afiliasi atau Benturan Kepentingan:"));
+    out.push(obligationTable(afiliasi));
+    for (const para of obligationNotes(afiliasi)) out.push(para);
+
+    out.push(h2(`${subNumber(chNo, 2)} ${subs[2].title}`));
+    const ptw = byId(obligations, ["pojk9.ptw", "pojk9.pengumuman", "pojk9.refloat"]);
+    out.push(p("Sepanjang transaksi mengakibatkan perubahan Pengendali, kewajiban berikut berlaku:"));
+    out.push(obligationTable(ptw));
+    for (const para of obligationNotes(ptw)) out.push(para);
+
+    out.push(h2(`${subNumber(chNo, 3)} ${subs[3].title}`));
+    out.push(
+      p(
+        `Selain kewajiban di atas, ${entity.name} tunduk pada kewajiban keterbukaan berkelanjutan berdasarkan ` +
+          `peraturan Otoritas Jasa Keuangan dan peraturan Bursa Efek, termasuk pelaporan berkala dan keterbukaan ` +
+          `informasi atau fakta material.`
       )
     );
   }
-  return out;
+}
+
+/** BAB for the analysis-per-aspect chapter, closing with the findings table and verdict line. */
+function renderAnalisisAspekChapter(
+  chNo: number, chapter: DDChapterPlan, r: DDEntityResult, out: (Paragraph | Table)[]
+): void {
+  chapter.subs.forEach((sub, i) => {
+    out.push(h2(`${subNumber(chNo, i)} ${sub.title}`));
+    if (sub.findings) {
+      const findings = findingsForChapter(r, chapter);
+      const blocks = renderFindingsTable(findings);
+      if (blocks.length === 0) {
+        out.push(p("Tidak terdapat temuan untuk bab ini berdasarkan Dokumen Yang Diperiksa."));
+      } else {
+        for (const el of renderBlocks(blocks)) out.push(el);
+      }
+      out.push(p(renderVerdictLine(findings), { bold: true }));
+    } else {
+      out.push(
+        p(
+          `Bagian ini menguraikan ${sub.title.toLowerCase()} berdasarkan Dokumen Yang Diperiksa untuk aspek ` +
+            `${(sub.aspectIds ?? chapter.aspectIds).map(aspectLabel).join(", ")}.`
+        )
+      );
+    }
+  });
+}
+
+/** BAB Kesimpulan — 4 subs, computed from the entity's own analysis chapters and findings. */
+function renderKesimpulanChapter(
+  chNo: number, subs: DDChapterSub[], plan: DDChapterPlan[], r: DDEntityResult, out: (Paragraph | Table)[]
+): void {
+  const analysisChapters = plan.filter((c) => c.kind === "analisis_aspek");
+
+  // 1: Ringkasan Temuan
+  out.push(h2(`${subNumber(chNo, 0)} ${subs[0].title}`));
+  const rows: string[][] = analysisChapters.map((c) => {
+    const findings = findingsForChapter(r, c);
+    const verdict = deriveVerdict(findings.map((f) => ({ severity: f.severity, status: f.status })));
+    return [`${c.numeral}. ${c.title}`, verdictLabel(verdict), String(findings.length)];
+  });
+  out.push(simpleTable(["Bab", "Penilaian", "Jumlah Temuan"], rows));
+
+  // 2: Penilaian Kepatuhan per Bab
+  out.push(h2(`${subNumber(chNo, 1)} ${subs[1].title}`));
+  const allActive = r.findings.filter((f) => f.status !== "dismissed");
+  const overall = deriveVerdict(allActive.map((f) => ({ severity: f.severity, status: f.status })));
+  out.push(
+    p(
+      `Sebagaimana dirinci pada tabel di atas, penilaian kepatuhan disusun per bab dengan tiga kemungkinan hasil: ` +
+        `memenuhi ketentuan; memenuhi ketentuan dengan catatan; atau tidak memenuhi ketentuan. Secara keseluruhan, ` +
+        `berdasarkan Dokumen Yang Diperiksa dan dengan memperhatikan seluruh asumsi dan pembatasan dalam Laporan ` +
+        `ini, ${r.entity.name} ${verdictLabel(overall)}.`
+    )
+  );
+
+  // 3: Hal yang Memerlukan Konfirmasi Lebih Lanjut
+  out.push(h2(`${subNumber(chNo, 2)} ${subs[2].title}`));
+  const needsVerification = allActive.filter(
+    (f) =>
+      (f.editedProblem ?? f.problem).indexOf("[PERLU VERIFIKASI]") !== -1 ||
+      f.whyItMatters.indexOf("[PERLU VERIFIKASI]") !== -1 ||
+      (f.legalConsequence ?? "").indexOf("[PERLU VERIFIKASI]") !== -1
+  );
+  if (needsVerification.length === 0) {
+    out.push(p("Tidak terdapat hal yang secara khusus ditandai memerlukan konfirmasi lebih lanjut."));
+  } else {
+    for (const f of needsVerification) {
+      out.push(
+        new Paragraph({
+          numbering: { reference: "numlist", level: 0 },
+          alignment: AlignmentType.JUSTIFIED,
+          spacing: { after: 80 },
+          indent: { left: 1080, hanging: 360 },
+          children: [t(f.editedProblem ?? f.problem)],
+        })
+      );
+    }
+  }
+
+  // 4: Rekomendasi Tindak Lanjut
+  out.push(h2(`${subNumber(chNo, 3)} ${subs[3].title}`));
+  if (allActive.length === 0) {
+    out.push(p("Tidak terdapat rekomendasi tindak lanjut yang timbul dari uji tuntas ini."));
+  } else {
+    for (const f of allActive) {
+      out.push(
+        new Paragraph({
+          numbering: { reference: "bullets", level: 0 },
+          alignment: AlignmentType.JUSTIFIED,
+          spacing: { after: 80 },
+          indent: { left: 1080, hanging: 360 },
+          children: [t(f.suggestedFix)],
+        })
+      );
+    }
+  }
 }
 
 export async function buildDdReportDocx(args: {
@@ -444,8 +508,8 @@ export async function buildDdReportDocx(args: {
 
   // Release gate, ported from build_docx.js: a report may not go out as a
   // client release without a defined reliance scope, because the reliance
-  // clause in part E would otherwise name nobody while the cover asserts the
-  // report is releasable.
+  // clause would otherwise name nobody while the cover asserts the report is
+  // releasable.
   if (meta.clientRelease && meta.relianceScope.trim() === "") {
     throw new Error(
       "Ekspor sebagai laporan final untuk klien diblokir: Ruang Lingkup Keterandalan (reliance scope) belum diisi pada Tahap 1. Isi kolom tersebut atau matikan opsi rilis ke klien."
@@ -477,7 +541,7 @@ export async function buildDdReportDocx(args: {
       center(draftLegend(), { bold: true, size: 24, after: 240 }),
       p(
         "Draf ini disusun untuk telaah internal dan belum dirilis kepada klien. Sebagian temuan bergantung pada " +
-          "dokumen yang masih belum lengkap dan pada verifikasi yang belum dilakukan. Lihat bagian Asumsi dan " +
+          "dokumen yang masih belum lengkap dan pada verifikasi yang belum dilakukan. Lihat Bab I.6 Asumsi dan " +
           "Pembatasan.",
         { italics: true }
       )
@@ -493,238 +557,87 @@ export async function buildDdReportDocx(args: {
   );
 
   // ---------------- Daftar Isi ----------------
-  // Word renders the field on first open; the reader may need Ctrl+A, F9.
   children.push(
     h1("DAFTAR ISI"),
     new TableOfContents("Daftar Isi", { hyperlink: true, headingStyleRange: "1-3" }),
     pageBreak()
   );
 
-  // ---------------- Daftar Definisi ----------------
-  const defRows: string[][] = [
-    ["“Laporan”", "Laporan Uji Tuntas Dari Segi Hukum ini, termasuk seluruh lampirannya."],
-    [
-      "“Tanggal Akhir Uji Tuntas”",
-      `${cutoffLong} — tanggal batas akhir pemeriksaan; peristiwa setelah tanggal tersebut tidak diperiksa.`,
-    ],
-    [
-      "“Dokumen Yang Diperiksa”",
-      "Dokumen yang disediakan kepada kami dan diperiksa sebagaimana tercantum dalam Lampiran A.",
-    ],
-    ["“UUPT”", "Undang-Undang No. 40 Tahun 2007 tentang Perseroan Terbatas, sebagaimana telah diubah."],
-    ["“RUPS”", "Rapat Umum Pemegang Saham."],
-    ["“OJK”", "Otoritas Jasa Keuangan."],
-  ];
-  for (const r of results) {
-    defRows.push([`“${r.entity.name}”`, `Perseroan yang diperiksa dalam kapasitas sebagai ${r.entity.role}.`]);
-  }
-  children.push(h1("DAFTAR DEFINISI DAN SINGKATAN"), simpleTable(["Istilah", "Definisi"], defRows), pageBreak());
-
-  // ---------------- Opening matter A–E ----------------
-  children.push(h1("PEMBUKAAN"));
-  if (primary) {
-    const blocks = openingBlocks({
-      transaction,
-      entity: primary,
-      regime: resolveRegime(primary),
-      meta,
-    });
-    for (const block of blocks) {
-      children.push(h2(`${block.letter}. ${block.heading}`));
-      for (const body of block.body) {
-        // Enumerated items arrive marked "(i) …" / "(a) …" — indent them.
-        const enumerated = /^\((?:[ivx]+|[a-k])\)\s/.test(body);
-        children.push(p(body, enumerated ? { indent: 720 } : {}));
-      }
-    }
-  }
-  children.push(pageBreak());
-
-  // ---------------- Per entity: sections I–VIII ----------------
+  // ---------------- Per-entity chapters (BAB I..N, decimal sub-numbering) ----------------
+  const multiEntity = results.length > 1;
   for (const r of results) {
     const regime = resolveRegime(r.entity);
-    const active = r.findings.filter((f) => f.status !== "dismissed");
+    const plan = planChapters({
+      transactionType: transaction.type,
+      regime,
+      presentAspects: presentAspectsFor(r),
+    });
 
-    children.push(h1(r.entity.name.toUpperCase()));
-    children.push(
-      labelled("Kedudukan dalam transaksi:", r.entity.role),
-      labelled(
-        "Status perusahaan:",
-        r.entity.listingStatus === "tbk"
-          ? "Perusahaan Terbuka (Tbk)"
-          : "Perseroan Terbatas Tertutup (non-Tbk)"
-      )
-    );
-    if (regime.parentTbkName) {
-      children.push(labelled("Induk utama berstatus Terbuka:", regime.parentTbkName));
+    if (multiEntity) {
+      children.push(center(`ENTITAS: ${r.entity.name.toUpperCase()}`, { bold: true, size: 30, after: 360 }));
+      children.push(
+        labelled("Kedudukan dalam transaksi:", r.entity.role),
+      );
     }
-    children.push(p(""));
 
-    for (const section of DD_REPORT_SECTIONS) {
-      // VII and VIII are built from the regime and the verdicts, not from aspects.
-      if (section.id === "VII") {
-        children.push(h2(`${section.numeral}. ${section.title}`));
-        const subs = regimeSubsectionsForVII(regime);
-        for (const sub of subs) {
-          if (sub.layer === "uupt") {
-            const framing = DD_VII_A_FRAMING[transaction.type];
-            children.push(h3(`${sub.id}. ${framing.heading}`));
-            children.push(p(framing.framing));
-            children.push(obligationTable("uupt", transaction.type));
-            for (const para of obligationNotes("uupt", transaction.type)) {
-              children.push(para);
-            }
-          } else if (sub.layer === "pasar_modal_langsung") {
-            children.push(h3(`${sub.id}. ${sub.title}`));
-            for (const el of capitalMarketsSection(regime, r.entity, transaction.type)) {
-              children.push(el);
-            }
-          } else {
-            children.push(h3(`${sub.id}. ${sub.title}`));
-            children.push(
-              p(
-                `${r.entity.name} berada dalam lingkup grup Badan Usaha Milik Negara. Butir-butir di bawah ini ` +
-                  `disajikan sebagai pertanyaan yang wajib dijawab oleh konsultan hukum penanggung jawab. ` +
-                  `Peraturan Badan Usaha Milik Negara yang relevan belum diverifikasi kekiniannya untuk ` +
-                  `keperluan Laporan ini, sehingga Laporan ini tidak menyimpulkannya.`
-              )
-            );
-            children.push(obligationTable("bumn", transaction.type));
-            for (const para of obligationNotes("bumn", transaction.type)) {
-              children.push(para);
+    let chNo = 0;
+    for (const chapter of plan) {
+      if (chapter.kind === "lampiran" || chapter.kind === "disclaimer") continue; // rendered once, globally, below
+      chNo++;
+
+      children.push(h1(`BAB ${chapter.numeral} — ${chapter.title}`));
+
+      if (chapter.kind === "pendahuluan") {
+        const docCategories = docCategoriesFor(r);
+        const contents = chapterPendahuluan({
+          transaction, entity: r.entity, regime, meta,
+          presentAspects: presentAspectsFor(r), docCategories,
+        });
+        contents.forEach((content, i) => {
+          children.push(h2(`${subNumber(chNo, i)} ${content.title}`));
+          for (const el of renderBlocks(content.blocks)) children.push(el);
+        });
+      } else if (chapter.kind === "profil") {
+        if (r.narrative) {
+          const blocks = fixStatusRow(renderNarrativeSectionI(r.narrative, r.entity.name), r.entity, regime);
+          let subIdx = 0;
+          for (const b of blocks) {
+            if (b.kind === "heading" && subIdx < chapter.subs.length) {
+              children.push(h2(`${subNumber(chNo, subIdx)} ${b.text}`));
+              subIdx++;
+            } else {
+              for (const el of renderBlocks([b])) children.push(el);
             }
           }
+        } else {
+          children.push(
+            p(
+              "Profil Perseroan tidak dapat disusun karena dokumen korporasi Perseroan belum diperiksa dalam uji " +
+                "tuntas ini."
+            )
+          );
         }
-        continue;
-      }
-
-      if (section.id === "VIII") {
-        children.push(h2(`${section.numeral}. ${section.title}`));
-        for (const el of conclusionSection(r)) {
-          children.push(el);
-        }
-        continue;
-      }
-
-      // Sections I–VI: gaps and findings belonging to this section's aspects.
-      children.push(h2(`${section.numeral}. ${section.title}`));
-
-      const sectionGaps = r.gaps.filter(
-        (g) => sectionForAspect(g.aspectId).id === section.id
-      );
-      const sectionFindings = active.filter(
-        (f) => f.aspectId !== null && sectionForAspect(f.aspectId).id === section.id
-      );
-
-      // Bagian I leads with the narrative when it has been generated, the way
-      // the precedents do — description of the documents first, qualifications
-      // as inline "Catatan:". The completeness matrix moves to Lampiran B so the
-      // body of the report reads as a legal narrative rather than a work paper.
-      if (section.id === "I" && r.narrative) {
-        for (const el of narrativeElements(renderNarrativeSectionI(r.narrative, r.entity.name))) {
-          children.push(el);
-        }
-        if (sectionFindings.length > 0) {
-          children.push(h3("Temuan Lain atas Aspek Korporasi"));
-          for (const sev of SEV_ORDER) {
-            for (const f of sectionFindings.filter((x) => x.severity === sev)) {
-              for (const para of findingParas(f)) children.push(para);
-            }
-          }
-        }
-        continue;
-      }
-
-      if (sectionGaps.length === 0 && sectionFindings.length === 0) {
+      } else if (chapter.kind === "analisis_aspek") {
+        renderAnalisisAspekChapter(chNo, chapter, r, children);
+      } else if (chapter.kind === "transaksi") {
+        renderTransaksiChapter(chNo, chapter.subs, transaction.type, children);
+      } else if (chapter.kind === "pasar_modal") {
+        renderPasarModalChapter(chNo, chapter.subs, regime, r.entity, transaction.type, children);
+      } else if (chapter.kind === "bumn") {
+        children.push(h2(`${subNumber(chNo, 0)} ${chapter.subs[0].title}`));
         children.push(
           p(
-            "Tidak terdapat dokumen yang diperiksa maupun temuan yang dapat dilaporkan untuk bagian ini " +
-              "berdasarkan Dokumen Yang Diperiksa."
+            `${r.entity.name} berada dalam lingkup grup Badan Usaha Milik Negara. Butir-butir di bawah ini ` +
+              `disajikan sebagai pertanyaan yang wajib dijawab oleh konsultan hukum penanggung jawab. Peraturan ` +
+              `Badan Usaha Milik Negara yang relevan belum diverifikasi kekiniannya untuk keperluan Laporan ini, ` +
+              `sehingga Laporan ini tidak menyimpulkannya.`
           )
         );
-        continue;
-      }
-
-      if (sectionGaps.length > 0) {
-        children.push(h3("Kelengkapan Dokumen"));
-        children.push(
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [
-              new TableRow({
-                children: [
-                  cell("Aspek", { bold: true }),
-                  cell("Dokumen yang diharapkan", { bold: true }),
-                  cell("Status", { bold: true }),
-                  cell("Keterangan", { bold: true }),
-                ],
-              }),
-              ...sectionGaps.map(
-                (g) =>
-                  new TableRow({
-                    children: [
-                      cell(aspectLabel(g.aspectId)),
-                      cell(g.expectedLabel),
-                      cell(GAP_LABEL[g.status], { fill: GAP_FILL[g.status] }),
-                      cell(g.matchedFiles.length ? g.matchedFiles.join(", ") : g.note),
-                    ],
-                  })
-              ),
-            ],
-          })
-        );
-      }
-
-      // Section IV carries the key-terms tables for material agreements.
-      if (section.id === "IV" && r.rows.length > 0) {
-        children.push(h3("Ketentuan Kunci Perjanjian"));
-        for (const row of r.rows) {
-          children.push(p(row.agreementLabel, { bold: true }));
-          if (row.memberFiles.length > 1) {
-            children.push(
-              p(`(${row.memberFiles.length} dokumen: perjanjian induk beserta addendum)`, { italics: true })
-            );
-          }
-          children.push(
-            new Table({
-              width: { size: 100, type: WidthType.PERCENTAGE },
-              rows: [
-                new TableRow({
-                  children: [
-                    cell("Ketentuan", { bold: true }),
-                    cell("Isi", { bold: true }),
-                    cell("Kutipan", { bold: true }),
-                  ],
-                }),
-                ...row.cells.map(
-                  (c) =>
-                    new TableRow({
-                      children: [
-                        cell(c.fieldId.replace(/_/g, " ")),
-                        cell(
-                          `${c.dealTriggered ? "⚠ " : ""}${c.value}`,
-                          c.dealTriggered ? { fill: "FEE2E2" } : {}
-                        ),
-                        cell(c.verbatim || "—"),
-                      ],
-                    })
-                ),
-              ],
-            })
-          );
-          children.push(p(""));
-        }
-      }
-
-      if (sectionFindings.length > 0) {
-        children.push(h3("Temuan"));
-        for (const sev of SEV_ORDER) {
-          for (const f of sectionFindings.filter((x) => x.severity === sev)) {
-            for (const para of findingParas(f)) {
-              children.push(para);
-            }
-          }
-        }
+        const bumnObligations = obligationsForLayer("bumn", transaction.type);
+        children.push(obligationTable(bumnObligations));
+        for (const para of obligationNotes(bumnObligations)) children.push(para);
+      } else if (chapter.kind === "kesimpulan") {
+        renderKesimpulanChapter(chNo, chapter.subs, plan, r, children);
       }
     }
     children.push(pageBreak());
@@ -737,11 +650,8 @@ export async function buildDdReportDocx(args: {
     if (activeCross.length === 0) {
       children.push(p("Tidak terdapat temuan lintas-entitas."));
     } else {
-      for (const f of activeCross) {
-        for (const para of findingParas(f)) {
-          children.push(para);
-        }
-      }
+      for (const el of renderBlocks(renderFindingsTable(activeCross))) children.push(el);
+      children.push(p(renderVerdictLine(activeCross), { bold: true }));
     }
     children.push(h2("Rekapitulasi Kelengkapan per Aspek"));
     children.push(
@@ -761,10 +671,11 @@ export async function buildDdReportDocx(args: {
     children.push(pageBreak());
   }
 
-  // ---------------- Lampiran A: documents examined ----------------
-  children.push(h1("LAMPIRAN A — DAFTAR DOKUMEN YANG DIPERIKSA"));
+  // ---------------- LAMPIRAN (once, covering every entity) ----------------
+  children.push(h1("LAMPIRAN"));
+  children.push(h2("Lampiran A — Daftar Dokumen yang Diperiksa"));
   for (const r of results) {
-    children.push(h2(r.entity.name));
+    children.push(h3(r.entity.name));
     const rep = r.extractReport;
     if (rep) {
       children.push(
@@ -793,33 +704,31 @@ export async function buildDdReportDocx(args: {
       )
     );
   }
+  children.push(h2("Lampiran B — Status Kelengkapan Dokumen"));
+  for (const r of results) {
+    children.push(h3(r.entity.name));
+    children.push(
+      simpleTable(
+        ["Aspek", "Dokumen yang diharapkan", "Status", "Keterangan"],
+        r.gaps.map((g) => [
+          aspectLabel(g.aspectId),
+          g.expectedLabel,
+          GAP_LABEL[g.status],
+          g.matchedFiles.length ? g.matchedFiles.join(", ") : g.note,
+        ])
+      )
+    );
+  }
+  children.push(pageBreak());
 
-  // ---------------- Lampiran B: completeness matrix ----------------
-  // The matrix is a working instrument, not narrative, so it sits in an annex
-  // where the precedents put their document schedules — the body of Bagian I now
-  // carries the description instead.
-  const anyNarrative = results.some((r) => r.narrative);
-  if (anyNarrative) {
-    children.push(pageBreak(), h1("LAMPIRAN B — STATUS KELENGKAPAN DOKUMEN"));
-    for (const r of results) {
-      children.push(h2(r.entity.name));
-      children.push(
-        simpleTable(
-          ["Aspek", "Dokumen yang diharapkan", "Status", "Keterangan"],
-          r.gaps.map((g) => [
-            aspectLabel(g.aspectId),
-            g.expectedLabel,
-            GAP_LABEL[g.status],
-            g.matchedFiles.length ? g.matchedFiles.join(", ") : g.note,
-          ])
-        )
-      );
+  // ---------------- DISCLAIMER + signature block ----------------
+  children.push(h1("DISCLAIMER"));
+  if (primary) {
+    for (const el of renderBlocks(chapterDisclaimer({ transaction, entity: primary, meta }))) {
+      children.push(el);
     }
   }
-
-  // ---------------- Signature block ----------------
   children.push(
-    pageBreak(),
     p(
       "Demikian Laporan Uji Tuntas Dari Segi Hukum ini kami sampaikan sesuai dengan ruang lingkup, asumsi, dan " +
         "pembatasan yang diuraikan di dalamnya."
