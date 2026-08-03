@@ -139,7 +139,44 @@ describe("severityFor / gapToFinding", () => {
     const nib = gaps.find((g) => g.expectedDocId === "perizinan.nib")!;
     const finding = gapToFinding(nib)!;
     expect(finding.severity).toBe("minor");
-    expect(finding.whyItMatters).toContain("perlu konfirmasi reviewer");
+    expect(finding.whyItMatters).toContain("konfirmasi reviewer");
     expect(finding.whyItMatters).not.toContain("condition precedent");
+  });
+
+  // Before the rationale table, every missing document produced the same three
+  // sentences, so a document-poor data room yielded a report of near-identical
+  // paragraphs. These assert the text is genuinely per-document.
+  it("gives a missing wajib item its own legal basis, consequence and citations", () => {
+    const gaps = computeGaps({ ...base, classified: [] });
+    const akta = gaps.find((g) => g.expectedDocId === "pendirian_ad.akta_pendirian");
+    if (!akta) return; // checklist item not in this fixture's transaction type
+    const f = gapToFinding(akta)!;
+    expect(f.whyItMatters).toContain("status badan hukum");
+    expect(f.regulationRefs).toBeDefined();
+    expect(f.regulationRefs!.length).toBeGreaterThan(0);
+    // Remediation must be specific, not the generic "ask the target".
+    expect(f.suggestedFix).toContain("notaris");
+  });
+
+  it("does not render identical prose for two different missing documents", () => {
+    const gaps = computeGaps({ ...base, classified: [] });
+    const findings = gaps
+      .map(gapToFinding)
+      .filter((f): f is NonNullable<typeof f> => f !== null);
+    expect(findings.length).toBeGreaterThan(2);
+    const distinct = new Set(findings.map((f) => f.whyItMatters));
+    // Items without a rationale entry still share the generic fallback, so this
+    // asserts meaningful variation rather than total uniqueness.
+    expect(distinct.size).toBeGreaterThan(1);
+  });
+
+  it("frames an expired document differently from an absent one", () => {
+    const gaps = computeGaps({ ...base, classified: [] });
+    const missing = gapToFinding(gaps[0])!;
+    const expiredGap = { ...gaps[0], status: "expired" as const, note: "Dokumen terbaru bertanggal 2012-01-01." };
+    const expired = gapToFinding(expiredGap)!;
+    expect(missing.whyItMatters).not.toBe(expired.whyItMatters);
+    expect(expired.whyItMatters).toContain("melewati masa berlaku");
+    expect(expired.whyItMatters).toContain("Tanggal Akhir Uji Tuntas");
   });
 });

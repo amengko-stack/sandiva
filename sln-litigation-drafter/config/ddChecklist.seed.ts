@@ -64,7 +64,7 @@ export const SEED_CHECKLIST: DDChecklist = {
   },
   regimeOverlays: {
     pasar_modal_langsung: [
-      { id: "regime.pm_lk_triwulan_induk", aspectId: "perpajakan", label: "Laporan keuangan triwulanan terakhir (reviu/audit) Perseroan Tbk", importance: "wajib", keywords: ["laporan keuangan triwulanan", "laporan keuangan interim", "reviewed financial statement", "quarterly financial statement"], source: "regime", requiresLayer: ["pasar_modal_langsung"] },
+      { id: "regime.pm_lk_triwulan_tbk", aspectId: "perpajakan", label: "Laporan keuangan triwulanan terakhir (reviu/audit) Perseroan Tbk", importance: "wajib", keywords: ["laporan keuangan triwulanan", "laporan keuangan interim", "reviewed financial statement", "quarterly financial statement"], source: "regime", requiresLayer: ["pasar_modal_langsung"] },
       { id: "regime.pm_keterbukaan_informasi", aspectId: "perjanjian_penting", label: "Keterbukaan Informasi / pengumuman publik terkait transaksi", importance: "wajib", keywords: ["keterbukaan informasi", "pengumuman", "disclosure of information", "material disclosure"], source: "regime", requiresLayer: ["pasar_modal_langsung"] },
       { id: "regime.pm_penilai_independen", aspectId: "harta_kekayaan", label: "Laporan Penilai Independen", importance: "wajib", keywords: ["penilai independen", "laporan penilaian", "independent appraiser", "fairness opinion"], source: "regime", requiresLayer: ["pasar_modal_langsung"] },
       { id: "regime.pm_rups_independen", aspectId: "pengurus", label: "Risalah RUPS Independen", importance: "penting", keywords: ["rups independen", "pemegang saham independen", "independent shareholders meeting"], source: "regime", requiresLayer: ["pasar_modal_langsung"] },

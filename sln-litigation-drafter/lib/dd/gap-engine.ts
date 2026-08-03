@@ -1,3 +1,4 @@
+import { gapRationaleFor } from "@/config/ddGapRationale";
 import type {
   DDClassifiedDoc, DDExpectedDoc, DDFinding, DDGapItem, DDGapStatus,
   DDImportance, DDSeverity, DDTransactionType,
@@ -85,30 +86,72 @@ export function computeGaps(args: {
 }
 
 const STATUS_PROBLEM: Record<Exclude<DDGapStatus, "present">, string> = {
-  missing: "Dokumen tidak ditemukan dalam data room",
+  missing: "Dokumen tidak ditemukan dalam Dokumen Yang Diperiksa",
   incomplete: "Dokumen kemungkinan tidak lengkap",
   expired: "Dokumen sudah melewati masa berlaku",
   not_applicable: "Item checklist disarankan tidak relevan",
 };
 
+// How the absence is framed depends on the status: a document that is entirely
+// absent, one found only at low confidence, and one that has lapsed each carry
+// a different consequence, and the report should not blur them.
+const STATUS_FRAMING: Record<Exclude<DDGapStatus, "present">, string> = {
+  missing: "Dokumen tersebut tidak ditemukan dalam Dokumen Yang Diperiksa.",
+  incomplete:
+    "Dokumen yang ditemukan belum dapat dipastikan lengkap, sehingga kesimpulan atas butir ini bersifat sementara.",
+  expired:
+    "Dokumen yang ditemukan telah melewati masa berlakunya, sehingga tidak lagi dapat diandalkan sebagai bukti pemenuhan kewajiban pada Tanggal Akhir Uji Tuntas.",
+  not_applicable:
+    "Butir ini disarankan tidak relevan bagi entitas atau transaksi ini dan belum dikonfirmasi oleh reviewer.",
+};
+
+const GENERIC_IMPACT: Record<DDSeverity, string> = {
+  kritis:
+    "Dokumen ini termasuk dokumen wajib; tanpa dokumen tersebut aspek ini tidak dapat dinilai dan pemenuhannya berpotensi menjadi syarat pendahuluan (condition precedent) penyelesaian transaksi.",
+  material:
+    "Kelengkapan aspek ini belum dapat dinilai secara penuh tanpa dokumen tersebut, sehingga terdapat risiko yang belum terukur.",
+  minor:
+    "Kelengkapan aspek ini belum dapat dinilai secara penuh tanpa dokumen tersebut.",
+};
+
 export function gapToFinding(gap: DDGapItem): DDFinding | null {
   if (gap.status === "present") return null;
+
+  const severity: DDSeverity = gap.status === "not_applicable" ? "minor" : gap.severity;
+  const rationale = gapRationaleFor(gap.expectedDocId);
+  const framing = STATUS_FRAMING[gap.status];
+
+  // whyItMatters carries the legal reasoning: why the law wants this specific
+  // document, then what its absence means for this transaction.
+  let whyItMatters: string;
+  if (gap.status === "not_applicable") {
+    whyItMatters = `${framing} Pengecualian suatu butir dari daftar permintaan dokumen memerlukan konfirmasi reviewer, karena butir yang dikecualikan tidak akan diuji lebih lanjut dalam Laporan ini.`;
+  } else if (rationale) {
+    whyItMatters = `${rationale.legalBasis} ${framing} ${rationale.absenceImpact}`;
+  } else {
+    whyItMatters = `${framing} ${GENERIC_IMPACT[severity]}`;
+  }
+
+  const suggestedFix =
+    gap.status === "not_applicable"
+      ? `Konfirmasikan kepada reviewer apakah "${gap.expectedLabel}" memang tidak relevan bagi entitas ini, dan catat alasannya dalam Laporan.`
+      : (rationale?.remediation ??
+        `Minta dokumen "${gap.expectedLabel}" dari target dan masukkan ke dalam daftar permintaan dokumen.`);
+
   return {
     id: `${gap.entityId}-kelengkapan-${gap.expectedDocId}`,
     entityId: gap.entityId,
     aspectId: gap.aspectId,
     dimension: "kelengkapan",
-    severity: gap.status === "not_applicable" ? "minor" : gap.severity,
+    severity,
     anchor: "",
     sourceFile: null,
-    problem: `${STATUS_PROBLEM[gap.status]}: ${gap.expectedLabel}. ${gap.note}`.trim(),
-    whyItMatters:
-      gap.status === "not_applicable"
-        ? "Item ini disarankan tidak relevan untuk entitas/transaksi ini — perlu konfirmasi reviewer sebelum dikecualikan dari daftar permintaan dokumen."
-        : gap.severity === "kritis"
-          ? "Dokumen wajib — ketiadaannya menghambat penilaian aspek ini dan berpotensi menjadi condition precedent."
-          : "Kelengkapan aspek ini belum dapat dinilai penuh tanpa dokumen tersebut.",
-    suggestedFix: `Minta dokumen "${gap.expectedLabel}" dari target / masukkan dalam daftar permintaan dokumen.`,
+    problem: `${STATUS_PROBLEM[gap.status]}: ${gap.expectedLabel}.${gap.note ? ` ${gap.note}` : ""}`.trim(),
+    whyItMatters,
+    suggestedFix,
+    // Flows into the existing Perplexity currency check, so a citation that has
+    // been superseded gets flagged rather than shipping unnoticed.
+    regulationRefs: rationale?.legalRefs,
     verified: false,
     status: "open",
   };
