@@ -54,6 +54,11 @@ Ekstrak fakta berikut dari dokumen di atas.
 6. DIREKSI DAN DEWAN KOMISARIS: susunan TERKINI, masing-masing dengan akta pengangkatan dan masa jabatan (jika disebutkan).
 7. CATATAN: identifikasi setiap KESENJANGAN dalam narasi itu sendiri — bukan risiko hukum, tetapi hal yang membuat narasi ini tidak lengkap atau tidak dapat direkonsiliasi: rantai kutipan yang terputus (mis. akta tanpa nomor keputusan Menkumham), ketidaksesuaian angka antar dokumen, atau bukti yang belum tersedia dalam dokumen yang diperiksa (mis. bukti penyetoran modal). Setiap catatan HARUS diberi "anchor" salah satu dari: pendirian, anggaran_dasar, kegiatan_usaha, permodalan, pemegang_saham, pengurus. JANGAN memberi label tingkat keparahan (kritis/material/minor) — itu bukan urusan bagian ini.
 
+ATURAN TAMBAHAN YANG WAJIB DIPATUHI:
+(i) SATU AKTA = SATU ENTRI. Bila akta yang sama muncul dalam lebih dari satu berkas sumber (mis. versi "BN" dan versi "SP"), gabungkan menjadi SATU entri dengan rantai kutipan yang paling lengkap dari kedua berkas. JANGAN membuat entri terpisah untuk berkas sumber yang berbeda. Bila kedua berkas berbeda isinya, catat perbedaan itu sebagai "notes" dengan anchor "anggaran_dasar".
+(ii) "basis" pada capitalHistory harus berupa RUJUKAN SINGKAT saja, mis. "Akta No. 2/2017" — bukan satu paragraf. Nomor Menkumham dan nama notaris sudah ada di tabel riwayat akta, jadi jangan diulang di sini.
+(iii) PENANDA: gunakan HANYA "[DOKUMEN TIDAK TERSEDIA]" bila dokumennya tidak ada, atau "[PERLU VERIFIKASI]" bila ada tetapi belum dapat dipastikan. JANGAN mengarang penanda lain seperti "[TIDAK DITEMUKAN]".
+
 Kembalikan HANYA JSON dengan bentuk berikut. Gunakan "" untuk string yang tidak diketahui dan [] untuk daftar yang kosong. Gunakan null untuk "establishment" bila akta pendirian tidak ada dalam dokumen yang diperiksa.
 
 {
@@ -73,7 +78,7 @@ Kembalikan HANYA JSON dengan bentuk berikut. Gunakan "" untuk string yang tidak 
   "businessActivities": [""],
   "businessBasis": "",
   "capitalHistory": [
-    { "basis": "", "authorized": "", "issued": "", "paidUp": "", "shareCount": "", "nominalPerShare": "", "sourceFile": "" }
+    { "basis": "rujukan singkat, mis. Akta No. 2/2017", "authorized": "", "issued": "", "paidUp": "", "shareCount": "", "nominalPerShare": "", "sourceFile": "" }
   ],
   "shareholders": [
     { "name": "", "shares": "", "amount": "", "percentage": "", "sourceFile": "" }
@@ -136,6 +141,90 @@ function asOfficerEntry(o: Record<string, unknown>, fallbackRole: string): DDOff
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// Post-parse normalisation
+//
+// A live run showed three defects that a prompt instruction alone cannot be
+// relied on to prevent — the same lesson as legalConsequence: an instruction
+// inside free text is droppable, a normalisation step is not.
+// ---------------------------------------------------------------------------
+
+/** The only two markers the report uses. Anything else the model invents is mapped. */
+const MARKER_ALIASES: [RegExp, string][] = [
+  [/\[\s*TIDAK DITEMUKAN[^\]]*\]/gi, "[DOKUMEN TIDAK TERSEDIA]"],
+  [/\[\s*TIDAK ADA DOKUMEN[^\]]*\]/gi, "[DOKUMEN TIDAK TERSEDIA]"],
+  [/\[\s*DOKUMEN TIDAK ADA[^\]]*\]/gi, "[DOKUMEN TIDAK TERSEDIA]"],
+  [/\[\s*BELUM DIVERIFIKASI[^\]]*\]/gi, "[PERLU VERIFIKASI]"],
+  [/\[\s*PERLU DIVERIFIKASI[^\]]*\]/gi, "[PERLU VERIFIKASI]"],
+];
+
+export function normaliseMarkers(text: string): string {
+  let out = text;
+  for (const [re, canonical] of MARKER_ALIASES) out = out.replace(re, canonical);
+  return out;
+}
+
+/**
+ * Shorten a capital-history basis to a deed reference.
+ *
+ * The model returned a whole paragraph here ("Akta No. 2 tanggal 07 Februari
+ * 2017 (Devi Yunanda, SH., M.Kn.), disetujui Kemenkumham No. AHU-…"), which
+ * makes the capital table unreadable. The notary and Menkumham chain already
+ * appear in the deed-history table, so only the reference belongs in this cell.
+ */
+export function shortenCapitalBasis(basis: string): string {
+  const trimmed = basis.trim();
+  if (trimmed.length <= 40) return trimmed;
+  const m = trimmed.match(/Akta\s+No\.?\s*(\d+)[^\d]{0,20}?(?:tanggal\s+)?(?:\d{1,2}\s+\w+\s+)?(\d{4})/i);
+  if (m) return `Akta No. ${m[1]}/${m[2]}`;
+  const m2 = trimmed.match(/Akta\s+No\.?\s*[\d/]+/i);
+  if (m2) return m2[0].replace(/\s+/g, " ").trim();
+  return trimmed.slice(0, 40).trim();
+}
+
+/** How many links of the citation chain a deed entry actually carries. */
+function chainScore(d: DDDeedRef): number {
+  return [d.notary, d.menkumhamRef, d.registrationRef, d.bnriRef, d.verbatim]
+    .filter((x) => Boolean(x && x.trim())).length;
+}
+
+/**
+ * One corporate action = one row.
+ *
+ * The data room keeps some deeds twice (a "BN" copy and an "SP" copy), and the
+ * model emitted a row per source file — so Akta No. 17 appeared twice and the
+ * lead-in counted 12 corporate actions where there were 11. Entries sharing a
+ * deed number and date are merged, keeping the richest citation chain and the
+ * longer description.
+ */
+export function dedupeDeeds(deeds: DDDeedRef[]): DDDeedRef[] {
+  const byKey = new Map<string, DDDeedRef>();
+  const order: string[] = [];
+  for (const d of deeds) {
+    const key = `${d.number.trim().replace(/^0+/, "")}|${d.dateISO.trim()}`;
+    const seen = byKey.get(key);
+    if (!seen) {
+      byKey.set(key, d);
+      order.push(key);
+      continue;
+    }
+    const better = chainScore(d) > chainScore(seen) ? d : seen;
+    const other = better === d ? seen : d;
+    byKey.set(key, {
+      ...better,
+      // Keep whichever description says more; a "(dokumen sumber kedua)" aside
+      // is not worth preferring over the substantive one.
+      purpose: better.purpose.length >= other.purpose.length ? better.purpose : other.purpose,
+      notary: better.notary || other.notary,
+      menkumhamRef: better.menkumhamRef || other.menkumhamRef,
+      registrationRef: better.registrationRef || other.registrationRef,
+      bnriRef: better.bnriRef || other.bnriRef,
+    });
+  }
+  return order.map((k) => byKey.get(k) as DDDeedRef);
+}
+
 export function parseNarrativeResponse(
   raw: string,
   stopReason: string | null,
@@ -163,21 +252,36 @@ export function parseNarrativeResponse(
     : [];
   // Enforce chronological order server-side — never trust model ordering.
   amendments.sort((a, b) => (a.dateISO || "9999").localeCompare(b.dateISO || "9999"));
+  const dedupedAmendments = dedupeDeeds(amendments);
 
   const capitalHistory = Array.isArray(p.capitalHistory)
-    ? (p.capitalHistory as unknown[]).map((c) => asCapitalEntry(c as Record<string, unknown>))
+    ? (p.capitalHistory as unknown[])
+        .map((c) => asCapitalEntry(c as Record<string, unknown>))
+        .map((c) => ({ ...c, basis: shortenCapitalBasis(c.basis) }))
     : [];
 
   const shareholders = Array.isArray(p.shareholders)
     ? (p.shareholders as unknown[]).map((s) => asShareholderEntry(s as Record<string, unknown>))
     : [];
 
+  // appointedBy is where an invented marker actually surfaced live
+  // ("[TIDAK DITEMUKAN — tidak ada akta pengangkatan…]").
+  const normaliseOfficer = (o: DDOfficerEntry): DDOfficerEntry => ({
+    ...o,
+    appointedBy: normaliseMarkers(o.appointedBy),
+    termUntil: normaliseMarkers(o.termUntil),
+  });
+
   const directors = Array.isArray(p.directors)
-    ? (p.directors as unknown[]).map((d) => asOfficerEntry(d as Record<string, unknown>, "Direktur"))
+    ? (p.directors as unknown[])
+        .map((d) => asOfficerEntry(d as Record<string, unknown>, "Direktur"))
+        .map(normaliseOfficer)
     : [];
 
   const commissioners = Array.isArray(p.commissioners)
-    ? (p.commissioners as unknown[]).map((c) => asOfficerEntry(c as Record<string, unknown>, "Komisaris"))
+    ? (p.commissioners as unknown[])
+        .map((c) => asOfficerEntry(c as Record<string, unknown>, "Komisaris"))
+        .map(normaliseOfficer)
     : [];
 
   const notes: DDNarrativeNote[] = Array.isArray(p.notes)
@@ -186,7 +290,7 @@ export function parseNarrativeResponse(
         const anchor = String(o.anchor ?? "");
         return {
           anchor: (NOTE_ANCHORS.has(anchor) ? anchor : "lainnya") as DDNarrativeNote["anchor"],
-          text: String(o.text ?? "").trim(),
+          text: normaliseMarkers(String(o.text ?? "").trim()),
           sourceFile: o.sourceFile ? String(o.sourceFile).trim() : null,
         };
       })
@@ -195,7 +299,7 @@ export function parseNarrativeResponse(
   return {
     entityId: args.entityId,
     establishment,
-    amendments,
+    amendments: dedupedAmendments,
     businessPurpose: String(p.businessPurpose ?? "").trim(),
     businessActivities: Array.isArray(p.businessActivities)
       ? (p.businessActivities as unknown[]).map((s) => String(s).trim()).filter(Boolean)
