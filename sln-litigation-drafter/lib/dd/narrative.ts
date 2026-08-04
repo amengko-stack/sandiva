@@ -382,6 +382,11 @@ export function parseNarrativeResponse(
           sourceFile: o.sourceFile ? String(o.sourceFile).trim() : null,
         };
       })
+      // A live run returned a note with an empty text and no anchor, which the
+      // builder would have rendered as a bare "Catatan:" — a qualification the
+      // reader cannot act on, in a report whose credibility rests on every note
+      // meaning something.
+      .filter((n) => n.text !== "")
     : [];
 
   return {

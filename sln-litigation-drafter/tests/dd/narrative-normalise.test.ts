@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { citationNotes, dedupeDeeds, normaliseMarkers, shortenCapitalBasis } from "@/lib/dd/narrative";
+import { citationNotes, dedupeDeeds, normaliseMarkers, parseNarrativeResponse, shortenCapitalBasis } from "@/lib/dd/narrative";
 import type { DDDeedRef } from "@/types/dd";
 
 // Every case below is taken from the 2026-08-03 live run against the real data
@@ -262,5 +262,24 @@ describe("citationNotes: notary name and underlying quote", () => {
     expect(out[0].text).toContain("AHU-99999.AH.01.02.TAHUN 2019");
     expect(out[0].text).toContain("Notaris Fiktif");
     expect(out[0].text).toContain("Kutipan yang mendasari");
+  });
+});
+
+describe("empty notes", () => {
+  // The live Bagian I run returned 10 notes, one of them {anchor: "", text: ""},
+  // which the builder would have rendered as a bare "Catatan:" heading.
+  it("drops a note with no text instead of rendering an empty qualification", () => {
+    const raw = JSON.stringify({
+      establishment: null, amendments: [], businessPurpose: "", businessActivities: [],
+      businessBasis: "", capitalHistory: [], shareholders: [], directors: [], commissioners: [],
+      notes: [
+        { anchor: "", text: "" },
+        { anchor: "pendirian", text: "   " },
+        { anchor: "pendirian", text: "Akta pendirian hanya tersedia sebagai salinan." },
+      ],
+    });
+    const out = parseNarrativeResponse(raw, null, { entityId: "e1" }).notes;
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toContain("Akta pendirian hanya tersedia");
   });
 });
