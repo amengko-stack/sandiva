@@ -98,7 +98,7 @@ describe("openingBlocks", () => {
       clientRelease: true,
       ddStartDateISO: "2026-06-01",
       taxInScope: true,
-      assumptionsVariant: "ringkas" as const,
+      assumptionsVariant: "ringkas" as const, reportStage: "final" as const,
       signatoryName: "Nama",
       signatoryTitle: "Partner",
     };

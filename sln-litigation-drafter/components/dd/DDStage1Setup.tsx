@@ -62,6 +62,9 @@ const DEFAULT_REPORT_META: DDReportMeta = {
   ddStartDateISO: "",
   taxInScope: false,
   assumptionsVariant: "ringkas",
+  // Interim until the lawyer says otherwise. A DD that has just been set up is by
+  // definition unfinished, and the unsafe direction is claiming completeness.
+  reportStage: "interim",
   signatoryName: "",
   signatoryTitle: "",
 };

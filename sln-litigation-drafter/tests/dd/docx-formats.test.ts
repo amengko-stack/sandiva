@@ -36,7 +36,7 @@ function docxText(buf: Buffer): string {
 const meta: DDReportMeta = {
   matterRef: "SLN-1", clientName: "PT Klien", addressee: "Direksi PT Klien",
   relianceScope: "PT Klien saja", clientRelease: false, ddStartDateISO: "2026-07-01",
-  taxInScope: true, assumptionsVariant: "ringkas", signatoryName: "Advokat", signatoryTitle: "Partner",
+  taxInScope: true, assumptionsVariant: "ringkas", reportStage: "final", signatoryName: "Advokat", signatoryTitle: "Partner",
 };
 
 const txn = (over: Partial<DDTransaction> = {}): DDTransaction => ({

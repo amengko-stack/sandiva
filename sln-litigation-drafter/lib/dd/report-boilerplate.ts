@@ -124,6 +124,8 @@ export function openingScope(params: {
 export function openingDocuments(params: {
   transaction: DDTransaction;
   meta?: DDReportMeta;
+  /** Requested documents not yet supplied. Named in an interim report. */
+  outstanding?: string[];
 }): DDBoilerplateBlock {
   const { transaction, meta } = params;
   const m = metaOrPlaceholder(meta);
@@ -141,8 +143,47 @@ export function openingDocuments(params: {
       `Istilah "Tanggal Akhir Uji Tuntas" berarti ${cutoff}, yaitu tanggal cut-off formal pemeriksaan ini. ` +
         `Tidak ada peristiwa, dokumen, atau perubahan keadaan yang terjadi setelah Tanggal Akhir Uji Tuntas yang ` +
         `diperiksa atau tercakup dalam Laporan ini.`,
-    ],
+    ].concat(outstandingParagraphs(params.meta, params.outstanding ?? [])),
   };
+}
+
+/** Beyond this the paragraph stops being readable; the remainder is in the body. */
+const OUTSTANDING_LISTED = 12;
+
+/**
+ * The paragraph an interim report owes its reader: what is still outstanding.
+ *
+ * Naming the documents is the point. "This report is interim" without saying what
+ * is missing gives the reader no way to judge how much weight the conclusions can
+ * carry. The list comes from the gap analysis, so it is the same set the report
+ * already treats as missing — stated once, up front, where a reader decides how
+ * far to trust the rest.
+ */
+export function outstandingParagraphs(
+  meta: DDReportMeta | undefined,
+  outstanding: string[]
+): string[] {
+  if (meta === undefined || meta.reportStage !== "interim") return [];
+  if (outstanding.length === 0) {
+    return [
+      `Laporan ini bersifat interim. Pada Tanggal Akhir Uji Tuntas, penyerahan dokumen oleh Perseroan belum ` +
+        `dinyatakan selesai, sehingga kesimpulan dalam Laporan ini dapat berubah setelah dokumen selanjutnya ` +
+        `diperiksa.`,
+    ];
+  }
+  const listed = outstanding.slice(0, OUTSTANDING_LISTED);
+  const rest = outstanding.length - listed.length;
+  const tail =
+    rest > 0 ? `; dan ${rest} dokumen lain yang diuraikan pada bagian tubuh Laporan ini` : "";
+  return [
+    `Laporan ini bersifat interim. Sampai dengan Tanggal Akhir Uji Tuntas terdapat ${outstanding.length} ` +
+      `dokumen atau kelompok dokumen yang diminta namun belum tersedia atau belum lengkap, yaitu: ` +
+      `${listed.join("; ")}${tail}.`,
+    `Kesimpulan dalam Laporan ini disusun semata-mata atas dasar Dokumen Yang Diperiksa sampai dengan Tanggal ` +
+      `Akhir Uji Tuntas dan bersifat sementara. Setelah dokumen yang belum tersedia diperiksa, kesimpulan ` +
+      `tersebut dapat berubah, dan perubahannya dituangkan dalam laporan tambahan (supplement) atau dalam ` +
+      `laporan final yang menggantikan Laporan ini.`,
+  ];
 }
 
 const ASSUMPTIONS_RINGKAS = [
@@ -185,7 +226,9 @@ export function openingAssumptions(variant: "ringkas" | "panjang"): DDBoilerplat
 }
 
 /** D. Pembatasan */
-export function openingQualifications(): DDBoilerplateBlock {
+export function openingQualifications(
+  stage: DDReportMeta["reportStage"] = "final"
+): DDBoilerplateBlock {
   return {
     letter: "D",
     heading: "Pembatasan",
@@ -200,7 +243,19 @@ export function openingQualifications(): DDBoilerplateBlock {
         `bagian tubuh Laporan ini.`,
       `Laporan ini tidak memuat pernyataan yang bersifat prediktif (forward-looking) dan tidak menyatakan ` +
         `pendapat di luar kompetensi firma hukum sebagai konsultan hukum Indonesia.`,
-    ],
+    ].concat(
+      // An interim report must refuse the uses that assume a closed examination.
+      // Saying only "this is interim" leaves the reader to work out the
+      // consequence, and the consequence is the part that protects them.
+      stage === "interim"
+        ? [
+            `Laporan ini merupakan laporan interim dan bukan hasil pemeriksaan yang telah selesai. Laporan ini ` +
+              `tidak boleh dijadikan dasar tunggal bagi keputusan penyelesaian transaksi (closing), penetapan ` +
+              `harga, atau perumusan pernyataan dan jaminan (representations and warranties) dalam dokumen ` +
+              `transaksi.`,
+          ]
+        : []
+    ),
   };
 }
 
@@ -216,18 +271,31 @@ export function openingReliance(params: { meta?: DDReportMeta }): DDBoilerplateB
         `Laporan ini untuk keperluan apa pun.`,
       `Laporan ini tidak boleh dikutip atau diungkapkan kepada pihak ketiga mana pun tanpa persetujuan tertulis ` +
         `terlebih dahulu dari firma hukum, kecuali sepanjang diwajibkan oleh hukum yang berlaku.`,
-    ],
+    ].concat(
+      // Reliance is what the report is for, so an interim one has to narrow it
+      // rather than repeat the full clause and hope the reader notices the title.
+      params.meta !== undefined && params.meta.reportStage === "interim"
+        ? [
+            `Karena Laporan ini bersifat interim, keterandalan atasnya terbatas pada penggunaan internal oleh ` +
+              `${m.clientName} untuk keperluan pengambilan keputusan sementara. Keterandalan bagi pihak lain, ` +
+              `termasuk pihak yang disebut di atas, baru berlaku atas laporan final.`,
+          ]
+        : []
+    ),
   };
 }
 
 /** A–E in order, from one shared params object, so the builder has a single call site. */
-export function openingBlocks(params: DDBoilerplateParams): DDBoilerplateBlock[] {
+export function openingBlocks(
+  params: DDBoilerplateParams,
+  outstanding: string[] = []
+): DDBoilerplateBlock[] {
   const { transaction, entity, meta } = params;
   return [
     openingScope({ transaction, entity, meta }),
-    openingDocuments({ transaction, meta }),
+    openingDocuments({ transaction, meta, outstanding }),
     openingAssumptions(meta.assumptionsVariant),
-    openingQualifications(),
+    openingQualifications(meta.reportStage),
     openingReliance({ meta }),
   ];
 }
@@ -255,6 +323,47 @@ export function confidentialityLegend(): string {
 
 export function draftLegend(): string {
   return "DRAF — TIDAK UNTUK DIEDARKAN";
+}
+
+/**
+ * The report's own title, which has to say when the examination is unfinished.
+ *
+ * Someone picking the document up months later has the cover and nothing else to
+ * tell them whether its conclusions were provisional.
+ */
+export function reportTitle(stage: DDReportMeta["reportStage"]): string {
+  return stage === "interim"
+    ? "LAPORAN UJI TUNTAS DARI SEGI HUKUM (INTERIM)"
+    : "LAPORAN UJI TUNTAS DARI SEGI HUKUM";
+}
+
+export function interimLegend(): string {
+  return "LAPORAN INTERIM — PEMERIKSAAN BELUM SELESAI, KESIMPULAN DAPAT BERUBAH";
+}
+
+/**
+ * Why a client release must be refused, or "" when it may proceed.
+ *
+ * The existing gate catches a release with nobody named as entitled to rely on it.
+ * This adds the converse: a report going out as FINAL while documents it asked for
+ * were never supplied. Both are cases where the cover asserts something the body
+ * cannot support. Both remain the lawyer's call to override — by issuing the report
+ * as interim, or by marking those checklist items not applicable if they are never
+ * coming.
+ */
+export function finalReleaseBlocker(meta: DDReportMeta, outstandingCount: number): string {
+  if (!meta.clientRelease) return "";
+  if (meta.relianceScope.trim() === "") {
+    return "Ekspor sebagai laporan final untuk klien diblokir: Ruang Lingkup Keterandalan (reliance scope) belum diisi pada Tahap 1. Isi kolom tersebut atau matikan opsi rilis ke klien.";
+  }
+  if (meta.reportStage === "final" && outstandingCount > 0) {
+    return (
+      `Ekspor sebagai laporan final untuk klien diblokir: masih terdapat ${outstandingCount} dokumen yang ` +
+      `diminta namun belum tersedia atau belum lengkap. Terbitkan sebagai laporan interim, atau tandai dokumen ` +
+      `tersebut sebagai tidak berlaku (not applicable) pada checklist bila memang tidak akan diserahkan.`
+    );
+  }
+  return "";
 }
 
 // ---------------------------------------------------------------------------

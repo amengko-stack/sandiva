@@ -191,6 +191,16 @@ export interface DDReportMeta {
   ddStartDateISO: string;    // "YYYY-MM-DD" — start of the examination period
   taxInScope: boolean;       // whether tax was within the agreed scope
   assumptionsVariant: "ringkas" | "panjang"; // (i)–(iv) vs the 11-item (a)–(k) variant
+  /**
+   * Whether the examination is complete.
+   *
+   * Clients hand over documents in batches, and findings prompt requests for
+   * more, so a report is normally issued interim first and final once the data
+   * room is closed. Required rather than defaulted: a report that presents itself
+   * as final while documents are outstanding is a professional problem, and the
+   * compiler should make every call site say which one it is producing.
+   */
+  reportStage: "interim" | "final";
   signatoryName: string;
   signatoryTitle: string;
 }

@@ -187,7 +187,7 @@ describe("buildDdReportDocx — client-release gate", () => {
     clientRelease: true,
     ddStartDateISO: "2026-07-01",
     taxInScope: false,
-    assumptionsVariant: "ringkas",
+    assumptionsVariant: "ringkas", reportStage: "final",
     signatoryName: "Advokat",
     signatoryTitle: "Partner",
   };

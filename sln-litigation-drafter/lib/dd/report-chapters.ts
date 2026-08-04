@@ -1,6 +1,6 @@
 import { transactionLabel } from "@/config/ddTransactionTypes";
 import {
-  formatIndonesianDate, openingAssumptions, openingQualifications,
+  formatIndonesianDate, openingAssumptions, openingQualifications, outstandingParagraphs,
 } from "@/lib/dd/report-boilerplate";
 import type {
   DDAspectId, DDEntity, DDRegime, DDReportBlock, DDReportMeta, DDTransaction,
@@ -32,6 +32,7 @@ const PLACEHOLDER: DDReportMeta = {
   ddStartDateISO: "",
   taxInScope: false,
   assumptionsVariant: "ringkas",
+  reportStage: "interim",
   signatoryName: "[NAMA PENANDA TANGAN]",
   signatoryTitle: "[JABATAN]",
 };
@@ -69,6 +70,8 @@ export function chapterPendahuluan(params: {
   meta?: DDReportMeta;
   presentAspects: DDAspectId[];
   docCategories: { category: string; period: string; status: string }[];
+  /** Requested documents not yet supplied; named only in an interim report. */
+  outstanding?: string[];
 }): DDChapterContent[] {
   const m = meta(params.meta);
   const { transaction, entity, regime } = params;
@@ -110,6 +113,29 @@ export function chapterPendahuluan(params: {
   const taxExclusion = m.taxInScope
     ? "."
     : "; serta aspek perpajakan, yang berada di luar lingkup penugasan ini.";
+
+  // 1.4's blocks are assembled here rather than inline so the array carries its
+  // type: an inline literal widens `kind` to string and stops matching the union.
+  const documentBlocks: DDReportBlock[] = [
+    {
+      kind: "para",
+      text:
+        `Daftar lengkap dokumen yang diperiksa ("Dokumen Yang Diperiksa") disajikan pada Lampiran A. ` +
+        `Ringkasan kategori utama adalah sebagai berikut:`,
+    },
+    docTable,
+    {
+      kind: "para",
+      text:
+        `Pemeriksaan dilakukan atas dokumen sebagaimana disediakan kepada kami sampai dengan Tanggal Akhir Uji ` +
+        `Tuntas, yaitu ${cutoff}. Peristiwa atau dokumen setelah tanggal tersebut tidak diperiksa.`,
+    },
+  ];
+  // Immediately after the list of what WAS examined, which is where a reader asks
+  // what was not. Empty for a final report.
+  for (const text of outstandingParagraphs(params.meta, params.outstanding ?? [])) {
+    documentBlocks.push({ kind: "para", text });
+  }
 
   return [
     {
@@ -161,21 +187,7 @@ export function chapterPendahuluan(params: {
     },
     {
       title: "Dokumen yang Diperiksa",
-      blocks: [
-        {
-          kind: "para",
-          text:
-            `Daftar lengkap dokumen yang diperiksa ("Dokumen Yang Diperiksa") disajikan pada Lampiran A. ` +
-            `Ringkasan kategori utama adalah sebagai berikut:`,
-        },
-        docTable,
-        {
-          kind: "para",
-          text:
-            `Pemeriksaan dilakukan atas dokumen sebagaimana disediakan kepada kami sampai dengan Tanggal Akhir Uji ` +
-            `Tuntas, yaitu ${cutoff}. Peristiwa atau dokumen setelah tanggal tersebut tidak diperiksa.`,
-        },
-      ],
+      blocks: documentBlocks,
     },
     {
       title: "Metodologi",
@@ -203,7 +215,7 @@ export function chapterPendahuluan(params: {
         { kind: "para", text: "Laporan ini disusun berdasarkan asumsi-asumsi berikut:" },
         { kind: "list", items: openingAssumptions(m.assumptionsVariant).body },
         { kind: "para", text: "Laporan ini tunduk pada pembatasan berikut:" },
-        { kind: "list", items: openingQualifications().body },
+        { kind: "list", items: openingQualifications(m.reportStage).body },
       ],
     },
   ];

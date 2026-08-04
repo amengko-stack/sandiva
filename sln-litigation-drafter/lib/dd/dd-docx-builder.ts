@@ -7,7 +7,8 @@ import { aspectLabel } from "@/config/ddAspects";
 import { transactionLabel } from "@/config/ddTransactionTypes";
 import { planChapters, subNumber, type DDChapterPlan, type DDChapterSub } from "@/config/ddChapters";
 import {
-  confidentialityLegend, deriveVerdict, draftLegend, formatIndonesianDate, verdictLabel,
+  confidentialityLegend, deriveVerdict, draftLegend, finalReleaseBlocker, formatIndonesianDate,
+  interimLegend, reportTitle, verdictLabel,
 } from "@/lib/dd/report-boilerplate";
 import { obligationsForLayer, resolveRegime, type DDObligation } from "@/lib/dd/regime";
 import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
@@ -206,6 +207,8 @@ const PLACEHOLDER_META: DDReportMeta = {
   ddStartDateISO: "",
   taxInScope: false,
   assumptionsVariant: "ringkas",
+  // A report built with no meta at all is not a finished one.
+  reportStage: "interim",
   signatoryName: "[NAMA PENANDA TANGAN]",
   signatoryTitle: "[JABATAN]",
 };
@@ -726,15 +729,19 @@ export async function buildDdReportDocx(args: {
   const meta = transaction.reportMeta ?? PLACEHOLDER_META;
   const opts = transaction.reportOptions ?? DD_DEFAULT_REPORT_OPTIONS;
 
-  // Release gate, ported from build_docx.js: a report may not go out as a
-  // client release without a defined reliance scope, because the reliance
-  // clause would otherwise name nobody while the cover asserts the report is
-  // releasable.
-  if (meta.clientRelease && meta.relianceScope.trim() === "") {
-    throw new Error(
-      "Ekspor sebagai laporan final untuk klien diblokir: Ruang Lingkup Keterandalan (reliance scope) belum diisi pada Tahap 1. Isi kolom tersebut atau matikan opsi rilis ke klien."
-    );
-  }
+  // Documents requested and not supplied. "expired" is excluded: that document
+  // was produced and is stale, which is a finding rather than a gap in the data
+  // room, and "not_applicable" is a decision the lawyer already made.
+  const outstanding = results
+    .flatMap((r) => r.gaps)
+    .filter((g) => g.status === "missing" || g.status === "incomplete")
+    .map((g) => g.expectedLabel);
+
+  // Release gate: a client release must not assert more than the body supports —
+  // no reliance scope while the cover says releasable, or "final" while documents
+  // are still outstanding.
+  const blocker = finalReleaseBlocker(meta, outstanding.length);
+  if (blocker !== "") throw new Error(blocker);
 
   const children: (Paragraph | Table)[] = [];
   const primary = results.length > 0 ? results[0].entity : null;
@@ -744,9 +751,14 @@ export async function buildDdReportDocx(args: {
   children.push(
     center("SANDIVA LEGAL NETWORK", { bold: true, size: 28, after: 240 }),
     center(confidentialityLegend(), { bold: true, size: 18, after: 720 }),
-    center("LAPORAN UJI TUNTAS DARI SEGI HUKUM", { bold: true, size: 36, after: 120 }),
+    center(reportTitle(meta.reportStage), { bold: true, size: 36, after: 120 }),
     center(`(${transactionLabel(transaction.type)})`, { bold: true, size: 26, after: 600 })
   );
+  if (meta.reportStage === "interim") {
+    // On the cover, next to the title. An interim report circulates and gets read
+    // out of context; the one place a reader always looks must say so.
+    children.push(center(interimLegend(), { bold: true, size: 20, after: 360 }));
+  }
   if (primary) {
     children.push(center(primary.name, { bold: true, size: 32, after: 720 }));
   }
@@ -825,6 +837,7 @@ export async function buildDdReportDocx(args: {
           const contents = chapterPendahuluan({
             transaction, entity: r.entity, regime, meta,
             presentAspects: presentAspectsFor(r), docCategories,
+            outstanding,
           });
           contents.forEach((content, i) => {
             children.push(h2(`${subNumber(chNo, i)} ${content.title}`));
