@@ -260,6 +260,36 @@ export default function DDStage1Setup() {
               Aspek perpajakan termasuk dalam lingkup
             </label>
             <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>Tahap laporan</div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="reportStage"
+                    id="reportStage-interim"
+                    checked={reportMeta.reportStage === "interim"}
+                    onChange={() => patchReportMeta({ reportStage: "interim" })}
+                  />
+                  Interim — penyerahan dokumen belum selesai
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="reportStage"
+                    id="reportStage-final"
+                    checked={reportMeta.reportStage === "final"}
+                    onChange={() => patchReportMeta({ reportStage: "final" })}
+                  />
+                  Final — dokumen sudah lengkap
+                </label>
+              </div>
+              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
+                {reportMeta.reportStage === "interim"
+                  ? "Judul, sampul, dan pembatasan akan menyatakan laporan ini interim, dan Bab 1.4 akan menyebutkan dokumen yang belum tersedia."
+                  : "Ekspor final ke klien akan ditolak bila masih ada dokumen yang diminta namun belum tersedia atau belum lengkap."}
+              </div>
+            </div>
+            <div>
               <div style={{ fontWeight: 600, fontSize: 13 }}>Bentuk asumsi & pembatasan</div>
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
