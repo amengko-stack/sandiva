@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildRedFlagPrompt, parseRedFlagResponse, promoteDealTriggeredCells } from "@/lib/dd/redflag";
+import { extractTableSystem, redflagSystem } from "@/lib/dd/prompts";
 import type { DDExtractionRow } from "@/types/dd";
 import { DD_ASPECTS } from "@/config/ddAspects";
 
@@ -183,5 +184,31 @@ describe("sub-section analysis", () => {
 
     const absent = parseRedFlagResponse('{"findings":[]}', null, { entityId: "e1", aspectId: "pendirian_ad", subsections: SUBS });
     expect(absent.analyses).toEqual([]);
+  });
+});
+
+// Live measurement: 20 of 32 anchors could not be found in the document they
+// named, and the cause was not fabrication but presentation — the model wrote a
+// labelled fact sheet ("Modal Dasar: Rp 50.000.000 (500 saham @ Rp 100.000)")
+// where the deed says "modal dasar Perseroan sebesar Rp 50.000.000 (lima puluh
+// juta Rupiah) terbagi atas 500 saham". "Kutipan verbatim" alone was already in
+// the prompt and did not prevent it, so the rule now carries a wrong and a right
+// example. Asserted here because a prompt instruction is the easiest thing in
+// this codebase to drop by accident, and dropping this one silently returns the
+// grounding check to a 60% false-alarm rate.
+describe("verbatim anchor rule", () => {
+  it("reaches both prompts that produce a checked quote", () => {
+    // extractTableSystem's `verbatim` cells become finding anchors too.
+    for (const prompt of [redflagSystem(), extractTableSystem()]) {
+      expect(prompt).toContain("DISALIN KARAKTER DEMI KARAKTER");
+      expect(prompt).toContain("SALAH:");
+      expect(prompt).toContain("BENAR:");
+      // The ellipsis convention the checker splits on must be the one taught.
+      expect(prompt).toContain('" ... "');
+    }
+  });
+
+  it("warns that a quote it cannot find is marked in the client report", () => {
+    expect(redflagSystem()).toContain("[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]");
   });
 });
