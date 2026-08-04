@@ -155,3 +155,55 @@ describe("traceCitation", () => {
     expect(traceCitation("Musa Muamarta", undefined, [])).toBe("absent");
   });
 });
+
+// A live run reported 23 of 31 quotes "not_found" and the cause was not
+// fabrication: the model stitches several separated passages with ellipses. Each
+// passage is in the document; only the concatenation is not. Coverage of 26-38%
+// was the giveaway — the longest verbatim run was exactly one passage.
+describe("composite quotes joined by ellipses", () => {
+  const DOC2 =
+    "Nama Perseroan adalah PT. CIPTA NUGRAH INDONESIA berkedudukan di Jakarta. " +
+    "Dibuat dengan Akta Nomor 16, tanggal 15 April 2009 di hadapan notaris. " +
+    "Pengesahan diberikan berdasarkan Keputusan AHU-27282.AH.01.01.Tahun 2009.";
+
+  it("verifies a composite quote whose every passage is in the document", () => {
+    const r = checkQuote(
+      "PT. CIPTA NUGRAH INDONESIA ... Akta Nomor 16, tanggal 15 April 2009 ... Keputusan AHU-27282",
+      DOC2
+    );
+    expect(r.verdict).toBe("verified");
+    expect(r.note).toContain("3 petikan");
+  });
+
+  it("accepts the ellipsis characters and spacings actually seen", () => {
+    for (const joiner of [" ... ", "...", " … ", " [...] "]) {
+      const q = `PT. CIPTA NUGRAH INDONESIA${joiner}Akta Nomor 16, tanggal 15 April 2009`;
+      expect(checkQuote(q, DOC2).verdict, JSON.stringify(joiner)).toBe("verified");
+    }
+  });
+
+  it("reports partial as paraphrased, naming how many passages matched", () => {
+    const r = checkQuote(
+      "PT. CIPTA NUGRAH INDONESIA ... telah memperoleh izin lingkungan yang berlaku penuh",
+      DOC2
+    );
+    expect(r.verdict).toBe("paraphrased");
+    expect(r.note).toContain("1 ditemukan");
+  });
+
+  it("still condemns a composite whose passages are mostly absent", () => {
+    const r = checkQuote(
+      "izin lingkungan yang berlaku penuh ... sertifikat laik fungsi telah diterbitkan ... PT. CIPTA NUGRAH INDONESIA",
+      DOC2
+    );
+    expect(r.verdict).toBe("not_found");
+    expect(isUngrounded(r.verdict)).toBe(true);
+  });
+
+  // Splitting must not become a loophole: a single quote with no ellipsis is
+  // still judged as a whole.
+  it("does not treat a plain quote as composite", () => {
+    expect(checkQuote("Nama Perseroan adalah PT. CIPTA NUGRAH INDONESIA", DOC2).note)
+      .not.toContain("petikan");
+  });
+});

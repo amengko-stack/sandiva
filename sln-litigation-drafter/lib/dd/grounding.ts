@@ -73,6 +73,24 @@ function longestCommonRun(a: string, b: string): number {
 
 /** A quote shorter than this cannot be meaningfully verified either way. */
 const MIN_QUOTE_CHARS = 12;
+
+/**
+ * Split a composite quote into the passages it stitches together.
+ *
+ * A live run showed 23 of 31 quotes reported "not_found" by a whole-string match,
+ * and the cause was not fabrication: the model quotes several separated passages
+ * joined by ellipses —
+ *   "PT. CIPTA NUGRAH INDONESIA ... Akta Nomor 16, tanggal 15 April 2009 ... AHU-2728"
+ * Each passage is genuinely in the document; only the concatenation is not, so a
+ * whole-string check condemns a legitimate quoting style. Coverage of 26-38% was
+ * the giveaway: the longest verbatim run was exactly one passage.
+ */
+function splitComposite(quote: string): string[] {
+  return quote
+    .split(/\s*(?:\.{3,}|…|\[\s*\.{3}\s*\])\s*/)
+    .map((part) => part.trim())
+    .filter((part) => normaliseForMatch(part).length >= MIN_QUOTE_CHARS);
+}
 /** Fraction of the quote that must appear verbatim to count as paraphrased. */
 const PARAPHRASE_THRESHOLD = 0.6;
 
@@ -114,6 +132,38 @@ export function checkQuote(quote: string, docText: string | undefined): DDGround
   if (d.indexOf(q) !== -1) {
     return { verdict: "verified", coverage: 1, note: "Kutipan ditemukan verbatim dalam dokumen sumber." };
   }
+
+  // A composite quote is judged passage by passage: the concatenation is the
+  // model's, but each passage should be the document's.
+  const parts = splitComposite(quote);
+  if (parts.length > 1) {
+    const found = parts.filter((part) => d.indexOf(normaliseForMatch(part)) !== -1).length;
+    const ratio = found / parts.length;
+    if (found === parts.length) {
+      return {
+        verdict: "verified",
+        coverage: 1,
+        note: `Kutipan terdiri atas ${parts.length} petikan yang seluruhnya ditemukan verbatim dalam dokumen sumber.`,
+      };
+    }
+    if (ratio >= 0.5) {
+      return {
+        verdict: "paraphrased",
+        coverage: ratio,
+        note:
+          `Dari ${parts.length} petikan dalam kutipan ini, ${found} ditemukan verbatim dalam dokumen sumber ` +
+          `dan sisanya tidak. Bagian yang tidak ditemukan wajib ditelaah terhadap dokumen aslinya.`,
+      };
+    }
+    return {
+      verdict: "not_found",
+      coverage: ratio,
+      note:
+        `Hanya ${found} dari ${parts.length} petikan dalam kutipan ini ditemukan dalam dokumen sumber yang ` +
+        `dirujuk. Pernyataan ini tidak dapat diverifikasi terhadap dokumen dan wajib ditelaah sebelum diandalkan.`,
+    };
+  }
+
   const run = longestCommonRun(q, d);
   const coverage = run / q.length;
   if (coverage >= PARAPHRASE_THRESHOLD) {
