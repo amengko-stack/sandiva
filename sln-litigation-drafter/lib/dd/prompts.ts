@@ -26,9 +26,40 @@ Kembalikan HANYA JSON yang valid, tanpa markdown, tanpa teks lain.`;
  * Stated with a wrong and a right example because the abstract instruction
  * ("kutipan verbatim") was already there and was not enough.
  */
+/**
+ * The illustrative sentences inside DD_ANCHOR_RULE, exported so the grounding
+ * check can recognise them.
+ *
+ * They exist because the abstract instruction did not work. But the first worked
+ * "BENAR" example backfired within one run: I wrote "modal dasar Perseroan
+ * sebesar Rp 50.000.000 (lima puluh juta Rupiah) terbagi atas 500 saham", and a
+ * finding came back quoting exactly that at 25% coverage. The deed actually says
+ * "Modal dasar Perseroan BERJUMLAH Rp. 50.000.000,- (lima puluh juta Rupiah)
+ * terbagi atas 500 (lima ratus) saham". The model imitated my sentence instead of
+ * copying the document's — my example had become a fabricated quote.
+ *
+ * A verbatim quote is document-specific by definition, so any realistic example
+ * of one is transplantable. Two defences, because the lesson of this codebase is
+ * that a prompt instruction is droppable and a post-parse check is not:
+ *
+ *   1. The example is now framed as a hypothetical document ("misalkan dokumen
+ *      berbunyi") and uses figures no Indonesian data room would contain, so an
+ *      echo is obvious rather than plausible.
+ *   2. isPromptExampleQuote() below rejects an anchor that echoes one, naming the
+ *      cause instead of reporting a generic non-match.
+ */
+const EX_DOC_LINE =
+  "Modal dasar Perseroan berjumlah Rp. 7.350.000.000,- (tujuh miliar tiga ratus lima puluh juta Rupiah) terbagi atas 73.500 (tujuh puluh tiga ribu lima ratus) saham";
+const EX_FACT_SHEET = "Modal Dasar: Rp 7.350.000.000 (73.500 saham @ Rp 100.000)";
+
+/** Sentences the model is shown. An anchor echoing one came from here, not from a document. */
+export const DD_ANCHOR_EXAMPLES: string[] = [EX_DOC_LINE, EX_FACT_SHEET];
+
 const DD_ANCHOR_RULE = `ATURAN "anchor" — kutipan yang dapat diperiksa mesin. Isi "anchor" DISALIN KARAKTER DEMI KARAKTER dari teks dokumen. Kutipan itu diperiksa secara otomatis dengan pencocokan teks terhadap dokumen yang kamu sebut pada "sourceFile"; bila tidak ditemukan, temuanmu ditandai "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]" di laporan klien.
-JANGAN membuat ringkasan berlabel. SALAH: "Nama Perusahaan: PT Alpha … Modal Dasar: Rp 50.000.000 (500 saham @ Rp 100.000)" — label "Nama Perusahaan:", "Modal Dasar:", tanda "@" dan "&" itu katamu sendiri, bukan kata dokumen, sehingga tidak akan ditemukan.
-BENAR: "modal dasar Perseroan sebesar Rp 50.000.000 (lima puluh juta Rupiah) terbagi atas 500 saham" — persis seperti tertulis, termasuk ejaan angka dalam huruf, singkatan, dan tanda baca dokumen.
+JANGAN membuat ringkasan berlabel. Misalkan sebuah dokumen — BUKAN dokumen yang kamu periksa — berbunyi: "${EX_DOC_LINE}".
+SALAH: "${EX_FACT_SHEET}" — label "Modal Dasar:" dan tanda "@" dan "&" itu katamu sendiri, bukan kata dokumen, sehingga tidak akan ditemukan.
+BENAR: seluruh kalimat itu disalin apa adanya, termasuk "berjumlah" (bukan "sebesar"), "Rp." dengan titik dan ",-", serta "(tujuh puluh tiga ribu lima ratus)".
+PENTING: kalimat contoh di atas BUKAN bagian dari dokumen mana pun yang kamu periksa. JANGAN menyalin, meniru pola, atau mengisi ulang angkanya sebagai "anchor" — ambil kalimat dari dokumen yang ada di hadapanmu, dengan pilihan katanya sendiri.
 Bila perlu menggabungkan beberapa petikan yang berjauhan, pisahkan dengan " ... " dan pastikan SETIAP petikan tetap verbatim. Kutip potongan yang paling khas (12–40 kata); bila dokumen memang tidak memuat kalimat yang mendukung temuanmu, jangan buat temuannya.
 Empat kebiasaan lain yang membuat kutipan gagal diperiksa, semuanya JANGAN dilakukan:
 (a) Menominalkan keputusan RUPS. SALAH: "Ratifikasi Laporan Keuangan 2018; Pengesahan Laporan Direksi". Kutip kata risalahnya sendiri, mis. "menyetujui dan mengesahkan Laporan Tahunan Perseroan untuk tahun buku 2018". Jangan merangkai beberapa keputusan dengan ";" atau "&" — pilih satu keputusan, atau gunakan " ... ".

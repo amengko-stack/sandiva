@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  checkCitationLinks, checkQuote, isUngrounded, normaliseForMatch,
-  traceCitation,
+  checkCitationLinks, checkQuote, isPromptExampleQuote, isUngrounded,
+  normaliseForMatch, traceCitation,
 } from "@/lib/dd/grounding";
+import { DD_ANCHOR_EXAMPLES } from "@/lib/dd/prompts";
 
 // The requirement: what the report says about a document must actually be in that
 // document. Nothing enforced it — a model finding's "verbatim quote" was trusted
@@ -205,5 +206,53 @@ describe("composite quotes joined by ellipses", () => {
   it("does not treat a plain quote as composite", () => {
     expect(checkQuote("Nama Perseroan adalah PT. CIPTA NUGRAH INDONESIA", DOC2).note)
       .not.toContain("petikan");
+  });
+});
+
+// The prompt shows a worked example of a well-formed quote because the abstract
+// instruction did not work. One run later a finding quoted that example almost
+// word for word: I had written "modal dasar Perseroan sebesar Rp 50.000.000 ...
+// terbagi atas 500 saham" while the deed says "Modal dasar Perseroan BERJUMLAH
+// Rp. 50.000.000,- ... terbagi atas 500 (lima ratus) saham". Any realistic
+// example of a verbatim quote is transplantable, so the example itself became a
+// source of fabrication.
+describe("quoting the instructions instead of the document", () => {
+  const EXAMPLE = DD_ANCHOR_EXAMPLES[0];
+
+  it("recognises the example quoted back verbatim", () => {
+    expect(isPromptExampleQuote(EXAMPLE)).toBe(true);
+  });
+
+  it("recognises a reworded echo, which is how it actually appeared", () => {
+    // "berjumlah" -> "sebesar", "Rp." -> "Rp", bracketed spelling dropped: the
+    // exact edits the model made to my first example.
+    const reworded = EXAMPLE
+      .replace("berjumlah", "sebesar")
+      .replace("Rp.", "Rp")
+      .replace(" (tujuh puluh tiga ribu lima ratus)", "");
+    expect(isPromptExampleQuote(reworded)).toBe(true);
+  });
+
+  it("says the quote came from the instructions, not merely that it was not found", () => {
+    const r = checkQuote(EXAMPLE, "Dokumen ini tidak memuat ketentuan permodalan apa pun.");
+    expect(r.verdict).toBe("not_found");
+    expect(isUngrounded(r.verdict)).toBe(true);
+    expect(r.note).toContain("meniru kalimat contoh dalam instruksi");
+  });
+
+  // The check runs only after the document match fails, so a real modal-dasar
+  // clause is never mistaken for an echo however similar it reads.
+  it("clears a genuine quote of the same kind of clause", () => {
+    const deed =
+      "Modal dasar Perseroan berjumlah Rp. 2.000.000.000,- (dua miliar Rupiah) " +
+      "terbagi atas 20.000 (dua puluh ribu) saham.";
+    const quote = "Modal dasar Perseroan berjumlah Rp. 2.000.000.000,- (dua miliar Rupiah)";
+    expect(checkQuote(quote, deed).verdict).toBe("verified");
+    expect(isPromptExampleQuote(quote)).toBe(false);
+  });
+
+  it("does not judge a fragment too short to be an echo", () => {
+    expect(isPromptExampleQuote("Modal dasar")).toBe(false);
+    expect(isPromptExampleQuote("")).toBe(false);
   });
 });

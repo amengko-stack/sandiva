@@ -24,6 +24,7 @@
 // "not_found"      the named document exists and does not contain the quote
 // "source_missing" the finding names a document that was never extracted
 // "no_quote"       nothing to check
+import { DD_ANCHOR_EXAMPLES } from "@/lib/dd/prompts";
 import type { DDGroundingVerdict } from "@/types/dd";
 export type { DDGroundingVerdict };
 
@@ -95,6 +96,45 @@ function splitComposite(quote: string): string[] {
 const PARAPHRASE_THRESHOLD = 0.6;
 
 /**
+ * Did the model quote the instructions instead of the document?
+ *
+ * The prompt shows a worked example of a well-formed quote, because the abstract
+ * instruction did not work. One run later a finding came back quoting that
+ * example almost word for word at 25% coverage — the deed's own wording differs
+ * ("berjumlah", not "sebesar"). Any realistic example of a verbatim quote is
+ * transplantable, so the example was itself a source of fabrication.
+ *
+ * Reported with its own note rather than as a plain non-match: "the quote is not
+ * in the document" and "the quote came from my instructions" call for different
+ * responses, and only the second is provably an invention.
+ */
+const ECHO_MIN_CHARS = 30;
+// Two ways to be an echo, because the observed echo reworded the example
+// ("berjumlah" -> "sebesar", "Rp." -> "Rp", bracketed number spelling dropped)
+// and those edits break the single longest run down to ~0.69 of the quote.
+const ECHO_RUN_RATIO = 0.6;
+// A long run identical to an instruction sentence, in a quote the cited document
+// does not contain, is conclusive on its own. Safe at 40 because the example uses
+// figures (Rp 7.350.000.000 / 73.500 saham) no data room holds, so a real deed's
+// capital clause shares only the ~35 characters before the figures.
+const ECHO_RUN_CHARS = 40;
+
+export function isPromptExampleQuote(quote: string): boolean {
+  const q = normaliseForMatch(quote ?? "");
+  if (q.length < ECHO_MIN_CHARS) return false;
+  for (let i = 0; i < DD_ANCHOR_EXAMPLES.length; i++) {
+    const e = normaliseForMatch(DD_ANCHOR_EXAMPLES[i]);
+    if (e.length === 0) continue;
+    if (e.indexOf(q) !== -1 || q.indexOf(e) !== -1) return true;
+    // A reworded echo still shares a long run with the example.
+    const run = longestCommonRun(q, e);
+    if (run >= ECHO_RUN_CHARS) return true;
+    if (run / Math.min(q.length, e.length) >= ECHO_RUN_RATIO) return true;
+  }
+  return false;
+}
+
+/**
  * Does `quote` come from `docText`?
  *
  * `docText` is the extracted text of the single document the report attributes
@@ -161,6 +201,18 @@ export function checkQuote(quote: string, docText: string | undefined): DDGround
       note:
         `Hanya ${found} dari ${parts.length} petikan dalam kutipan ini ditemukan dalam dokumen sumber yang ` +
         `dirujuk. Pernyataan ini tidak dapat diverifikasi terhadap dokumen dan wajib ditelaah sebelum diandalkan.`,
+    };
+  }
+
+  // Only consulted once the document match has already failed, so a genuine quote
+  // that merely resembles the example can never be misjudged as an echo.
+  if (isPromptExampleQuote(quote)) {
+    return {
+      verdict: "not_found",
+      coverage: 0,
+      note:
+        "Kutipan ini meniru kalimat contoh dalam instruksi analisis, bukan kalimat dokumen. " +
+        "Temuan ini tidak berdasar pada dokumen sumber dan tidak boleh diandalkan.",
     };
   }
 
