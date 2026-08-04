@@ -205,6 +205,12 @@ describe("verbatim anchor rule", () => {
       expect(prompt).toContain("BENAR:");
       // The ellipsis convention the checker splits on must be the one taught.
       expect(prompt).toContain('" ... "');
+      // Copying OCR damage verbatim rather than smoothing it. A DPS scan read
+      // "Emili! Meilani" where the deed itself says ERNITA MEILANI five times;
+      // the model silently repaired it to "Emilil Meilani", which would have put
+      // a wrong notary in the report from a document the data room contradicts.
+      expect(prompt).toContain("Emili!");
+      expect(prompt).toContain("SALIN APA ADANYA");
     }
   });
 
