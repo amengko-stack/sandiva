@@ -221,3 +221,35 @@ describe("format: lut_pasar_modal still carries the UUPT baseline", () => {
     expect(t).not.toContain("KEPATUHAN PROSEDUR PENGAMBILALIHAN SAHAM");
   });
 });
+
+// Stage 5 hands analyzeAspect the sub-section titles it must fill, and the builder
+// looks the resulting analyses up BY TITLE. If the two plan with different
+// formats, nothing matches and every sub-section falls back to "belum dapat
+// dianalisis" — the empty-chapters defect, reintroduced for any non-default
+// format. This asserts the titles genuinely differ, which is why both sides must
+// be given the same format.
+describe("sub-section titles diverge between formats", () => {
+  const subsFor = (format: DDReportFormat) =>
+    plan({ format })
+      .filter((c) => c.kind === "analisis_aspek" || c.kind === "kategori" || c.kind === "temuan")
+      .flatMap((c) => c.subs.filter((s) => !s.findings).map((s) => s.title));
+
+  it("gives the corporate material different sub-section titles per format", () => {
+    const a = subsFor("pendahuluan_led");
+    const b = subsFor("exec_summary_led");
+    expect(a).toContain("Keabsahan Pendirian dan Anggaran Dasar");
+    expect(b).toContain("Riwayat Pendirian dan Akta Perubahan");
+    // Barely any overlap: planning with the wrong format loses nearly everything.
+    const shared = a.filter((t) => b.indexOf(t) !== -1);
+    expect(shared.length).toBeLessThan(Math.min(a.length, b.length) / 2);
+  });
+
+  it("changes the sub-sections again when the client is the seller", () => {
+    const buy = plan({ type: "divestasi", clientRole: "pembeli" })
+      .filter((c) => c.kind === "transaksi").flatMap((c) => c.subs.map((s) => s.title));
+    const sell = plan({ type: "divestasi", clientRole: "penjual" })
+      .filter((c) => c.kind === "transaksi_jual").flatMap((c) => c.subs.map((s) => s.title));
+    expect(sell.length).toBeGreaterThan(0);
+    expect(sell.filter((t) => buy.indexOf(t) !== -1)).toEqual([]);
+  });
+});

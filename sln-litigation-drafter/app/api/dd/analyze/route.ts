@@ -106,10 +106,19 @@ export async function POST(req: NextRequest) {
 
         // The chapter plan tells each aspect which sub-sections it must fill.
         // Without this the analysis chapters render as hollow scaffolding.
+        // The format and client role MUST match what the builder will use: the
+        // sub-section titles differ per format, and analyses are placed by title.
+        // Planning with the default here while the builder plans with the chosen
+        // format means nothing matches, and every sub-section falls back to
+        // "belum dapat dianalisis" — the empty-chapters defect, reintroduced for
+        // any non-default format.
         const chapterPlan = planChapters({
           transactionType: txn.type,
           regime,
           presentAspects: Array.from(new Set(classified.map((c) => c.aspectId))) as DDAspectId[],
+          format: txn.reportFormat,
+          clientRole: txn.clientRole,
+          transactionImplications: txn.reportOptions?.transactionImplications,
         });
         const subsectionsFor = (aspectId: DDAspectId): string[] => {
           const ch = chapterForAspect(chapterPlan, aspectId);
