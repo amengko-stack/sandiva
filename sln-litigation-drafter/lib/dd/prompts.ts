@@ -8,35 +8,22 @@ Jangan mengarang fakta. Jika informasi tidak ada dalam dokumen, tulis "[TIDAK DI
 Kembalikan HANYA JSON yang valid, tanpa markdown, tanpa teks lain.`;
 
 /**
- * What `anchor` must contain.
+ * What `anchor` must contain, and the illustrative sentences used to say it —
+ * exported so the grounding check can recognise them.
  *
  * Measured live: of 32 model findings, 20 had anchors that could not be found in
- * the document they named. Inspection showed the model was not inventing facts —
- * it was writing a fact sheet in quotation marks:
+ * the document they named. The model was not inventing facts, it was writing a
+ * fact sheet in quotation marks — "Modal Dasar: Rp 50.000.000 (500 saham @ Rp
+ * 100.000)" — where the deed says "Modal dasar Perseroan berjumlah Rp.
+ * 50.000.000,- (lima puluh juta Rupiah) terbagi atas 500 (lima ratus) saham". The
+ * values may be right, but a summary cannot be checked against the document, and
+ * being checkable is the whole point of the field. The abstract instruction
+ * ("kutipan verbatim") was already present and was not enough, hence the examples.
  *
- *   "Nama Perusahaan: PT. Cipta Nugrah Indonesia … Nomor Akta Pendirian: Akta Nomor 16"
- *   "Modal Dasar: Rp 50.000.000 (500 saham @ Rp 100.000)"
- *
- * The labels ("Nama Perusahaan:", "Modal Dasar:") and the shorthand ("@", "&")
- * are the model's, not the deed's, which writes "modal dasar Perseroan sebesar
- * Rp 50.000.000 (lima puluh juta Rupiah) terbagi atas 500 saham". The values may
- * be right, but a summary cannot be checked against the document, and being
- * checkable is the whole point of the field.
- *
- * Stated with a wrong and a right example because the abstract instruction
- * ("kutipan verbatim") was already there and was not enough.
- */
-/**
- * The illustrative sentences inside DD_ANCHOR_RULE, exported so the grounding
- * check can recognise them.
- *
- * They exist because the abstract instruction did not work. But the first worked
- * "BENAR" example backfired within one run: I wrote "modal dasar Perseroan
- * sebesar Rp 50.000.000 (lima puluh juta Rupiah) terbagi atas 500 saham", and a
- * finding came back quoting exactly that at 25% coverage. The deed actually says
- * "Modal dasar Perseroan BERJUMLAH Rp. 50.000.000,- (lima puluh juta Rupiah)
- * terbagi atas 500 (lima ratus) saham". The model imitated my sentence instead of
- * copying the document's — my example had become a fabricated quote.
+ * The first worked example then backfired within one run: I wrote it as "modal
+ * dasar Perseroan sebesar Rp 50.000.000 ... terbagi atas 500 saham" and a finding
+ * came back quoting exactly that at 25% coverage — the model imitated my sentence
+ * instead of copying the deed's. My example had become a fabricated quote.
  *
  * A verbatim quote is document-specific by definition, so any realistic example
  * of one is transplantable. Two defences, because the lesson of this codebase is
@@ -55,7 +42,7 @@ const EX_FACT_SHEET = "Modal Dasar: Rp 7.350.000.000 (73.500 saham @ Rp 100.000)
 /** Sentences the model is shown. An anchor echoing one came from here, not from a document. */
 export const DD_ANCHOR_EXAMPLES: string[] = [EX_DOC_LINE, EX_FACT_SHEET];
 
-const DD_ANCHOR_RULE = `ATURAN "anchor" — kutipan yang dapat diperiksa mesin. Isi "anchor" DISALIN KARAKTER DEMI KARAKTER dari teks dokumen. Kutipan itu diperiksa secara otomatis dengan pencocokan teks terhadap dokumen yang kamu sebut pada "sourceFile"; bila tidak ditemukan, temuanmu ditandai "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]" di laporan klien.
+export const DD_ANCHOR_RULE = `ATURAN "anchor" — kutipan yang dapat diperiksa mesin. Isi "anchor" DISALIN KARAKTER DEMI KARAKTER dari teks dokumen. Kutipan itu diperiksa secara otomatis dengan pencocokan teks terhadap dokumen yang kamu sebut pada "sourceFile"; bila tidak ditemukan, temuanmu ditandai "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]" di laporan klien.
 JANGAN membuat ringkasan berlabel. Misalkan sebuah dokumen — BUKAN dokumen yang kamu periksa — berbunyi: "${EX_DOC_LINE}".
 SALAH: "${EX_FACT_SHEET}" — label "Modal Dasar:" dan tanda "@" dan "&" itu katamu sendiri, bukan kata dokumen, sehingga tidak akan ditemukan.
 BENAR: seluruh kalimat itu disalin apa adanya, termasuk "berjumlah" (bukan "sebesar"), "Rp." dengan titik dan ",-", serta "(tujuh puluh tiga ribu lima ratus)".

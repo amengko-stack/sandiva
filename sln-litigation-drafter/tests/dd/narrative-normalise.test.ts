@@ -182,3 +182,85 @@ describe("citationNotes", () => {
     expect(out).toHaveLength(2);
   });
 });
+
+// The DDDeedRef type comment promises "every entry keeps its source file and a
+// verbatim quote so no sentence in the report is unattributable". The quote was
+// carried and never checked, so the promise was only half kept. The notary name is
+// checked too: a live run had a shareholder register whose OCR read "Emili!
+// Meilani" where the deed itself says ERNITA MEILANI five times, and an invented
+// notary would otherwise reach the deed table as fact.
+describe("citationNotes: notary name and underlying quote", () => {
+  const deed = (over: Partial<DDDeedRef> = {}): DDDeedRef => ({
+    number: "16", dateISO: "2009-04-15", notary: "", purpose: "Pendirian",
+    menkumhamRef: "", registrationRef: "", bnriRef: "",
+    sourceFile: "akta16.pdf", verbatim: "", ...over,
+  });
+  const room = (own: string, other?: string) => {
+    const m = new Map<string, string>([["akta16.pdf", own]]);
+    if (other) m.set("dps.pdf", other);
+    return m;
+  };
+
+  it("raises a note when the notary named appears in no examined document", () => {
+    const out = citationNotes(
+      [deed({ notary: "Raden Johanes Sarwono, S.H." })],
+      room("Akta Pendirian Nomor 16 dibuat di hadapan Musa Muamarta, S.H.")
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toContain("Raden Johanes Sarwono");
+    expect(out[0].text).toContain("Nama notaris");
+  });
+
+  // Matching the whole string would fail whenever the deed spells the degrees out,
+  // which is common, and a false accusation is worse than no check.
+  it("matches on the name alone, so spelled-out degrees are not a false absence", () => {
+    const out = citationNotes(
+      [deed({ notary: "Devi Yunanda, S.H., M.Kn." })],
+      room("Berhadapan dengan saya, DEVI YUNANDA, Sarjana Hukum, Magister Kenotariatan")
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("accepts a notary named only in another examined document", () => {
+    const out = citationNotes(
+      [deed({ notary: "Ernita Meilani, S.H., LL.M." })],
+      room("Akta Nomor 16", "riwayat: dibuat di hadapan Ernita Meilani, SH, LL.M")
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("raises a note when the quote behind the row is not in the document it names", () => {
+    const out = citationNotes(
+      [deed({ verbatim: "Perseroan telah memperoleh persetujuan Menteri atas perubahan ini" })],
+      room("Akta Pendirian Nomor 16 tanggal 15 April 2009, dibuat di hadapan notaris.")
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toContain("Kutipan yang mendasari uraian Akta No. 16");
+    expect(out[0].text).toContain("akta16.pdf");
+  });
+
+  it("says nothing when the quote is genuinely in the document", () => {
+    const out = citationNotes(
+      [deed({ verbatim: "dibuat di hadapan Musa Muamarta" })],
+      room("Akta Pendirian Nomor 16, dibuat di hadapan Musa Muamarta, S.H., Notaris di Jakarta.")
+    );
+    expect(out).toEqual([]);
+  });
+
+  // One note per deed listing everything wrong with it, rather than three notes
+  // about the same row.
+  it("combines every problem with one deed into a single note", () => {
+    const out = citationNotes(
+      [deed({
+        notary: "Notaris Fiktif",
+        menkumhamRef: "AHU-99999.AH.01.02.TAHUN 2019",
+        verbatim: "kalimat yang tidak ada dalam dokumen sumber ini sama sekali",
+      })],
+      room("Akta Pendirian Nomor 16 tanggal 15 April 2009.")
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toContain("AHU-99999.AH.01.02.TAHUN 2019");
+    expect(out[0].text).toContain("Notaris Fiktif");
+    expect(out[0].text).toContain("Kutipan yang mendasari");
+  });
+});

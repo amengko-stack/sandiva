@@ -1,8 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
-import { traceCitation } from "@/lib/dd/grounding";
-import { DD_DATA_FRAMING } from "@/lib/dd/prompts";
+import { checkQuote, isUngrounded, traceCitation } from "@/lib/dd/grounding";
+import { DD_ANCHOR_RULE, DD_DATA_FRAMING } from "@/lib/dd/prompts";
 import type {
   DDCapitalEntry,
   DDClassifiedDoc,
@@ -30,6 +30,8 @@ const NOTE_ANCHORS = new Set([
 export function narrativeSystem(): string {
   return `Kamu adalah associate senior yang menyusun Bagian I (Pendirian, Anggaran Dasar, Kegiatan Usaha, Permodalan, Pemegang Saham, Direksi dan Dewan Komisaris) dari laporan uji tuntas hukum untuk perusahaan Indonesia.
 Tugasmu BUKAN mendaftar dokumen, melainkan mengekstrak fakta dan rantai kutipan yang akan dirangkai menjadi narasi deskriptif oleh proses lain. Setiap akta HARUS disertai kutipan verbatim untuk atribusi.
+${DD_ANCHOR_RULE}
+Nama notaris juga dicocokkan dengan dokumen: tulis nama itu sebagaimana tertulis pada dokumen sumbernya, termasuk bila hasil pindai/OCR-nya rusak.
 JANGAN mengarang nomor akta, nomor keputusan Menkumham, nomor pendaftaran, atau nomor BNRI. Bila dokumen tidak menyebutkan suatu rujukan, kembalikan string kosong "" untuk field itu — JANGAN menyimpulkan atau menerka.
 Bahasa Indonesia formal. Nama dokumen dan nama pihak TIDAK diterjemahkan.
 ${DD_DATA_FRAMING}`;
@@ -228,13 +230,34 @@ export function dedupeDeeds(deeds: DDDeedRef[]): DDDeedRef[] {
 
 
 /**
- * Turn untraceable citation numbers into notes, so a reference the report states
- * cannot silently be one nobody can find in the documents.
+ * The personal-name part of a notary string.
  *
- * Only "absent" is reported. A number traced to another examined document is
- * legitimate — a deed's Menkumham decree number is routinely read off a later
- * shareholder register rather than off the deed itself — and flagging that would
- * be a false accusation.
+ * The full string carries degree abbreviations ("Devi Yunanda, S.H., M.Kn.") that
+ * the deed itself often spells out in full ("Sarjana Hukum, Magister
+ * Kenotariatan"), so matching on the whole string would report a false absence.
+ * The name before the first comma is what the document reliably contains.
+ */
+function notaryName(notary: string): string {
+  return notary.split(",")[0].trim();
+}
+
+/**
+ * Turn everything the deed table asserts but cannot support into notes.
+ *
+ * The type comment on DDDeedRef says "every entry keeps its source file and a
+ * verbatim quote so no sentence in the report is unattributable". Nothing enforced
+ * the second half: the quote was carried and never checked. Three things are
+ * verified per deed, all against the document the row itself names:
+ *
+ *   - the citation numbers (Menkumham decree, registry, State Gazette)
+ *   - the notary's name — this is where the damage showed up in a live run, a
+ *     shareholder register whose OCR read "Emili! Meilani" for ERNITA MEILANI
+ *   - the verbatim quote underlying the row
+ *
+ * Only "absent" is reported for the numbers and the name. A value traced to
+ * another examined document is legitimate — a deed's Menkumham decree number is
+ * routinely read off a later shareholder register rather than off the deed itself
+ * — and flagging that would be a false accusation.
  */
 export function citationNotes(
   deeds: DDDeedRef[],
@@ -244,6 +267,7 @@ export function citationNotes(
   const out: DDNarrativeNote[] = [];
   for (const d of deeds) {
     const own = d.sourceFile ? contentByFile.get(d.sourceFile) : undefined;
+    const deedLabel = `Akta No. ${d.number}${d.dateISO ? ` tanggal ${d.dateISO}` : ""}`;
     const links: { label: string; value: string }[] = [
       { label: "nomor keputusan Menteri", value: d.menkumhamRef },
       { label: "nomor pendaftaran Daftar Perseroan", value: d.registrationRef },
@@ -253,14 +277,36 @@ export function citationNotes(
       .filter((l) => l.value.trim() !== "")
       .filter((l) => traceCitation(l.value, own, corpus) === "absent")
       .map((l) => `${l.label} (${l.value})`);
-    if (absent.length === 0) continue;
+
+    const sentences: string[] = [];
+    if (absent.length > 0) {
+      sentences.push(
+        `Rujukan berikut yang dicantumkan untuk ${deedLabel} tidak dapat ditemukan dalam dokumen mana pun ` +
+          `yang diperiksa: ${absent.join("; ")}. Rujukan tersebut wajib diverifikasi terhadap dokumen ` +
+          `aslinya sebelum diandalkan.`
+      );
+    }
+
+    const name = notaryName(d.notary);
+    if (name !== "" && traceCitation(name, own, corpus) === "absent") {
+      sentences.push(
+        `Nama notaris yang dicantumkan untuk ${deedLabel} ("${name}") tidak ditemukan dalam dokumen mana ` +
+          `pun yang diperiksa dan wajib diverifikasi terhadap dokumen aslinya.`
+      );
+    }
+
+    if (d.verbatim.trim() !== "" && isUngrounded(checkQuote(d.verbatim, own).verdict)) {
+      sentences.push(
+        `Kutipan yang mendasari uraian ${deedLabel} tidak ditemukan dalam dokumen yang dirujuk` +
+          `${d.sourceFile ? ` (${d.sourceFile})` : ""}, sehingga uraian tersebut belum dapat dinyatakan ` +
+          `sebagai fakta dan wajib ditelaah terhadap dokumen aslinya.`
+      );
+    }
+
+    if (sentences.length === 0) continue;
     out.push({
       anchor: "anggaran_dasar",
-      text:
-        `Rujukan berikut yang dicantumkan untuk Akta No. ${d.number}` +
-        `${d.dateISO ? ` tanggal ${d.dateISO}` : ""} tidak dapat ditemukan dalam dokumen mana pun yang ` +
-        `diperiksa: ${absent.join("; ")}. Rujukan tersebut wajib diverifikasi terhadap dokumen aslinya ` +
-        `sebelum diandalkan.`,
+      text: sentences.join(" "),
       sourceFile: d.sourceFile || null,
     });
   }
