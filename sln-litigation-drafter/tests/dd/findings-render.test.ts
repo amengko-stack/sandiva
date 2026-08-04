@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
-import type { DDFinding } from "@/types/dd";
+import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
+import type { DDFinding, DDSeverity } from "@/types/dd";
 
 const finding = (over: Partial<DDFinding> = {}): DDFinding => ({
   id: "e1-kelengkapan-1",
@@ -87,5 +88,87 @@ describe("renderVerdictLine", () => {
   it("ignores dismissed findings when deriving the verdict", () => {
     const line = renderVerdictLine([finding({ severity: "kritis", status: "dismissed" })]);
     expect(line).toBe("Berdasarkan Dokumen Yang Diperiksa, aspek ini memenuhi ketentuan.");
+  });
+});
+
+// The risk column is a per-report choice, not a convention. Evidence from the
+// firm's own reports: LDD_Report_SBN_Divestment has none, LDD_PT_ITDC uses plain
+// words ("Rendah-Sedang"), LDD_SIIB_Pembubaran_v4 uses codes ("Sedang [S]").
+// Default stays off, matching the Makarim precedents and the HKHSK standard.
+describe("risk column as a report option", () => {
+  const f = (severity: DDSeverity, over: Partial<DDFinding> = {}): DDFinding => ({
+    id: "x", entityId: "e1", aspectId: "pendirian_ad", dimension: "risiko", severity,
+    anchor: "q", sourceFile: "a.pdf", problem: "P", whyItMatters: "W", suggestedFix: "S",
+    verified: false, status: "open", ...over,
+  });
+
+  const headersOf = (blocks: ReturnType<typeof renderFindingsTable>) => {
+    const t = blocks.find((b) => b.kind === "table");
+    return t && t.kind === "table" ? t.headers : [];
+  };
+  const rowsOf = (blocks: ReturnType<typeof renderFindingsTable>) => {
+    const t = blocks.find((b) => b.kind === "table");
+    return t && t.kind === "table" ? t.rows : [];
+  };
+
+  it("omits the risk column by default, as the convention requires", () => {
+    const h = headersOf(renderFindingsTable([f("kritis")]));
+    expect(h).not.toContain("Tingkat Risiko");
+    expect(h).toContain("Konsekuensi Hukum");
+    expect(JSON.stringify(rowsOf(renderFindingsTable([f("kritis")])))).not.toMatch(/Tinggi|kritis/);
+  });
+
+  it("renders plain words in the ITDC notation", () => {
+    const blocks = renderFindingsTable([f("kritis"), f("material"), f("minor")], {
+      ...DD_DEFAULT_REPORT_OPTIONS, riskColumn: "kata",
+    });
+    expect(headersOf(blocks)).toContain("Tingkat Risiko");
+    const col = headersOf(blocks).indexOf("Tingkat Risiko");
+    expect(rowsOf(blocks).map((r) => r[col])).toEqual(["Tinggi", "Sedang", "Rendah"]);
+  });
+
+  it("renders bracket codes in the SIIB notation", () => {
+    const blocks = renderFindingsTable([f("kritis"), f("material"), f("minor")], {
+      ...DD_DEFAULT_REPORT_OPTIONS, riskColumn: "kode",
+    });
+    const col = headersOf(blocks).indexOf("Tingkat Risiko");
+    expect(rowsOf(blocks).map((r) => r[col])).toEqual(["Tinggi [T]", "Sedang [S]", "Rendah [R]"]);
+  });
+
+  it("can drop the Konsekuensi Hukum column for reports that do not carry one", () => {
+    const h = headersOf(renderFindingsTable([f("kritis")], {
+      ...DD_DEFAULT_REPORT_OPTIONS, riskColumn: "kata", legalConsequenceColumn: false,
+    }));
+    expect(h).toEqual(["No.", "Temuan", "Pasal yang Relevan", "Tingkat Risiko", "Rekomendasi"]);
+  });
+
+  it("keeps row and header counts aligned in every combination", () => {
+    for (const riskColumn of ["off", "kata", "kode"] as const) {
+      for (const legalConsequenceColumn of [true, false]) {
+        const blocks = renderFindingsTable([f("kritis"), f("minor")], {
+          ...DD_DEFAULT_REPORT_OPTIONS, riskColumn, legalConsequenceColumn,
+        });
+        const h = headersOf(blocks);
+        for (const r of rowsOf(blocks)) {
+          expect(r.length, `${riskColumn}/${legalConsequenceColumn}`).toBe(h.length);
+        }
+      }
+    }
+  });
+
+  // The standard's conclusion is not replaced by a client's risk column.
+  it("still emits the three-state verdict line when a risk column is shown", () => {
+    expect(renderVerdictLine([f("material")])).toContain("memenuhi ketentuan dengan catatan");
+    expect(renderVerdictLine([f("kritis")])).toContain("tidak memenuhi ketentuan");
+  });
+
+  it("orders rows most-serious-first regardless of the column setting", () => {
+    const blocks = renderFindingsTable([f("minor"), f("kritis"), f("material")]);
+    expect(rowsOf(blocks).map((r) => r[0])).toEqual(["1", "2", "3"]);
+    const withRisk = renderFindingsTable([f("minor"), f("kritis"), f("material")], {
+      ...DD_DEFAULT_REPORT_OPTIONS, riskColumn: "kata",
+    });
+    const col = headersOf(withRisk).indexOf("Tingkat Risiko");
+    expect(rowsOf(withRisk).map((r) => r[col])).toEqual(["Tinggi", "Sedang", "Rendah"]);
   });
 });

@@ -13,9 +13,10 @@ import { obligationsForLayer, resolveRegime, type DDObligation } from "@/lib/dd/
 import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
 import { renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
 import { chapterDisclaimer, chapterPendahuluan } from "@/lib/dd/report-chapters";
+import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
 import type {
   DDAspectId, DDConsolidated, DDEntity, DDEntityResult, DDFinding, DDGapItem, DDRegime,
-  DDReportBlock, DDReportMeta, DDTransaction,
+  DDReportBlock, DDReportMeta, DDReportOptions, DDTransaction,
 } from "@/types/dd";
 
 // Same defect class lib/docx-builder.ts guards against — control chars corrupt Word XML.
@@ -403,7 +404,8 @@ function renderPasarModalChapter(
 
 /** BAB for the analysis-per-aspect chapter: each sub-section carries its own analysis, findings, and verification. */
 function renderAnalisisAspekChapter(
-  chNo: number, chapter: DDChapterPlan, r: DDEntityResult, out: (Paragraph | Table)[]
+  chNo: number, chapter: DDChapterPlan, r: DDEntityResult, out: (Paragraph | Table)[],
+  opts: DDReportOptions
 ): void {
   const chapterFindings = findingsForChapter(r, chapter);
   const analyses = r.analyses ?? [];
@@ -416,7 +418,7 @@ function renderAnalisisAspekChapter(
       const leftover = chapterFindings.filter(
         (f) => !f.subsectionTitle || nonFindingsSubTitles.indexOf(f.subsectionTitle) === -1
       );
-      const blocks = renderFindingsTable(leftover);
+      const blocks = renderFindingsTable(leftover, opts);
       if (blocks.length === 0) {
         out.push(p("Tidak terdapat temuan tambahan yang belum diuraikan pada sub-bagian di atas."));
       } else {
@@ -440,7 +442,7 @@ function renderAnalisisAspekChapter(
     if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
 
     const subFindings = chapterFindings.filter((f) => f.subsectionTitle === sub.title);
-    const findingBlocks = renderFindingsTable(subFindings);
+    const findingBlocks = renderFindingsTable(subFindings, opts);
     for (const el of renderBlocks(findingBlocks)) out.push(el);
 
     if (analysis.verification.length > 0) {
@@ -538,6 +540,7 @@ export async function buildDdReportDocx(args: {
 }): Promise<Buffer> {
   const { transaction, results, consolidated } = args;
   const meta = transaction.reportMeta ?? PLACEHOLDER_META;
+  const opts = transaction.reportOptions ?? DD_DEFAULT_REPORT_OPTIONS;
 
   // Release gate, ported from build_docx.js: a report may not go out as a
   // client release without a defined reliance scope, because the reliance
@@ -660,7 +663,7 @@ export async function buildDdReportDocx(args: {
           );
         }
       } else if (chapter.kind === "analisis_aspek") {
-        renderAnalisisAspekChapter(chNo, chapter, r, children);
+        renderAnalisisAspekChapter(chNo, chapter, r, children, opts);
       } else if (chapter.kind === "transaksi") {
         renderTransaksiChapter(chNo, chapter.subs, transaction.type, children);
       } else if (chapter.kind === "pasar_modal") {
@@ -692,7 +695,7 @@ export async function buildDdReportDocx(args: {
     if (activeCross.length === 0) {
       children.push(p("Tidak terdapat temuan lintas-entitas."));
     } else {
-      for (const el of renderBlocks(renderFindingsTable(activeCross))) children.push(el);
+      for (const el of renderBlocks(renderFindingsTable(activeCross, opts))) children.push(el);
       children.push(p(renderVerdictLine(activeCross), { bold: true }));
     }
     children.push(h2("Rekapitulasi Kelengkapan per Aspek"));

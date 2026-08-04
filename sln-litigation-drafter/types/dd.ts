@@ -120,6 +120,55 @@ export interface DDEntity {
   isBumn?: boolean;
 }
 
+/**
+ * Which report format to render. Format is a DELIVERABLE choice driven by what
+ * the client needs, not something derivable from the data room — the firm's own
+ * samples use two different shapes for the same kind of work.
+ *
+ * "pendahuluan_led"  — BAB I Pendahuluan, BAB II Profil, then analysis chapters
+ *                      per aspect (as in the SIIB and ITDC reports).
+ * "exec_summary_led" — opens with Ringkasan Eksekutif, then chapters by DOCUMENT
+ *                      CATEGORY with description and analysis fused (as in the
+ *                      SBN divestment reports).
+ * "lut_pasar_modal"  — the capital-markets LUT. Not a free choice: where the
+ *                      target is Tbk and the report feeds a prospectus, HKHSK
+ *                      Annex VII / POJK 7/2017 prescribe the content.
+ * "findings_only"    — exceptions and recommendations, no profile chapter.
+ */
+export type DDReportFormat =
+  | "pendahuluan_led"
+  | "exec_summary_led"
+  | "lut_pasar_modal"
+  | "findings_only";
+
+/**
+ * Presentation options that vary between the firm's own reports, so none of
+ * them can be hardcoded.
+ *
+ * riskColumn deserves a note. The Makarim precedents and the HKHSK standard use
+ * no risk rating at all, and I first read that as a rule and banned it. The
+ * firm's own reports disagree: the SBN divestment report has none, ITDC uses
+ * plain words ("Tinggi" / "Rendah-Sedang"), and SIIB uses bracket codes
+ * ("Sedang [S]"). So it is a per-report choice, and the correct default is the
+ * convention (off) with both house notations available.
+ */
+export interface DDReportOptions {
+  riskColumn: "off" | "kata" | "kode";
+  legalConsequenceColumn: boolean;
+  bilingualHeadings: boolean;
+  includeTimPemeriksa: boolean;
+  /** Per-chapter "Implikasi terhadap <transaksi>" sub-section. */
+  transactionImplications: boolean;
+}
+
+export const DD_DEFAULT_REPORT_OPTIONS: DDReportOptions = {
+  riskColumn: "off",
+  legalConsequenceColumn: true,
+  bilingualHeadings: false,
+  includeTimPemeriksa: false,
+  transactionImplications: false,
+};
+
 // Fields a report needs that cannot be inferred from the data room.
 export interface DDReportMeta {
   matterRef: string;         // firm matter / reference number
@@ -143,6 +192,9 @@ export interface DDTransaction {
   entities: DDEntity[];
   checklistVersion: string;
   reportMeta?: DDReportMeta; // absent = builder falls back to placeholders
+  /** Absent = "pendahuluan_led", preserving the behaviour of existing sessions. */
+  reportFormat?: DDReportFormat;
+  reportOptions?: DDReportOptions;
 }
 
 /**
