@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dedupeDeeds, normaliseMarkers, shortenCapitalBasis } from "@/lib/dd/narrative";
+import { citationNotes, dedupeDeeds, normaliseMarkers, shortenCapitalBasis } from "@/lib/dd/narrative";
 import type { DDDeedRef } from "@/types/dd";
 
 // Every case below is taken from the 2026-08-03 live run against the real data
@@ -118,5 +118,67 @@ describe("normaliseMarkers", () => {
   it("normalises every occurrence, not just the first", () => {
     const out = normaliseMarkers("a [TIDAK DITEMUKAN] b [TIDAK DITEMUKAN — x] c");
     expect(out).toBe("a [DOKUMEN TIDAK TERSEDIA] b [DOKUMEN TIDAK TERSEDIA] c");
+  });
+});
+
+// A reference number the report states must be findable in the examined documents.
+// Only a number found NOWHERE is reported: one traced to another examined document
+// is legitimate, since a deed's Menkumham decree number is routinely read off a
+// later shareholder register rather than off the deed itself.
+describe("citationNotes", () => {
+  const deed = (over: Partial<DDDeedRef> = {}): DDDeedRef => ({
+    number: "16", dateISO: "2009-04-15", notary: "", purpose: "Pendirian",
+    menkumhamRef: "", registrationRef: "", bnriRef: "",
+    sourceFile: "akta16.pdf", verbatim: "", ...over,
+  });
+
+  const corpus = (own: string, other?: string) => {
+    const m = new Map<string, string>([["akta16.pdf", own]]);
+    if (other) m.set("dps.pdf", other);
+    return m;
+  };
+
+  it("says nothing when the reference is in the deed's own document", () => {
+    const out = citationNotes(
+      [deed({ menkumhamRef: "AHU-27282.AH.01.01.Tahun 2009" })],
+      corpus("Akta 16 disahkan AHU-27282.AH.01.01.Tahun 2009")
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("says nothing when the reference is in another examined document", () => {
+    const out = citationNotes(
+      [deed({ menkumhamRef: "AHU-27282.AH.01.01.Tahun 2009" })],
+      corpus("Akta Pendirian Nomor 16", "riwayat: AHU-27282.AH.01.01.Tahun 2009")
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("raises a note naming each reference found nowhere", () => {
+    const out = citationNotes(
+      [deed({ menkumhamRef: "AHU-99999.AH.01.02.TAHUN 2019", bnriRef: "BNRI No. 4321 Tambahan 8765" })],
+      corpus("Akta Pendirian Nomor 16 tanggal 15 April 2009")
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].anchor).toBe("anggaran_dasar");
+    expect(out[0].text).toContain("AHU-99999.AH.01.02.TAHUN 2019");
+    expect(out[0].text).toContain("BNRI No. 4321 Tambahan 8765");
+    expect(out[0].text).toContain("Akta No. 16");
+    expect(out[0].text).toContain("wajib diverifikasi");
+  });
+
+  it("ignores empty links rather than reporting them as untraceable", () => {
+    expect(citationNotes([deed()], corpus("apa pun"))).toEqual([]);
+  });
+
+  it("reports per deed, so several bad deeds give several notes", () => {
+    const out = citationNotes(
+      [
+        deed({ number: "16", menkumhamRef: "AHU-11111.AH.01.02.TAHUN 2011" }),
+        deed({ number: "17", menkumhamRef: "AHU-22222.AH.01.02.TAHUN 2012" }),
+      ],
+      corpus("tidak memuat rujukan apa pun")
+    );
+    expect(out).toHaveLength(2);
   });
 });

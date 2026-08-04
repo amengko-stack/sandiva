@@ -165,3 +165,38 @@ export function checkCitationLinks(
 export function isUngrounded(v: DDGroundingVerdict): boolean {
   return v === "not_found" || v === "source_missing";
 }
+
+/**
+ * Where a citation number can actually be traced to.
+ *
+ * "own"    the number appears in the document the report attributes it to
+ * "other"  it appears elsewhere in the examined corpus but not in that document —
+ *          mis-attributed, not invented
+ * "absent" it appears nowhere in the examined documents
+ *
+ * The three-way distinction matters and a two-way one would be unfair: a deed's
+ * Menkumham decree number is often legitimately read off a LATER document — a
+ * shareholder register reciting the deed history, say — rather than off the deed
+ * itself. Reporting that as fabrication would be wrong.
+ */
+export type DDCitationTrace = "own" | "other" | "absent";
+
+const digits = (s: string) => normaliseForMatch(s).replace(/[^a-z0-9]/g, "");
+
+export function traceCitation(
+  value: string,
+  ownDocText: string | undefined,
+  // An array, not an Iterable: tsconfig has no downlevelIteration, so iterating
+  // an Iterable here is a compile error (TS2802).
+  corpus: string[]
+): DDCitationTrace {
+  const needle = digits(value);
+  // Short reference-like strings match by accident; require real specificity.
+  if (needle.length < 6) return "absent";
+  if (ownDocText !== undefined && digits(ownDocText).indexOf(needle) !== -1) return "own";
+  for (let i = 0; i < corpus.length; i++) {
+    if (digits(corpus[i]).indexOf(needle) !== -1) return "other";
+  }
+  return "absent";
+}
+

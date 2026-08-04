@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
+import { traceCitation } from "@/lib/dd/grounding";
 import { DD_DATA_FRAMING } from "@/lib/dd/prompts";
 import type {
   DDCapitalEntry,
@@ -225,6 +226,47 @@ export function dedupeDeeds(deeds: DDDeedRef[]): DDDeedRef[] {
   return order.map((k) => byKey.get(k) as DDDeedRef);
 }
 
+
+/**
+ * Turn untraceable citation numbers into notes, so a reference the report states
+ * cannot silently be one nobody can find in the documents.
+ *
+ * Only "absent" is reported. A number traced to another examined document is
+ * legitimate — a deed's Menkumham decree number is routinely read off a later
+ * shareholder register rather than off the deed itself — and flagging that would
+ * be a false accusation.
+ */
+export function citationNotes(
+  deeds: DDDeedRef[],
+  contentByFile: Map<string, string>
+): DDNarrativeNote[] {
+  const corpus = Array.from(contentByFile.values());
+  const out: DDNarrativeNote[] = [];
+  for (const d of deeds) {
+    const own = d.sourceFile ? contentByFile.get(d.sourceFile) : undefined;
+    const links: { label: string; value: string }[] = [
+      { label: "nomor keputusan Menteri", value: d.menkumhamRef },
+      { label: "nomor pendaftaran Daftar Perseroan", value: d.registrationRef },
+      { label: "nomor Berita Negara", value: d.bnriRef },
+    ];
+    const absent = links
+      .filter((l) => l.value.trim() !== "")
+      .filter((l) => traceCitation(l.value, own, corpus) === "absent")
+      .map((l) => `${l.label} (${l.value})`);
+    if (absent.length === 0) continue;
+    out.push({
+      anchor: "anggaran_dasar",
+      text:
+        `Rujukan berikut yang dicantumkan untuk Akta No. ${d.number}` +
+        `${d.dateISO ? ` tanggal ${d.dateISO}` : ""} tidak dapat ditemukan dalam dokumen mana pun yang ` +
+        `diperiksa: ${absent.join("; ")}. Rujukan tersebut wajib diverifikasi terhadap dokumen aslinya ` +
+        `sebelum diandalkan.`,
+      sourceFile: d.sourceFile || null,
+    });
+  }
+  return out;
+}
+
 export function parseNarrativeResponse(
   raw: string,
   stopReason: string | null,
@@ -365,5 +407,14 @@ export async function extractNarrativeSectionI(
     messages: [{ role: "user", content: buildNarrativePrompt({ entityName: args.entityName, docsText }) }],
   });
   const raw = response.content.find((b) => b.type === "text")?.text ?? "";
-  return parseNarrativeResponse(raw, response.stop_reason, { entityId: args.entityId });
+  const narrative = parseNarrativeResponse(raw, response.stop_reason, { entityId: args.entityId });
+
+  // Check the citation chain against the documents before it can be stated as
+  // fact. Deterministic; the text is already here.
+  const deeds = narrative.establishment
+    ? [narrative.establishment].concat(narrative.amendments)
+    : narrative.amendments;
+  const traced = citationNotes(deeds, args.contentByFile);
+  if (traced.length === 0) return narrative;
+  return { ...narrative, notes: narrative.notes.concat(traced) };
 }

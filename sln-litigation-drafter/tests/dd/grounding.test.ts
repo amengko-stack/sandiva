@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   checkCitationLinks, checkQuote, isUngrounded, normaliseForMatch,
+  traceCitation,
 } from "@/lib/dd/grounding";
 
 // The requirement: what the report says about a document must actually be in that
@@ -116,5 +117,41 @@ describe("normaliseForMatch", () => {
     expect(normaliseForMatch("“kutipan”")).toBe('"kutipan"');
     // Word order is NOT normalised — a reordered sentence is not the same quote.
     expect(normaliseForMatch("nomor 16 akta")).not.toBe(normaliseForMatch("akta nomor 16"));
+  });
+});
+
+// A deed's Menkumham decree number is often legitimately read off a LATER
+// document — a shareholder register reciting the deed history — rather than off
+// the deed itself. A two-way check would report that as fabrication, which would
+// be wrong. Hence three outcomes.
+describe("traceCitation", () => {
+  const DEED = "Akta Nomor 16 tanggal 15 April 2009 dibuat di hadapan Musa Muamarta, S.H.";
+  const DPS = "Akta Nomor 16 telah disahkan berdasarkan Keputusan AHU-27282.AH.01.01.Tahun 2009.";
+
+  it("traces a number to its own document", () => {
+    expect(traceCitation("Akta Nomor 16", DEED, [DEED, DPS])).toBe("own");
+  });
+
+  it("traces a number found only elsewhere to the other document, not to fabrication", () => {
+    expect(traceCitation("AHU-27282.AH.01.01.Tahun 2009", DEED, [DEED, DPS])).toBe("other");
+  });
+
+  it("reports a number found nowhere as absent", () => {
+    expect(traceCitation("AHU-99999.AH.01.02.TAHUN 2019", DEED, [DEED, DPS])).toBe("absent");
+  });
+
+  it("matches despite the spacing and punctuation extraction inserts", () => {
+    expect(traceCitation("AHU 27282 . AH.01.01 Tahun 2009", undefined, [DPS])).toBe("other");
+  });
+
+  // Short strings collide by accident, which would make the check worse than none.
+  it("refuses to judge a reference too short to be specific", () => {
+    expect(traceCitation("16", DEED, [DEED])).toBe("absent");
+    expect(traceCitation("", DEED, [DEED])).toBe("absent");
+  });
+
+  it("handles an absent own-document without crediting the corpus for it", () => {
+    expect(traceCitation("Musa Muamarta", undefined, [DEED])).toBe("other");
+    expect(traceCitation("Musa Muamarta", undefined, [])).toBe("absent");
   });
 });
