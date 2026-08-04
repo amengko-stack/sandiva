@@ -3,13 +3,55 @@
 import { useState } from "react";
 import { useDD } from "@/context/DDContext";
 import { DD_TRANSACTION_TYPES } from "@/config/ddTransactionTypes";
-import type { DDEntity, DDReportMeta, DDTransaction, DDTransactionType } from "@/types/dd";
+import type {
+  DDEntity,
+  DDReportFormat,
+  DDReportMeta,
+  DDReportOptions,
+  DDTransaction,
+  DDTransactionType,
+} from "@/types/dd";
+import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
 import { slugifyEntityName, uniqueEntityIds } from "@/lib/dd/entity-ids";
 import { resolveRegime, regimeLayerLabel } from "@/lib/dd/regime";
 
 const input: React.CSSProperties = { padding: 8, border: "1px solid var(--border-color)", borderRadius: 6, width: "100%", background: "var(--bg-surface)", color: "var(--text-primary)" };
 const helpText: React.CSSProperties = { fontSize: 12, color: "var(--text-muted)", marginTop: 2 };
 const fieldset: React.CSSProperties = { border: "1px solid var(--border-color)", borderRadius: 8, padding: 12, display: "grid", gap: 10 };
+
+const DEFAULT_REPORT_FORMAT: DDReportFormat = "pendahuluan_led";
+
+const REPORT_FORMATS: { id: DDReportFormat; label: string; help: string }[] = [
+  {
+    id: "pendahuluan_led",
+    label: "Pendahuluan → Profil → Analisis per aspek",
+    help: "Pendahuluan, Profil Perseroan, lalu bab analisis per aspek. Bentuk laporan uji tuntas komprehensif.",
+  },
+  {
+    id: "exec_summary_led",
+    label: "Ringkasan Eksekutif → per kategori dokumen",
+    help: "Dibuka Ringkasan Eksekutif, bab disusun per kategori dokumen dengan uraian dan analisis menyatu.",
+  },
+  {
+    id: "lut_pasar_modal",
+    label: "LUT Pasar Modal (HKHSK Annex VII / POJK 7/2017)",
+    help: "Laporan Uji Tuntas pasar modal: sebelas area pemeriksaan wajib. Untuk target Perusahaan Terbuka yang laporannya menjadi bagian prospektus.",
+  },
+  {
+    id: "findings_only",
+    label: "Hanya temuan & rekomendasi",
+    help: "Hanya temuan dan rekomendasi, tanpa bab profil. Untuk tinjauan cepat.",
+  },
+];
+
+const warningBox: React.CSSProperties = {
+  border: "1px solid var(--error)",
+  borderRadius: 8,
+  padding: 10,
+  background: "var(--bg-critique)",
+  color: "var(--text-primary)",
+  fontSize: 13,
+};
 
 const DEFAULT_REPORT_META: DDReportMeta = {
   matterRef: "",
@@ -35,9 +77,18 @@ export default function DDStage1Setup() {
   const [busy, setBusy] = useState<string | null>(null);
   const [reportMeta, setReportMeta] = useState<DDReportMeta>(t?.reportMeta ?? DEFAULT_REPORT_META);
   const [showReportMeta, setShowReportMeta] = useState(false);
+  const [reportFormat, setReportFormat] = useState<DDReportFormat>(t?.reportFormat ?? DEFAULT_REPORT_FORMAT);
+  const [reportOptions, setReportOptions] = useState<DDReportOptions>(t?.reportOptions ?? DD_DEFAULT_REPORT_OPTIONS);
+  const [showReportOptions, setShowReportOptions] = useState(false);
 
   const patchReportMeta = (patch: Partial<DDReportMeta>) =>
     setReportMeta((rm) => ({ ...rm, ...patch }));
+
+  const patchReportOptions = (patch: Partial<DDReportOptions>) =>
+    setReportOptions((ro) => ({ ...ro, ...patch }));
+
+  const anyEntityTbk = entities.some((e) => e.listingStatus === "tbk");
+  const showTbkFormatWarning = anyEntityTbk && reportFormat !== "lut_pasar_modal";
 
   const addEntity = () =>
     setEntities((es) => [...es, { id: `e${es.length + 1}`, name: "", role: "target", dataRoomPath: "", files: [] }]);
@@ -73,6 +124,8 @@ export default function DDStage1Setup() {
       id: state.sessionId, name: name.trim(), type, clientRole,
       cutoffDateISO: cutoff, entities: uniqueEntities, checklistVersion: "",
       reportMeta,
+      ...(reportFormat !== DEFAULT_REPORT_FORMAT ? { reportFormat } : {}),
+      ...(JSON.stringify(reportOptions) !== JSON.stringify(DD_DEFAULT_REPORT_OPTIONS) ? { reportOptions } : {}),
     };
     dispatch({ type: "SET_TRANSACTION", transaction });
     dispatch({ type: "SET_STAGE", stage: 2 });
@@ -234,6 +287,134 @@ export default function DDStage1Setup() {
             <label htmlFor="signatoryTitle">Jabatan penandatangan
               <input style={input} id="signatoryTitle" type="text" value={reportMeta.signatoryTitle} onChange={(ev) => patchReportMeta({ signatoryTitle: ev.target.value })} />
             </label>
+          </div>
+        )}
+      </div>
+
+      <div style={fieldset}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Format laporan</div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {REPORT_FORMATS.map((f) => (
+            <div key={f.id}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                <input
+                  type="radio"
+                  name="reportFormat"
+                  id={`reportFormat-${f.id}`}
+                  checked={reportFormat === f.id}
+                  onChange={() => setReportFormat(f.id)}
+                />
+                <span>{f.label}</span>
+              </label>
+              <div style={{ ...helpText, marginLeft: 22 }}>{f.help}</div>
+            </div>
+          ))}
+        </div>
+
+        {showTbkFormatWarning && (
+          <div style={warningBox}>
+            Setidaknya satu perusahaan berstatus Perusahaan Terbuka (Tbk). Standar profesi (HKHSK Annex
+            VII / POJK 7/2017) mensyaratkan format LUT Pasar Modal bagi laporan uji tuntas atas Perusahaan
+            Terbuka yang menjadi bagian prospektus. Bila laporan ini akan digunakan untuk prospektus,
+            pilih format tersebut secara sengaja; bila ini merupakan tinjauan internal, format lain tetap
+            dapat dipilih.
+          </div>
+        )}
+      </div>
+
+      <div style={fieldset}>
+        <button type="button" onClick={() => setShowReportOptions((v) => !v)} style={{ textAlign: "left", fontWeight: 600 }}>
+          {showReportOptions ? "▾" : "▸"} Opsi presentasi laporan
+        </button>
+
+        {showReportOptions && (
+          <div style={{ display: "grid", gap: 10 }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>Kolom risiko pada tabel temuan</div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="riskColumn"
+                    id="riskColumn-off"
+                    checked={reportOptions.riskColumn === "off"}
+                    onChange={() => patchReportOptions({ riskColumn: "off" })}
+                  />
+                  Tanpa kolom risiko
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="riskColumn"
+                    id="riskColumn-kata"
+                    checked={reportOptions.riskColumn === "kata"}
+                    onChange={() => patchReportOptions({ riskColumn: "kata" })}
+                  />
+                  Tinggi / Sedang / Rendah
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="riskColumn"
+                    id="riskColumn-kode"
+                    checked={reportOptions.riskColumn === "kode"}
+                    onChange={() => patchReportOptions({ riskColumn: "kode" })}
+                  />
+                  Tinggi [T] / Sedang [S] / Rendah [R]
+                </label>
+              </div>
+              <div style={helpText}>
+                Konvensi LDD Indonesia dan standar profesi tidak menggunakan peringkat risiko — laporan
+                selalu memuat kesimpulan tiga-keadaan (memenuhi / memenuhi dengan catatan / tidak
+                memenuhi). Kolom ini tersedia karena sebagian klien tetap mengharapkannya.
+              </div>
+            </div>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                id="legalConsequenceColumn"
+                checked={reportOptions.legalConsequenceColumn}
+                onChange={(ev) => patchReportOptions({ legalConsequenceColumn: ev.target.checked })}
+              />
+              Kolom Konsekuensi Hukum pada tabel temuan
+            </label>
+
+            <div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  id="bilingualHeadings"
+                  checked={reportOptions.bilingualHeadings}
+                  onChange={(ev) => patchReportOptions({ bilingualHeadings: ev.target.checked })}
+                />
+                Judul bab bilingual, mis. IZIN-IZIN USAHA (LICENSES AND PERMITS)
+              </label>
+              <div style={helpText}>Hanya berlaku pada format Ringkasan Eksekutif, yang judul babnya memuat padanan bahasa Inggris.</div>
+            </div>
+
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                id="includeTimPemeriksa"
+                checked={reportOptions.includeTimPemeriksa}
+                onChange={(ev) => patchReportOptions({ includeTimPemeriksa: ev.target.checked })}
+              />
+              Tambahkan sub-bagian Tim Pemeriksa pada Pendahuluan
+            </label>
+
+            <div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  id="transactionImplications"
+                  checked={reportOptions.transactionImplications}
+                  onChange={(ev) => patchReportOptions({ transactionImplications: ev.target.checked })}
+                />
+                Tambahkan sub-bagian Implikasi Transaksi pada setiap bab kategori
+              </label>
+              <div style={helpText}>Berlaku pada format Ringkasan Eksekutif.</div>
+            </div>
           </div>
         )}
       </div>
