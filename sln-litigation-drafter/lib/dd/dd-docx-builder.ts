@@ -16,8 +16,17 @@ import { chapterDisclaimer, chapterPendahuluan } from "@/lib/dd/report-chapters"
 import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
 import type {
   DDAspectId, DDConsolidated, DDEntity, DDEntityResult, DDFinding, DDGapItem, DDRegime,
-  DDReportBlock, DDReportMeta, DDReportOptions, DDTransaction,
+  DDReportBlock, DDReportMeta, DDReportOptions, DDSeverity, DDTransaction,
 } from "@/types/dd";
+
+/** Orders findings most-serious-first; never printed (mirrors findings-render.ts's private copy). */
+const SEVERITY_ORDER: Record<DDSeverity, number> = { kritis: 0, material: 1, minor: 2 };
+
+/** Strips the trailing "(ENGLISH GLOSS)" some chapter titles carry, when bilingualHeadings is off. */
+function chapterTitle(title: string, opts: DDReportOptions): string {
+  if (opts.bilingualHeadings) return title;
+  return title.replace(/\s*\([^()]*\)\s*$/, "");
+}
 
 // Same defect class lib/docx-builder.ts guards against — control chars corrupt Word XML.
 // Kept local so the litigation builder stays untouched.
@@ -533,6 +542,181 @@ function renderKesimpulanChapter(
   }
 }
 
+/**
+ * BAB RINGKASAN EKSEKUTIF (exec_summary_led / findings_only). No model call: built
+ * entirely from data already gathered elsewhere in the pipeline. The chapter has
+ * no numbered subs (planChapters gives it an empty subs array), so content runs
+ * as plain paragraphs/tables under the BAB heading.
+ */
+function renderRingkasanChapter(
+  r: DDEntityResult, transaction: DDTransaction, regime: DDRegime, plan: DDChapterPlan[],
+  opts: DDReportOptions, out: (Paragraph | Table)[]
+): void {
+  const entity = r.entity;
+  const statusLine =
+    entity.listingStatus === "tbk" ? "Perusahaan Terbuka (Tbk)" : "Perseroan Terbatas Tertutup (non-Tbk)";
+  const parentLine = regime.parentTbkName
+    ? `, dengan induk utama ${regime.parentTbkName} yang berstatus Perusahaan Terbuka`
+    : "";
+  out.push(
+    p(
+      `Laporan ini disusun sehubungan dengan rencana ${transactionLabel(transaction.type).toLowerCase()} atas ` +
+        `${entity.name}, yang berstatus ${statusLine}${parentLine}. Klien bertindak sebagai ${transaction.clientRole} ` +
+        `dalam rencana transaksi tersebut.`
+    )
+  );
+  out.push(p(`Tanggal Akhir Uji Tuntas Laporan ini adalah ${formatIndonesianDate(transaction.cutoffDateISO)}.`));
+
+  const rep = r.extractReport;
+  if (rep) {
+    out.push(
+      p(
+        `Cakupan ekstraksi dokumen: dari ${rep.files.length} dokumen yang disediakan, ${rep.processed} berhasil ` +
+          `diekstrak dan diperiksa` +
+          (rep.ocrRequired ? `, ${rep.ocrRequired} memerlukan pengenalan karakter optis (OCR)` : "") +
+          (rep.skipped ? `, ${rep.skipped} tidak dapat diproses` : "") +
+          "."
+      )
+    );
+  }
+
+  const aspectChapters = plan.filter(
+    (c) => c.aspectIds.length > 0 && c.kind !== "pasar_modal" && c.kind !== "bumn"
+  );
+  if (aspectChapters.length > 0) {
+    out.push(p("Ringkasan penilaian per bab adalah sebagai berikut:"));
+    const rows = aspectChapters.map((c) => {
+      const findings = findingsForChapter(r, c);
+      const verdict = deriveVerdict(findings.map((f) => ({ severity: f.severity, status: f.status })));
+      return [`${c.numeral}. ${chapterTitle(c.title, opts)}`, verdictLabel(verdict), String(findings.length)];
+    });
+    out.push(simpleTable(["Bab", "Penilaian", "Jumlah Temuan"], rows));
+  }
+
+  const active = r.findings.filter((f) => f.status !== "dismissed");
+  if (active.length > 0) {
+    const ordered = [...active].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+    const top = ordered.slice(0, 3).map((f) => f.editedProblem ?? f.problem);
+    out.push(p(`Hal yang paling memerlukan perhatian antara lain: ${top.join("; ")}.`));
+  }
+
+  const overall = deriveVerdict(r.findings.map((f) => ({ severity: f.severity, status: f.status })));
+  out.push(
+    p(
+      `Secara keseluruhan, berdasarkan Dokumen Yang Diperiksa dan dengan memperhatikan seluruh asumsi dan ` +
+        `pembatasan dalam Laporan ini, ${entity.name} ${verdictLabel(overall)}.`,
+      { bold: true }
+    )
+  );
+}
+
+/**
+ * BAB sell-side transaction chapters (transaksi_jual). These chapters are written
+ * for what the SELLER must prove or disclose, so an unanalysed point reads as a
+ * seller confirmation obligation rather than an open question about the target.
+ */
+function renderTransaksiJualChapter(
+  chNo: number, chapter: DDChapterPlan, r: DDEntityResult, out: (Paragraph | Table)[], opts: DDReportOptions
+): void {
+  const analyses = r.analyses ?? [];
+  chapter.subs.forEach((sub, i) => {
+    out.push(h2(`${subNumber(chNo, i)} ${sub.title}`));
+    const analysis = analyses.find((a) => a.subsectionTitle === sub.title);
+    if (!analysis) {
+      out.push(
+        p(
+          `Penjual wajib mengonfirmasi hal ini sehubungan dengan ${sub.title.toLowerCase()}, karena Dokumen Yang ` +
+            `Diperiksa belum memuat keterangan yang cukup untuk membuktikannya. Dokumen yang diperlukan dari ` +
+            `Penjual: konfirmasi tertulis dan/atau dokumen pendukung mengenai ${sub.title.toLowerCase()}.`
+        )
+      );
+      return;
+    }
+    for (const para of analysis.analysis) out.push(p(para));
+    if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+
+    const subFindings = r.findings.filter((f) => f.status !== "dismissed" && f.subsectionTitle === sub.title);
+    for (const el of renderBlocks(renderFindingsTable(subFindings, opts))) out.push(el);
+
+    if (analysis.verification.length > 0) {
+      out.push(p("Hal yang perlu dikonfirmasi oleh Penjual:", { bold: true }));
+      for (const item of analysis.verification) {
+        out.push(
+          new Paragraph({
+            numbering: { reference: "bullets", level: 0 },
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            indent: { left: 1080, hanging: 360 },
+            children: [t(item)],
+          })
+        );
+      }
+    }
+  });
+}
+
+/** BAB TEMUAN (findings_only): bare findings table plus the verdict line, nothing else. */
+function renderTemuanChapter(
+  chNo: number, chapter: DDChapterPlan, r: DDEntityResult, out: (Paragraph | Table)[], opts: DDReportOptions
+): void {
+  const chapterFindings = findingsForChapter(r, chapter);
+  chapter.subs.forEach((sub, i) => {
+    out.push(h2(`${subNumber(chNo, i)} ${sub.title}`));
+    const blocks = renderFindingsTable(chapterFindings, opts);
+    if (blocks.length === 0) {
+      out.push(p("Tidak terdapat temuan pada aspek ini."));
+    } else {
+      for (const el of renderBlocks(blocks)) out.push(el);
+    }
+    out.push(p(renderVerdictLine(chapterFindings), { bold: true }));
+  });
+}
+
+/**
+ * BAB REKOMENDASI DAN TINDAK LANJUT (findings_only): a single de-duplicated
+ * recommendation table across every entity in the transaction, not just the
+ * entity currently being rendered — the recommendations are transaction-wide.
+ */
+function renderRekomendasiChapter(results: DDEntityResult[], out: (Paragraph | Table)[]): void {
+  const seen = new Map<string, string>(); // suggestedFix -> problem text (first occurrence)
+  for (const res of results) {
+    for (const f of res.findings) {
+      if (f.status === "dismissed") continue;
+      if (!seen.has(f.suggestedFix)) seen.set(f.suggestedFix, f.editedProblem ?? f.problem);
+    }
+  }
+  const entries = Array.from(seen.entries());
+  if (entries.length === 0) {
+    out.push(p("Tidak terdapat rekomendasi tindak lanjut yang timbul dari uji tuntas ini."));
+    return;
+  }
+  out.push(
+    simpleTable(
+      ["No.", "Hal", "Rekomendasi"],
+      entries.map(([fix, problem], i) => [String(i + 1), problem, fix])
+    )
+  );
+  const MARKS = ["[PERLU VERIFIKASI]", "[DOKUMEN TIDAK TERSEDIA]"];
+  const flagged = entries.filter(
+    ([fix, problem]) => MARKS.some((m) => problem.indexOf(m) !== -1 || fix.indexOf(m) !== -1)
+  );
+  out.push(
+    p(
+      flagged.length > 0
+        ? `Sejumlah ${flagged.length} dari ${entries.length} rekomendasi di atas berkaitan dengan hal yang ditandai ` +
+          `"[PERLU VERIFIKASI]" atau "[DOKUMEN TIDAK TERSEDIA]" dan memerlukan tindak lanjut lebih dahulu sebelum ` +
+          `transaksi dilaksanakan.`
+        : `Tidak terdapat rekomendasi di atas yang bergantung pada hal yang ditandai "[PERLU VERIFIKASI]" atau ` +
+          `"[DOKUMEN TIDAK TERSEDIA]".`
+    )
+  );
+}
+
+/** Exhaustiveness guard: a chapter kind reaching here would otherwise be silently skipped. */
+function assertNeverChapter(kind: never): never {
+  throw new Error(`Jenis bab tidak dikenal pada dd-docx-builder: ${JSON.stringify(kind)}`);
+}
+
 export async function buildDdReportDocx(args: {
   transaction: DDTransaction;
   results: DDEntityResult[];
@@ -616,6 +800,9 @@ export async function buildDdReportDocx(args: {
       transactionType: transaction.type,
       regime,
       presentAspects: presentAspectsFor(r),
+      format: transaction.reportFormat,
+      clientRole: transaction.clientRole,
+      transactionImplications: opts.transactionImplications,
     });
 
     if (multiEntity) {
@@ -630,59 +817,98 @@ export async function buildDdReportDocx(args: {
       if (chapter.kind === "lampiran" || chapter.kind === "disclaimer") continue; // rendered once, globally, below
       chNo++;
 
-      children.push(h1(`BAB ${chapter.numeral} — ${chapter.title}`));
+      children.push(h1(`BAB ${chapter.numeral} — ${chapterTitle(chapter.title, opts)}`));
 
-      if (chapter.kind === "pendahuluan") {
-        const docCategories = docCategoriesFor(r);
-        const contents = chapterPendahuluan({
-          transaction, entity: r.entity, regime, meta,
-          presentAspects: presentAspectsFor(r), docCategories,
-        });
-        contents.forEach((content, i) => {
-          children.push(h2(`${subNumber(chNo, i)} ${content.title}`));
-          for (const el of renderBlocks(content.blocks)) children.push(el);
-        });
-      } else if (chapter.kind === "profil") {
-        if (r.narrative) {
-          const blocks = fixStatusRow(renderNarrativeSectionI(r.narrative, r.entity.name), r.entity, regime);
-          let subIdx = 0;
-          for (const b of blocks) {
-            if (b.kind === "heading" && subIdx < chapter.subs.length) {
-              children.push(h2(`${subNumber(chNo, subIdx)} ${b.text}`));
-              subIdx++;
-            } else {
-              for (const el of renderBlocks([b])) children.push(el);
-            }
+      switch (chapter.kind) {
+        case "pendahuluan": {
+          const docCategories = docCategoriesFor(r);
+          const contents = chapterPendahuluan({
+            transaction, entity: r.entity, regime, meta,
+            presentAspects: presentAspectsFor(r), docCategories,
+          });
+          contents.forEach((content, i) => {
+            children.push(h2(`${subNumber(chNo, i)} ${content.title}`));
+            for (const el of renderBlocks(content.blocks)) children.push(el);
+          });
+          if (opts.includeTimPemeriksa) {
+            children.push(h2(`${subNumber(chNo, contents.length)} Tim Pemeriksa`));
+            children.push(
+              p(
+                `Pemeriksaan ini dilaksanakan di bawah tanggung jawab ${meta.signatoryName}, ${meta.signatoryTitle}, ` +
+                  `dengan susunan tim pemeriksa sebagai berikut: [NAMA TIM].`
+              )
+            );
           }
-        } else {
+          break;
+        }
+        case "profil": {
+          if (r.narrative) {
+            const blocks = fixStatusRow(renderNarrativeSectionI(r.narrative, r.entity.name), r.entity, regime);
+            let subIdx = 0;
+            for (const b of blocks) {
+              if (b.kind === "heading" && subIdx < chapter.subs.length) {
+                children.push(h2(`${subNumber(chNo, subIdx)} ${b.text}`));
+                subIdx++;
+              } else {
+                for (const el of renderBlocks([b])) children.push(el);
+              }
+            }
+          } else {
+            children.push(
+              p(
+                "Profil Perseroan tidak dapat disusun karena dokumen korporasi Perseroan belum diperiksa dalam uji " +
+                  "tuntas ini."
+              )
+            );
+          }
+          break;
+        }
+        case "analisis_aspek":
+        case "kategori":
+          renderAnalisisAspekChapter(chNo, chapter, r, children, opts);
+          break;
+        case "transaksi_jual":
+          renderTransaksiJualChapter(chNo, chapter, r, children, opts);
+          break;
+        case "transaksi":
+          renderTransaksiChapter(chNo, chapter.subs, transaction.type, children);
+          break;
+        case "pasar_modal":
+          renderPasarModalChapter(chNo, chapter.subs, regime, r.entity, transaction.type, children);
+          break;
+        case "bumn": {
+          children.push(h2(`${subNumber(chNo, 0)} ${chapter.subs[0].title}`));
           children.push(
             p(
-              "Profil Perseroan tidak dapat disusun karena dokumen korporasi Perseroan belum diperiksa dalam uji " +
-                "tuntas ini."
+              `${r.entity.name} berada dalam lingkup grup Badan Usaha Milik Negara. Butir-butir di bawah ini ` +
+                `disajikan sebagai pertanyaan yang wajib dijawab oleh konsultan hukum penanggung jawab. Peraturan ` +
+                `Badan Usaha Milik Negara yang relevan belum diverifikasi kekiniannya untuk keperluan Laporan ini, ` +
+                `sehingga Laporan ini tidak menyimpulkannya.`
             )
           );
+          const bumnObligations = obligationsForLayer("bumn", transaction.type);
+          children.push(obligationTable(bumnObligations));
+          for (const para of obligationNotes(bumnObligations)) children.push(para);
+          break;
         }
-      } else if (chapter.kind === "analisis_aspek") {
-        renderAnalisisAspekChapter(chNo, chapter, r, children, opts);
-      } else if (chapter.kind === "transaksi") {
-        renderTransaksiChapter(chNo, chapter.subs, transaction.type, children);
-      } else if (chapter.kind === "pasar_modal") {
-        renderPasarModalChapter(chNo, chapter.subs, regime, r.entity, transaction.type, children);
-      } else if (chapter.kind === "bumn") {
-        children.push(h2(`${subNumber(chNo, 0)} ${chapter.subs[0].title}`));
-        children.push(
-          p(
-            `${r.entity.name} berada dalam lingkup grup Badan Usaha Milik Negara. Butir-butir di bawah ini ` +
-              `disajikan sebagai pertanyaan yang wajib dijawab oleh konsultan hukum penanggung jawab. Peraturan ` +
-              `Badan Usaha Milik Negara yang relevan belum diverifikasi kekiniannya untuk keperluan Laporan ini, ` +
-              `sehingga Laporan ini tidak menyimpulkannya.`
-          )
-        );
-        const bumnObligations = obligationsForLayer("bumn", transaction.type);
-        children.push(obligationTable(bumnObligations));
-        for (const para of obligationNotes(bumnObligations)) children.push(para);
-      } else if (chapter.kind === "kesimpulan") {
-        renderKesimpulanChapter(chNo, chapter.subs, plan, r, children);
+        case "kesimpulan":
+          renderKesimpulanChapter(chNo, chapter.subs, plan, r, children);
+          break;
+        case "ringkasan":
+          renderRingkasanChapter(r, transaction, regime, plan, opts, children);
+          break;
+        case "temuan":
+          renderTemuanChapter(chNo, chapter, r, children, opts);
+          break;
+        case "rekomendasi":
+          renderRekomendasiChapter(results, children);
+          break;
+        default:
+          // lampiran and disclaimer are filtered out above and render once
+          // globally, so the narrowed type excludes them here. Any OTHER new
+          // chapter kind fails to compile rather than silently vanishing from
+          // the document — the defect this switch exists to prevent.
+          assertNeverChapter(chapter.kind);
       }
     }
     children.push(pageBreak());
