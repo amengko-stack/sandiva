@@ -8,6 +8,7 @@ import { analyzeAspect, promoteDealTriggeredCells } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
+import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
 import { chapterForAspect, planChapters } from "@/config/ddChapters";
 import type {
   DDAspectId, DDClassifiedDoc, DDExtractionRow, DDFinding, DDGapItem, DDSubsectionAnalysis, DDTransaction,
@@ -138,7 +139,13 @@ export async function POST(req: NextRequest) {
               regime,
               subsections: subsectionsFor(aspectJobs[i].aspectId),
             });
-            aspectFindings[i] = res.findings;
+            // Verify each quote against the document it names, before the finding
+            // can reach the report as fact. Costs nothing: the text is already here.
+            aspectFindings[i] = res.findings.map((f) => {
+              if (!f.anchor || !f.sourceFile) return f;
+              const g = checkQuote(f.anchor, contentByFile.get(f.sourceFile));
+              return { ...f, grounding: { verdict: g.verdict, coverage: g.coverage, note: g.note } };
+            });
             for (const a of res.analyses) aspectAnalyses.push(a);
           } catch (e) {
             // Per-aspect soft-fail: one malformed aspect response must not abort

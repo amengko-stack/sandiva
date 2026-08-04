@@ -1,6 +1,7 @@
 import { deriveVerdict, verdictLabel } from "@/lib/dd/report-boilerplate";
 import type { DDNarrativeBlock } from "@/lib/dd/narrative-render";
 import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
+import { isUngrounded } from "@/lib/dd/grounding";
 import type { DDFinding, DDReportOptions, DDSeverity } from "@/types/dd";
 
 /**
@@ -44,6 +45,23 @@ const RISK_CODE: Record<DDSeverity, string> = {
 
 const NO_DEFECT = "Tidak ada cacat formal";
 
+/**
+ * A finding whose quote was not found in the document it names must not be
+ * presented as established fact. It is MARKED rather than dropped: the model may
+ * have spotted something real and quoted it badly, and discarding it would lose
+ * that, whereas asserting it unmarked would be exactly the invention the report
+ * must avoid. The lawyer decides.
+ */
+const UNVERIFIED_PREFIX = "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN] ";
+
+function problemText(f: DDFinding): string {
+  const base = f.editedProblem ?? f.problem;
+  if (f.grounding && isUngrounded(f.grounding.verdict)) {
+    return UNVERIFIED_PREFIX + base;
+  }
+  return base;
+}
+
 export function riskLabel(severity: DDSeverity, mode: DDReportOptions["riskColumn"]): string {
   if (mode === "kata") return RISK_WORD[severity];
   if (mode === "kode") return RISK_CODE[severity];
@@ -77,7 +95,7 @@ export function renderFindingsTable(
   const rows = ordered.map((f, i) => {
     const row = [
       String(i + 1),
-      f.editedProblem ?? f.problem,
+      problemText(f),
       f.regulationRefs && f.regulationRefs.length > 0 ? f.regulationRefs.join("; ") : NO_DEFECT,
     ];
     if (showRisk) row.push(riskLabel(f.severity, options.riskColumn));
@@ -86,13 +104,28 @@ export function renderFindingsTable(
     return row;
   });
 
-  return [
+  const ungrounded = ordered.filter(
+    (f) => f.grounding && isUngrounded(f.grounding.verdict)
+  ).length;
+
+  const out: DDNarrativeBlock[] = [
     {
       kind: "para",
       text: `Berdasarkan pemeriksaan atas Dokumen Yang Diperiksa, terdapat ${countLabel} yang dilaporkan pada bagian ini. Rincian sebagai berikut:`,
     },
     { kind: "table", headers, rows },
   ];
+
+  if (ungrounded > 0) {
+    out.push({
+      kind: "note",
+      text:
+        `${ungrounded} butir di atas ditandai "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]": kutipan yang ` +
+        `mendasarinya tidak ditemukan dalam dokumen yang dirujuk pada pemeriksaan otomatis. Butir tersebut ` +
+        `belum dapat dinyatakan sebagai fakta dan wajib ditelaah terhadap dokumen aslinya sebelum diandalkan.`,
+    });
+  }
+  return out;
 }
 
 /**

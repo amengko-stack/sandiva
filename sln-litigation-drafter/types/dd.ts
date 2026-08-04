@@ -62,6 +62,18 @@ export type DDConfidence = "tinggi" | "sedang" | "rendah";
 // A provision still in force but reworded is materially different from one
 // that has been repealed, and only the latter should alarm the reader.
 export type DDCurrencyStatus = "current" | "amended" | "superseded" | "unknown";
+
+/**
+ * Whether a quote the report attributes to a document is actually in it. Declared
+ * here so DDFinding can be precisely typed without a cast; the checks live in
+ * lib/dd/grounding.ts.
+ */
+export type DDGroundingVerdict =
+  | "verified"
+  | "paraphrased"
+  | "not_found"
+  | "source_missing"
+  | "no_quote";
 export type DDFindingReviewStatus = "open" | "accepted" | "dismissed" | "edited";
 export type DDCellType = "text" | "date" | "currency" | "number" | "verbatim" | "category" | "boolean";
 
@@ -383,6 +395,13 @@ export interface DDFinding {
   legalConsequence?: string;
   /** Sub-section this finding belongs under; falls back to the chapter's Temuan. */
   subsectionTitle?: string;
+  /**
+   * Whether the anchor quote was actually found in the document it is attributed
+   * to. Checked deterministically after parsing, because nothing previously
+   * verified that a "verbatim quote" was verbatim — or even from that file.
+   * Absent on findings generated in code, which quote nothing.
+   */
+  grounding?: { verdict: DDGroundingVerdict; coverage: number; note: string };
   regulationRefs?: string[];
   currencyStatus?: DDCurrencyStatus;
   currencyNote?: string;

@@ -172,3 +172,55 @@ describe("risk column as a report option", () => {
     expect(rowsOf(withRisk).map((r) => r[col])).toEqual(["Tinggi", "Sedang", "Rendah"]);
   });
 });
+
+// A claim whose quote was not found in the document it names must not reach the
+// report as established fact. It is marked rather than dropped: the model may have
+// spotted something real and quoted it badly, and discarding it would lose that.
+describe("ungrounded findings are marked, not asserted", () => {
+  const g = (verdict: DDFinding["grounding"] extends undefined ? never : NonNullable<DDFinding["grounding"]>["verdict"]) =>
+    ({ verdict, coverage: 0, note: "n" });
+
+  const f = (verdict: NonNullable<DDFinding["grounding"]>["verdict"] | null): DDFinding => ({
+    id: "x", entityId: "e1", aspectId: "perizinan", dimension: "risiko", severity: "material",
+    anchor: "kutipan", sourceFile: "a.pdf", problem: "NIB tidak ditemukan", whyItMatters: "W",
+    suggestedFix: "S", verified: false, status: "open",
+    ...(verdict ? { grounding: g(verdict) } : {}),
+  });
+
+  const cellsOf = (blocks: ReturnType<typeof renderFindingsTable>) => {
+    const t = blocks.find((b) => b.kind === "table");
+    return t && t.kind === "table" ? t.rows.map((r) => r[1]) : [];
+  };
+
+  it("prefixes a finding whose quote was not in the document", () => {
+    expect(cellsOf(renderFindingsTable([f("not_found")]))[0])
+      .toMatch(/^\[TIDAK TERVERIFIKASI TERHADAP DOKUMEN\] NIB tidak ditemukan/);
+  });
+
+  it("prefixes a finding attributed to a document that was never extracted", () => {
+    expect(cellsOf(renderFindingsTable([f("source_missing")]))[0])
+      .toContain("[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]");
+  });
+
+  // A paraphrase came from the document, so the substance stands; only a quote
+  // that is not there at all is unsafe to assert.
+  it("leaves verified, paraphrased, unquotable and unchecked findings unmarked", () => {
+    for (const v of ["verified", "paraphrased", "no_quote"] as const) {
+      expect(cellsOf(renderFindingsTable([f(v)]))[0], v).toBe("NIB tidak ditemukan");
+    }
+    expect(cellsOf(renderFindingsTable([f(null)]))[0]).toBe("NIB tidak ditemukan");
+  });
+
+  it("tells the reader how many are unverified rather than leaving them to spot markers", () => {
+    const blocks = renderFindingsTable([f("not_found"), f("source_missing"), f("verified")]);
+    const note = blocks.find((b) => b.kind === "note");
+    expect(note).toBeDefined();
+    expect(JSON.stringify(note)).toContain("2 butir");
+    expect(JSON.stringify(note)).toContain("wajib ditelaah");
+  });
+
+  it("adds no such note when every finding is grounded", () => {
+    const blocks = renderFindingsTable([f("verified"), f("paraphrased")]);
+    expect(blocks.find((b) => b.kind === "note")).toBeUndefined();
+  });
+});
