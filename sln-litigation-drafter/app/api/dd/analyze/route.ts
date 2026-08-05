@@ -6,6 +6,7 @@ import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { gapToFinding } from "@/lib/dd/gap-engine";
 import { analyzeAspect, promoteDealTriggeredCells } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
+import { carryReviewState } from "@/lib/dd/review-state";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
@@ -68,16 +69,43 @@ export async function POST(req: NextRequest) {
         // aspect loop — referencing it later would hit the temporal dead zone.
         const aspectAnalyses: DDSubsectionAnalysis[] = [];
 
+        // The lawyer's review of the PREVIOUS run, read before anything here
+        // overwrites it. Re-running this stage is the normal path once documents
+        // arrive after the interim report, and it used to discard every dismissal
+        // and every rewording. Carried by id, which is now derived from a finding's
+        // own content rather than its position in the model's output.
+        const priorRaw = await readBlobText(ddKeys.findings(sessionId, entityId));
+        const prior: DDFinding[] = priorRaw ? (JSON.parse(priorRaw) as DDFinding[]) : [];
+        let reviewReported = false;
+
         // Checkpoint after every stage so a worst-case timeout never discards
         // findings already computed (mirrors extract/recheck-ocr's per-batch
         // persistence). JSON.stringify([]) is "[]" — always a non-empty body.
         // Both are checkpointed together: a maxDuration kill runs no catch or
         // finally, so anything not written before the kill is simply lost.
-        const persist = () =>
-          Promise.all([
+        //
+        // The carry happens inside persist, not once at the end, so a checkpoint
+        // written just before a timeout kill also keeps the review rather than
+        // saving a stripped copy over it.
+        const persist = () => {
+          const carried = carryReviewState(findings, prior);
+          findings = carried.findings;
+          if (!reviewReported && (carried.carried > 0 || carried.dropped > 0)) {
+            reviewReported = true;
+            emit(controller, {
+              type: "step",
+              label:
+                `Review sebelumnya dipertahankan: ${carried.carried} temuan` +
+                (carried.dropped > 0
+                  ? `; ${carried.dropped} temuan yang sudah ditelaah tidak lagi muncul pada pemeriksaan ini`
+                  : ""),
+            });
+          }
+          return Promise.all([
             writeBlobText(ddKeys.findings(sessionId, entityId), JSON.stringify(findings)),
             writeBlobText(ddKeys.analyses(sessionId, entityId), JSON.stringify(aspectAnalyses)),
           ]);
+        };
 
         emit(controller, { type: "step", label: "Temuan gap (kelengkapan)" });
         findings.push(...gaps.map(gapToFinding).filter((f): f is DDFinding => f !== null));

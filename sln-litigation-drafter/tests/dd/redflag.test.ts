@@ -13,7 +13,9 @@ describe("parseRedFlagResponse", () => {
     }]});
     const out = parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "perizinan" }).findings;
     expect(out).toHaveLength(1);
-    expect(out[0].id).toBe("e1-risiko-perizinan-0");
+    // Content-derived, not positional: a re-run of the same issue must produce the
+    // same id so the lawyer's review survives it. See tests/dd/review-state.test.ts.
+    expect(out[0].id).toMatch(/^e1-risiko-perizinan-[0-9a-f]{12}$/);
     expect(out[0].dimension).toBe("risiko");
     expect(out[0].status).toBe("open");
     expect(out[0].verified).toBe(false);
