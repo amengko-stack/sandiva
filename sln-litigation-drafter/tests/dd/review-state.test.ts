@@ -173,3 +173,75 @@ describe("carryReviewState", () => {
     expect(twice.carried).toBe(1);
   });
 });
+
+describe("defects Codex found", () => {
+  // Renderers select the problem text with `editedProblem ?? problem`, and "" is not
+  // nullish. Carrying a blank edit would blank the problem column in the client
+  // report while leaving the row, its risk level and its recommendation in place.
+  it("does not carry a blank edit over the fresh problem text", () => {
+    for (const blank of ["", "   ", "\n"]) {
+      const prev = [finding({ id: "a", status: "edited", editedProblem: blank })];
+      const out = carryReviewState([finding({ id: "a", problem: "redaksi model" })], prev);
+      expect(out.findings[0].editedProblem, JSON.stringify(blank)).toBeUndefined();
+      expect(out.findings[0].problem).toBe("redaksi model");
+      // Nor does it claim the status "edited" when nothing was written.
+      expect(out.findings[0].status).toBe("open");
+    }
+  });
+
+  it("still carries a dismissal that happens to have a blank edit", () => {
+    const prev = [finding({ id: "a", status: "dismissed", editedProblem: "  " })];
+    const out = carryReviewState([finding({ id: "a" })], prev);
+    expect(out.findings[0].status).toBe("dismissed");
+    expect(out.findings[0].editedProblem).toBeUndefined();
+  });
+
+  it("trims a real edit rather than storing the padding", () => {
+    const prev = [finding({ id: "a", status: "edited", editedProblem: "  redaksi pengacara  " })];
+    const out = carryReviewState([finding({ id: "a" })], prev);
+    expect(out.findings[0].editedProblem).toBe("redaksi pengacara");
+  });
+});
+
+// Two findings can quote one passage — a deed both unregistered and unpublished.
+// Distinguishing them by arrival order let a dismissal migrate to the other issue
+// the moment the model emitted them the other way round: a review decision landing
+// on an issue nobody had read.
+describe("two findings on one passage", () => {
+  const shared = {
+    entityId: "e1", aspectId: "pendirian_ad" as const, sourceFile: "akta16.pdf",
+    anchor: "Akta Nomor 16 tanggal 15 April 2009",
+  };
+  const unregistered = { ...shared, problem: "Akta belum didaftarkan dalam Daftar Perseroan" };
+  const unpublished = { ...shared, problem: "Akta belum diumumkan dalam Berita Negara" };
+
+  it("gives each a stable id regardless of the order they arrive in", () => {
+    const [a1, b1] = assignModelFindingIds([unregistered, unpublished]);
+    const [b2, a2] = assignModelFindingIds([unpublished, unregistered]);
+    expect(a1).toBe(a2);
+    expect(b1).toBe(b2);
+    expect(a1).not.toBe(b1);
+  });
+
+  it("keeps a dismissal on the issue it was made against after a reorder", () => {
+    const first = assignModelFindingIds([unregistered, unpublished]);
+    const prev = [
+      finding({ id: first[0], problem: unregistered.problem, status: "dismissed" }),
+      finding({ id: first[1], problem: unpublished.problem }),
+    ];
+    // Second run emits them the other way round.
+    const second = assignModelFindingIds([unpublished, unregistered]);
+    const fresh = [
+      finding({ id: second[0], problem: unpublished.problem }),
+      finding({ id: second[1], problem: unregistered.problem }),
+    ];
+    const out = carryReviewState(fresh, prev);
+    expect(out.findings.find((f) => f.problem === unregistered.problem)?.status).toBe("dismissed");
+    expect(out.findings.find((f) => f.problem === unpublished.problem)?.status).toBe("open");
+  });
+
+  it("still separates records identical in both passage and problem", () => {
+    const ids = assignModelFindingIds([unregistered, unregistered]);
+    expect(new Set(ids).size).toBe(2);
+  });
+});

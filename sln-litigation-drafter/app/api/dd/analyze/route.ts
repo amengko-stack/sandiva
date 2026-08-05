@@ -76,7 +76,30 @@ export async function POST(req: NextRequest) {
         // own content rather than its position in the model's output.
         const priorRaw = await readBlobText(ddKeys.findings(sessionId, entityId));
         const prior: DDFinding[] = priorRaw ? (JSON.parse(priorRaw) as DDFinding[]) : [];
-        let reviewReported = false;
+
+        // Aspects whose model findings this run has NOT successfully replaced —
+        // either not reached yet, or failed. Their previous findings are retained,
+        // because "absent from a partial or failed run" is not evidence that the
+        // issue is gone. Without this, the first checkpoint runs before any aspect
+        // has been analysed, so every previously reviewed model finding would look
+        // dropped and be written away; a timeout right after that checkpoint would
+        // lose both the findings and the review permanently. A failed aspect used
+        // to be indistinguishable from one that found nothing, which erased that
+        // aspect's findings on a transient model or parse error.
+        // Seeded from the previous run's own aspects, BEFORE the first checkpoint.
+        // Seeding later (from the job list) would leave that first checkpoint with
+        // nothing retained — the exact window in which a timeout loses the review.
+        const unrefreshedAspects = new Set<DDAspectId>();
+        for (const f of prior) {
+          if (f.dimension === "risiko" && f.aspectId !== null) unrefreshedAspects.add(f.aspectId);
+        }
+        const retainedPrior = (): DDFinding[] =>
+          prior.filter(
+            (f) =>
+              f.dimension === "risiko" &&
+              f.aspectId !== null &&
+              unrefreshedAspects.has(f.aspectId)
+          );
 
         // Checkpoint after every stage so a worst-case timeout never discards
         // findings already computed (mirrors extract/recheck-ocr's per-batch
@@ -87,11 +110,15 @@ export async function POST(req: NextRequest) {
         // The carry happens inside persist, not once at the end, so a checkpoint
         // written just before a timeout kill also keeps the review rather than
         // saving a stripped copy over it.
-        const persist = () => {
+        // `final` gates the two things that are only true of a complete run: the
+        // count of reviewed findings this examination no longer raises, and the
+        // absence of any retained prior findings. Reporting either from a partial
+        // checkpoint would state that a finding is gone when its aspect simply had
+        // not run yet.
+        const persist = (final = false) => {
           const carried = carryReviewState(findings, prior);
           findings = carried.findings;
-          if (!reviewReported && (carried.carried > 0 || carried.dropped > 0)) {
-            reviewReported = true;
+          if (final && (carried.carried > 0 || carried.dropped > 0)) {
             emit(controller, {
               type: "step",
               label:
@@ -114,6 +141,8 @@ export async function POST(req: NextRequest) {
         findings.push(...promoteDealTriggeredCells(tables, entityId));
 
         const baseFindings = findings.slice();
+        // Prior model findings ride along until their aspect is actually re-analysed.
+        findings = baseFindings.concat(retainedPrior());
         await persist();
 
         // Aspects with substantive documents; agreements are covered by the tables.
@@ -155,7 +184,17 @@ export async function POST(req: NextRequest) {
           return ch.subs.filter((sub) => !sub.findings).map((sub) => sub.title);
         };
 
+        // An aspect the previous run covered but this one does not examine at all —
+        // its documents are gone from the classification — is not "unrefreshed", it
+        // is out of scope now, so its old findings must not ride along.
+        const jobAspects = new Set(aspectJobs.map((j) => j.aspectId));
+        Array.from(unrefreshedAspects).forEach((a) => {
+          if (!jobAspects.has(a)) unrefreshedAspects.delete(a);
+        });
+        for (const j of aspectJobs) unrefreshedAspects.add(j.aspectId);
+
         const aspectFindings: (DDFinding[] | null)[] = new Array(aspectJobs.length).fill(null);
+        const failedAspects: DDAspectId[] = [];
         const processAspect = async (i: number) => {
           try {
             const res = await analyzeAspect(client, {
@@ -175,11 +214,17 @@ export async function POST(req: NextRequest) {
               return { ...f, grounding: { verdict: g.verdict, coverage: g.coverage, note: g.note } };
             });
             for (const a of res.analyses) aspectAnalyses.push(a);
+            // Only now may this aspect's previous findings be replaced.
+            unrefreshedAspects.delete(aspectJobs[i].aspectId);
           } catch (e) {
             // Per-aspect soft-fail: one malformed aspect response must not abort
             // the whole run (mirrors extract/recheck-ocr per-item catch).
             console.error("[dd/analyze] aspect failed:", aspectJobs[i].aspectId, e instanceof Error ? e.message : e);
-            aspectFindings[i] = [];
+            // Left null and still in unrefreshedAspects: a transient model or parse
+            // failure must not read as "this aspect was examined and found nothing",
+            // which would delete the aspect's earlier findings and the review on
+            // them. The previous findings are retained and the failure is reported.
+            failedAspects.push(aspectJobs[i].aspectId);
           }
         };
 
@@ -197,7 +242,8 @@ export async function POST(req: NextRequest) {
           // then checkpoint. Only the main task mutates `findings` (between
           // waves) — the concurrent tasks each write only their own index.
           findings = baseFindings.concat(
-            ...aspectFindings.filter((a): a is DDFinding[] => a !== null)
+            ...aspectFindings.filter((a): a is DDFinding[] => a !== null),
+            retainedPrior()
           );
           await persist();
         }
@@ -211,7 +257,15 @@ export async function POST(req: NextRequest) {
         emit(controller, { type: "step", label: "Verifikasi adversarial temuan kritis" });
         findings = await verifyFindings(client, findings, combined);
 
-        await persist();
+        if (failedAspects.length > 0) {
+          emit(controller, {
+            type: "step",
+            label:
+              `Aspek yang gagal dianalisis pada pemeriksaan ini: ${failedAspects.join(", ").replace(/_/g, " ")}. ` +
+              `Temuan aspek tersebut dari pemeriksaan sebelumnya dipertahankan dan BELUM diperbarui.`,
+          });
+        }
+        await persist(true);
         emit(controller, { type: "done", findings });
       } catch (e) {
         try { emit(controller, { type: "error", message: e instanceof Error ? e.message : "Error" }); } catch {}

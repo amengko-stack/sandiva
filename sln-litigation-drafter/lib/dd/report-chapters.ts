@@ -213,7 +213,7 @@ export function chapterPendahuluan(params: {
       title: "Asumsi dan Pembatasan",
       blocks: [
         { kind: "para", text: "Laporan ini disusun berdasarkan asumsi-asumsi berikut:" },
-        { kind: "list", items: openingAssumptions(m.assumptionsVariant).body },
+        { kind: "list", items: openingAssumptions(m.assumptionsVariant, m.reportStage).body },
         { kind: "para", text: "Laporan ini tunduk pada pembatasan berikut:" },
         { kind: "list", items: openingQualifications(m.reportStage).body },
       ],

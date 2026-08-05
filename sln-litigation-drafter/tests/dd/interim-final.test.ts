@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  finalReleaseBlocker, interimLegend, openingDocuments, openingQualifications,
-  openingReliance, outstandingParagraphs, reportTitle,
+  finalReleaseBlocker, interimLegend, openingAssumptions, openingDocuments,
+  openingQualifications, openingReliance, outstandingParagraphs, reportTitle,
 } from "@/lib/dd/report-boilerplate";
 import { chapterPendahuluan } from "@/lib/dd/report-chapters";
 import type { DDEntity, DDRegime, DDReportMeta, DDTransaction } from "@/types/dd";
@@ -167,5 +167,57 @@ describe("finalReleaseBlocker", () => {
 
   it("does not gate an internal draft at all", () => {
     expect(finalReleaseBlocker(meta({ clientRelease: false, relianceScope: "" }), 9)).toBe("");
+  });
+});
+
+// Codex caught this and it is the most serious of the set: the assumption set said
+// the data room was complete and the information supplied was complete, while
+// chapter 1.4 of the same report named the documents that had been requested and
+// had not arrived. The report would assume away the very limitation it states, and
+// completeness is exactly what a reader relies on when weighing the conclusions.
+describe("an interim report cannot assume the data room is complete", () => {
+  it("withdraws the data-room completeness assumption", () => {
+    const final = openingAssumptions("panjang", "final").body.join(" ");
+    const interim = openingAssumptions("panjang", "interim").body.join(" ");
+    expect(final).toContain("ruang data (data room) yang disediakan lengkap");
+    expect(interim).not.toContain("ruang data (data room) yang disediakan lengkap");
+    expect(interim).toContain("BELUM dinyatakan lengkap");
+    expect(interim).toContain("kelengkapannya tidak diasumsikan");
+  });
+
+  it("withdraws it from the short variant too, which also asserted completeness", () => {
+    const final = openingAssumptions("ringkas", "final").body.join(" ");
+    const interim = openingAssumptions("ringkas", "interim").body.join(" ");
+    expect(final).toContain("benar, akurat, lengkap");
+    expect(interim).not.toContain("benar, akurat, lengkap");
+    expect(interim).toContain("TIDAK diasumsikan lengkap");
+  });
+
+  it("keeps every other assumption, and the same count of them", () => {
+    for (const variant of ["ringkas", "panjang"] as const) {
+      const final = openingAssumptions(variant, "final").body;
+      const interim = openingAssumptions(variant, "interim").body;
+      expect(interim).toHaveLength(final.length);
+      expect(interim[0]).toBe(final[0]); // Pasal 1338, untouched
+    }
+  });
+
+  it("defaults to the final wording when no stage is given", () => {
+    expect(openingAssumptions("panjang").body.join(" ")).toContain(
+      "ruang data (data room) yang disediakan lengkap"
+    );
+  });
+
+  it("reaches the report through chapterPendahuluan", () => {
+    const entity = { id: "e1", name: "PT Target", listingStatus: "non_tbk" } as unknown as DDEntity;
+    const regime = { layers: ["uupt"], capitalMarkets: false, parentTbkName: "" } as unknown as DDRegime;
+    const contents = chapterPendahuluan({
+      transaction, entity, regime,
+      meta: { ...meta({ reportStage: "interim" }), assumptionsVariant: "panjang" },
+      presentAspects: ["pendirian_ad"], docCategories: [],
+    });
+    const text = JSON.stringify(contents);
+    expect(text).toContain("kelengkapannya tidak diasumsikan");
+    expect(text).not.toContain("ruang data (data room) yang disediakan lengkap");
   });
 });

@@ -30,9 +30,14 @@ export interface CarryReviewResult {
   dropped: number;
 }
 
+/** The lawyer's replacement wording, or "" when there is nothing usable. */
+function usableEdit(f: DDFinding): string {
+  return (f.editedProblem ?? "").trim();
+}
+
 /** Review decisions worth carrying; "open" is the absence of a decision. */
 function hasDecision(f: DDFinding): boolean {
-  return f.status !== "open" || (f.editedProblem ?? "") !== "";
+  return f.status !== "open" || usableEdit(f) !== "";
 }
 
 export function carryReviewState(
@@ -52,11 +57,20 @@ export function carryReviewState(
     if (prior === undefined) return f;
     matched.add(f.id);
     carried++;
-    return {
-      ...f,
-      status: prior.status,
-      editedProblem: prior.editedProblem,
-    };
+    // A blank edit is not an edit. Renderers select the problem text with
+    // `editedProblem ?? problem`, and "" is not nullish — carrying an empty string
+    // would blank the finding's problem column in the client report while leaving
+    // the row, its risk level and its recommendation in place. An empty edit
+    // therefore leaves the fresh wording and does not claim the status "edited".
+    const edit = usableEdit(prior);
+    if (edit === "") {
+      return {
+        ...f,
+        status: prior.status === "edited" ? f.status : prior.status,
+        editedProblem: undefined,
+      };
+    }
+    return { ...f, status: prior.status, editedProblem: edit };
   });
 
   let dropped = 0;
