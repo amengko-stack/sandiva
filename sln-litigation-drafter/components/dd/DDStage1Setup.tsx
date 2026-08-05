@@ -143,7 +143,57 @@ export default function DDStage1Setup() {
           {DD_TRANSACTION_TYPES.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
         </select>
       </label>
-      <label>Klien bertindak sebagai<input style={input} type="text" value={clientRole} onChange={(e) => setClientRole(e.target.value)} /></label>
+      {/*
+        A select, not free text. This value switches five chapters: planChapters
+        matches it against /penjual|seller/i to emit the sell-side chapters instead
+        of the buy-side one. Typed freely, "divestor" or "vendor" would silently
+        produce a buy-side report for a seller — a wrong report with nothing on
+        screen to show why.
+      */}
+      <label htmlFor="clientRole">Klien bertindak sebagai
+        <select style={input} id="clientRole" value={clientRole} onChange={(e) => setClientRole(e.target.value)}>
+          <option value="pembeli">Pembeli / pengambil alih</option>
+          <option value="penjual">Penjual / pihak yang mendivestasi</option>
+        </select>
+      </label>
+
+      {/*
+        Out of the "optional metadata" panel deliberately. The stage decides what
+        the report claims about itself — cover, qualifications, reliance — and gates
+        the client export. Left inside a collapsed panel marked "opsional", a
+        finished matter would go out stamped INTERIM with nothing in Stage 1 to say
+        so, and no visible way to change it.
+      */}
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 13 }}>Tahap laporan</div>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="radio"
+              name="reportStage"
+              id="reportStage-interim"
+              checked={reportMeta.reportStage === "interim"}
+              onChange={() => patchReportMeta({ reportStage: "interim" })}
+            />
+            Interim — penyerahan dokumen belum selesai
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="radio"
+              name="reportStage"
+              id="reportStage-final"
+              checked={reportMeta.reportStage === "final"}
+              onChange={() => patchReportMeta({ reportStage: "final" })}
+            />
+            Final — dokumen sudah lengkap
+          </label>
+        </div>
+        <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+          {reportMeta.reportStage === "interim"
+            ? "Judul, sampul, dan pembatasan akan menyatakan laporan ini interim, dan Bab 1.4 akan menyebutkan dokumen yang belum tersedia."
+            : "Ekspor final ke klien akan ditolak bila masih ada dokumen yang diminta namun belum tersedia atau belum lengkap."}
+        </div>
+      </div>
       <label>Tanggal uji (cut-off)<input style={input} type="date" value={cutoff} onChange={(e) => setCutoff(e.target.value)} /></label>
 
       <h2>Perusahaan target</h2>
@@ -259,36 +309,6 @@ export default function DDStage1Setup() {
               <input type="checkbox" id="taxInScope" checked={reportMeta.taxInScope} onChange={(ev) => patchReportMeta({ taxInScope: ev.target.checked })} />
               Aspek perpajakan termasuk dalam lingkup
             </label>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>Tahap laporan</div>
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="radio"
-                    name="reportStage"
-                    id="reportStage-interim"
-                    checked={reportMeta.reportStage === "interim"}
-                    onChange={() => patchReportMeta({ reportStage: "interim" })}
-                  />
-                  Interim — penyerahan dokumen belum selesai
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="radio"
-                    name="reportStage"
-                    id="reportStage-final"
-                    checked={reportMeta.reportStage === "final"}
-                    onChange={() => patchReportMeta({ reportStage: "final" })}
-                  />
-                  Final — dokumen sudah lengkap
-                </label>
-              </div>
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-                {reportMeta.reportStage === "interim"
-                  ? "Judul, sampul, dan pembatasan akan menyatakan laporan ini interim, dan Bab 1.4 akan menyebutkan dokumen yang belum tersedia."
-                  : "Ekspor final ke klien akan ditolak bila masih ada dokumen yang diminta namun belum tersedia atau belum lengkap."}
-              </div>
-            </div>
             <div>
               <div style={{ fontWeight: 600, fontSize: 13 }}>Bentuk asumsi & pembatasan</div>
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
