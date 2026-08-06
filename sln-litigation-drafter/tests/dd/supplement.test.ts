@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  diffAgainstBaseline, examinedDocs, snapshotBaseline, supplementIsWarranted,
+  UNREADABLE, diffAgainstBaseline, examinedDocs, snapshotBaseline, supplementIsWarranted,
 } from "@/lib/dd/supplement";
 import {
   supplementBlocker, supplementIncorporation, supplementTitle,
@@ -305,7 +305,67 @@ describe("claims the data does not support", () => {
   // unchanged — it must not silently compare equal to a document that was read.
   it("marks a document whose text was never extracted", () => {
     const docs = examinedDocs([doc("kosong.pdf")], new Map());
-    expect(docs[0].digest).toBe("kosong");
+    expect(docs[0].digest).toBe(UNREADABLE);
+    // Whitespace-only extraction is no more readable than none.
+    expect(examinedDocs([doc("x.pdf")], new Map([["x.pdf", "   \n  "]]))[0].digest).toBe(UNREADABLE);
+  });
+
+  it("reports unreadable documents rather than counting them as examined", () => {
+    const d = diffAgainstBaseline(base([], []), {
+      cutoffDateISO: "2026-09-15", classified: [doc("kosong.pdf"), doc("akta16.pdf")],
+      contentByFile: TEXTS, gaps: [], findings: [],
+    });
+    expect(d.documentsUnreadable).toEqual(["kosong.pdf"]);
+  });
+
+  // A document replaced under the same name counts as new, so without excluding
+  // what the earlier report already raised, every finding bearing that file name
+  // would be presented to the client as arising from the replacement.
+  it("does not attribute a carried finding to a same-name replacement", () => {
+    const before: DDBaseline = {
+      ...base([{ fileName: "akta16.pdf", digest: "digest-lama" }], []),
+      findings: [{ id: "f1", aspectId: "pendirian_ad", sourceFile: "akta16.pdf", severity: "material", problem: "lama", status: "open" }],
+    };
+    const d = diffAgainstBaseline(before, {
+      cutoffDateISO: "2026-09-15", classified: [doc("akta16.pdf")],
+      contentByFile: TEXTS, gaps: [],
+      findings: [finding({ id: "f1", sourceFile: "akta16.pdf" }), finding({ id: "f9", sourceFile: "akta16.pdf" })],
+    });
+    expect(d.newDocuments).toEqual(["akta16.pdf"]);
+    expect(d.findingsFromNewDocuments.map((f) => f.id)).toEqual(["f9"]);
+  });
+
+  // Carried forward is not the same as unchanged.
+  it("separates findings revised in severity or wording from unchanged ones", () => {
+    const before: DDBaseline = {
+      ...base([], []),
+      findings: [
+        { id: "f1", aspectId: "pendirian_ad", sourceFile: "akta16.pdf", severity: "minor", problem: "rumusan lama", status: "open" },
+        { id: "f2", aspectId: "pendirian_ad", sourceFile: "akta16.pdf", severity: "material", problem: "tetap", status: "open" },
+      ],
+    };
+    const d = diffAgainstBaseline(before, {
+      cutoffDateISO: "2026-09-15", classified: [], contentByFile: TEXTS, gaps: [],
+      findings: [
+        finding({ id: "f1", severity: "kritis", problem: "rumusan baru" }),
+        finding({ id: "f2", severity: "material", problem: "tetap" }),
+      ],
+    });
+    expect(d.findingsCarriedForward).toBe(2);
+    expect(d.findingsCarriedUnchanged).toBe(1);
+    expect(d.findingsCarriedRevised.map((f) => f.id)).toEqual(["f1"]);
+  });
+
+  it("compares against the wording the client actually read", () => {
+    const before: DDBaseline = {
+      ...base([], []),
+      findings: [{ id: "f1", aspectId: "pendirian_ad", sourceFile: "akta16.pdf", severity: "material", problem: "redaksi pengacara", status: "edited" }],
+    };
+    const d = diffAgainstBaseline(before, {
+      cutoffDateISO: "2026-09-15", classified: [], contentByFile: TEXTS, gaps: [],
+      findings: [finding({ id: "f1", problem: "redaksi model", editedProblem: "redaksi pengacara", status: "edited" })],
+    });
+    expect(d.findingsCarriedUnchanged).toBe(1);
   });
 
   // The client read it in the interim report and will not find it next time. The

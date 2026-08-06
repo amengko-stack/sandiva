@@ -89,5 +89,20 @@ export async function recordBaseline(args: {
   }
   const next = existing.concat(baseline);
   await writeBlobText(ddKeys.baselines(sessionId, entityId), JSON.stringify(next));
-  return { baseline, recorded: true, total: next.length };
+
+  // Read-modify-write on Blob storage, which offers no compare-and-set, so two
+  // concurrent recordings can each read the same list and the later write can drop
+  // the earlier baseline. Re-read and re-append rather than pretend the window is
+  // closed: it is not, and losing a baseline means a later supplement silently
+  // diffs against the wrong issued report. In practice the recordings would be
+  // identical anyway — sameRecord above makes a double click a no-op — so this
+  // covers the case that actually costs something, two genuinely different states.
+  const after = await readBaselines(sessionId, entityId);
+  const present = after.some((b) => b.issuedAtISO === baseline.issuedAtISO);
+  if (!present) {
+    const merged = after.concat(baseline);
+    await writeBlobText(ddKeys.baselines(sessionId, entityId), JSON.stringify(merged));
+    return { baseline, recorded: true, total: merged.length };
+  }
+  return { baseline, recorded: true, total: after.length };
 }

@@ -98,6 +98,16 @@ export default function DDStage6Export() {
           Tahap 2–5 dijalankan ulang, aplikasi dapat menyusun Laporan Tambahan yang memuat apa saja yang berubah
           sejak laporan tersebut — bukan mengulang laporannya.
         </div>
+        {/*
+          Stated because it is true and the lawyer needs it: the button records the
+          CURRENT state, not the file that was downloaded. Nothing ties the two
+          together, so re-running an analysis between the download and the click
+          would record a state the client never received.
+        */}
+        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          Yang dicatat adalah keadaan analisis <strong>saat tombol ditekan</strong>, bukan berkas yang telah
+          diunduh. Tekan segera setelah mengunduh laporan, dan jangan menjalankan ulang Tahap 2–5 di antaranya.
+        </div>
         <button onClick={recordIssue} disabled={recording} style={{ padding: 10, fontWeight: 600 }}>
           {recording ? "Mencatat…" : "Catat penerbitan laporan hari ini"}
         </button>

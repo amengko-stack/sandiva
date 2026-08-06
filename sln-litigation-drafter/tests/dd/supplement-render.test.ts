@@ -20,6 +20,7 @@ const diff = (over: Partial<DDSupplementDiff> = {}): DDSupplementDiff => ({
   cutoffDateISO: "2026-09-15",
   newDocuments: ["fs2023.pdf"],
   documentsExaminedNow: 5,
+  documentsUnreadable: [],
   gapsClosed: ["Laporan keuangan auditan 2023"],
   gapsNoLongerListed: [],
   gapsFirstListedNow: [],
@@ -28,6 +29,8 @@ const diff = (over: Partial<DDSupplementDiff> = {}): DDSupplementDiff => ({
   findingsNoLongerRaised: [],
   findingsDismissedSinceBaseline: [],
   findingsCarriedForward: 3,
+  findingsCarriedUnchanged: 3,
+  findingsCarriedRevised: [],
   ...over,
 });
 
@@ -106,8 +109,40 @@ describe("renderSupplementSections", () => {
     expect(t).toContain("dikesampingkan berdasarkan telaah");
   });
 
-  it("states how many findings continue unchanged", () => {
-    expect(text(diff())).toContain("3 temuan");
+  it("states how many findings continue, and how many are genuinely unchanged", () => {
+    const t = text(diff());
+    expect(t).toContain("3 temuan");
+    expect(t).toContain("tanpa perubahan tingkat maupun rumusan");
+  });
+
+  // A persisting id cannot carry the claim "unchanged": the identity is blind to
+  // severity and wording so that a reworded finding stays the same finding.
+  it("does not present a revised finding as unchanged", () => {
+    const t = text(
+      diff({
+        findingsCarriedForward: 3,
+        findingsCarriedUnchanged: 2,
+        findingsCarriedRevised: [
+          { id: "f2", aspectId: "perizinan", sourceFile: "nib.pdf", severity: "minor", problem: "Rumusan lama", status: "open" },
+        ],
+      })
+    );
+    expect(t).toContain("2 di antaranya tanpa perubahan");
+    expect(t).toContain("Rumusan lama");
+    expect(t).toContain("rumusan dalam Laporan Tambahan inilah yang berlaku");
+  });
+
+  // A document nobody could extract was not examined; counting it among the
+  // examined documents claims an examination that did not happen.
+  it("names a document whose text could not be read instead of counting it", () => {
+    const t = text(diff({ documentsUnreadable: ["scan-buram.pdf"] }));
+    expect(t).toContain("scan-buram.pdf");
+    expect(t).toContain("tidak dapat dibaca");
+    expect(t).toContain("TIDAK");
+  });
+
+  it("says plainly when nothing about the earlier findings changed", () => {
+    expect(text(diff())).toContain("Tidak terdapat temuan Laporan Sebelumnya yang dihapus");
   });
 });
 

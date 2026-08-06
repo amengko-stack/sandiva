@@ -319,7 +319,19 @@ export interface DDSupplementDiff {
   gapsFirstListedNow: string[];
   /** Outstanding at the earlier report and still outstanding now. */
   gapsStillOutstanding: string[];
-  /** Findings whose source document is one of the new ones. */
+  /**
+   * Documents listed as examined whose text could not be read. Reported rather
+   * than counted in silently: a document nobody could extract was not examined,
+   * and saying it was is a claim the data does not support.
+   */
+  documentsUnreadable: string[];
+  /**
+   * Findings whose source document is one of the new ones AND which the earlier
+   * report did not already raise. The second half matters because a document
+   * replaced under the same name counts as new, and every finding bearing that
+   * file name would otherwise be presented as arising from the replacement —
+   * including ones raised from the earlier version and merely carried forward.
+   */
   findingsFromNewDocuments: DDFinding[];
   /**
    * Findings the earlier report raised that this examination does not. Reported
@@ -335,6 +347,16 @@ export interface DDSupplementDiff {
    */
   findingsDismissedSinceBaseline: DDBaseline["findings"];
   findingsCarriedForward: number;
+  /**
+   * Of those carried forward, how many are materially identical — same severity
+   * and same problem text as the issued report. A persisting id is not evidence
+   * of that on its own: the identity is deliberately blind to severity and
+   * wording so that a reworded finding stays the same finding, which is exactly
+   * why "unchanged" has to be checked rather than assumed.
+   */
+  findingsCarriedUnchanged: number;
+  /** Carried forward but revised in severity or wording since the earlier report. */
+  findingsCarriedRevised: DDBaseline["findings"];
 }
 
 export interface DDDeedRef {

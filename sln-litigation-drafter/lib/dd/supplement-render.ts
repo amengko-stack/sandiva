@@ -52,6 +52,21 @@ export function renderSupplementSections(
               `${diff.documentsExaminedNow} dokumen yang kini diperiksa. Dokumen tersebut adalah:`,
       },
       ...(diff.newDocuments.length === 0 ? [] : list(diff.newDocuments)),
+      // A document nobody could extract text from was NOT examined. Counting it
+      // among the examined documents would claim an examination that did not
+      // happen, so it is named instead.
+      ...(diff.documentsUnreadable.length === 0
+        ? []
+        : ([
+            {
+              kind: "para",
+              text:
+                `Dokumen berikut tercantum dalam ruang data namun teksnya tidak dapat dibaca sehingga TIDAK ` +
+                `dapat diperiksa. Dokumen tersebut tidak termasuk dalam dasar kesimpulan Laporan Tambahan ini ` +
+                `dan wajib disediakan ulang dalam bentuk yang dapat dibaca:`,
+            },
+            { kind: "list", items: diff.documentsUnreadable },
+          ] as DDNarrativeBlock[])),
     ],
   });
 
@@ -122,15 +137,35 @@ export function renderSupplementSections(
   });
 
   const accounted: DDNarrativeBlock[] = [];
-  if (diff.findingsNoLongerRaised.length === 0 && diff.findingsDismissedSinceBaseline.length === 0) {
+  // "Unchanged" is only said of findings actually compared and found identical in
+  // severity and wording. A persisting id cannot carry that claim: the identity is
+  // deliberately blind to both, so that a reworded finding stays the same finding.
+  accounted.push({
+    kind: "para",
+    text:
+      `${diff.findingsCarriedForward} temuan dalam Laporan Sebelumnya tetap diangkat oleh pemeriksaan ini, ` +
+      `${diff.findingsCarriedUnchanged} di antaranya tanpa perubahan tingkat maupun rumusan.`,
+  });
+  if (diff.findingsCarriedRevised.length > 0) {
     accounted.push({
       kind: "para",
-      text: `Seluruh temuan dalam Laporan Sebelumnya tetap berlaku. ${diff.findingsCarriedForward} temuan dilanjutkan tanpa perubahan.`,
+      text:
+        `Temuan berikut tetap diangkat namun tingkat atau rumusannya berubah dibandingkan Laporan ` +
+        `Sebelumnya, sehingga rumusan dalam Laporan Tambahan inilah yang berlaku:`,
     });
-  } else {
+    accounted.push({
+      kind: "list",
+      items: diff.findingsCarriedRevised.map((f) => f.problem),
+    });
+  }
+  if (
+    diff.findingsNoLongerRaised.length === 0 &&
+    diff.findingsDismissedSinceBaseline.length === 0 &&
+    diff.findingsCarriedRevised.length === 0
+  ) {
     accounted.push({
       kind: "para",
-      text: `${diff.findingsCarriedForward} temuan dalam Laporan Sebelumnya tetap berlaku dan dilanjutkan. Selebihnya sebagai berikut:`,
+      text: "Tidak terdapat temuan Laporan Sebelumnya yang dihapus, dikesampingkan, atau diubah.",
     });
   }
   if (diff.findingsNoLongerRaised.length > 0) {

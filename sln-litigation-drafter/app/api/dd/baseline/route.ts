@@ -20,8 +20,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "sessionId tidak valid" }, { status: 400 });
     }
     const { transaction, results } = await loadEntityResults(sessionId);
-    if (results.length === 0) {
-      return NextResponse.json({ error: "Belum ada entitas yang dianalisis." }, { status: 400 });
+    // results.length proves nothing: loadEntityResults returns one entry per
+    // transaction entity whether or not anything has been classified, so an
+    // untouched session would otherwise be recorded as an issued report — and a
+    // supplement would later be diffed against a report that never existed. What
+    // makes a report a report is documents actually examined.
+    const empty = results.filter((r) => r.classified.length === 0).map((r) => r.entity.name);
+    if (empty.length === results.length) {
+      return NextResponse.json(
+        { error: "Belum ada dokumen yang diklasifikasikan, sehingga belum ada laporan yang dapat dicatat sebagai diterbitkan." },
+        { status: 400 }
+      );
+    }
+    if (empty.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            `Entitas berikut belum memiliki dokumen yang diklasifikasikan: ${empty.join(", ")}. ` +
+            `Selesaikan Tahap 3 untuk seluruh entitas sebelum mencatat penerbitan, agar dasar pembanding ` +
+            `Laporan Tambahan mencerminkan laporan yang benar-benar diterbitkan.`,
+        },
+        { status: 400 }
+      );
     }
     // One clock reading for the whole transaction, so the entities of one issued
     // report share an issue timestamp instead of straddling a second boundary.
