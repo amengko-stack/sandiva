@@ -8,17 +8,23 @@ import { transactionLabel } from "@/config/ddTransactionTypes";
 import { planChapters, subNumber, type DDChapterPlan, type DDChapterSub } from "@/config/ddChapters";
 import {
   confidentialityLegend, deriveVerdict, draftLegend, finalReleaseBlocker, formatIndonesianDate,
-  interimLegend, reportTitle, verdictLabel,
+  interimLegend, reportTitle, supplementBlocker, supplementIncorporation, supplementTitle,
+  verdictLabel,
 } from "@/lib/dd/report-boilerplate";
 import { obligationsForLayer, resolveRegime, type DDObligation } from "@/lib/dd/regime";
 import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
 import { renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
+import { renderSupplementSections } from "@/lib/dd/supplement-render";
 import { chapterDisclaimer, chapterPendahuluan } from "@/lib/dd/report-chapters";
 import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
 import type {
   DDAspectId, DDConsolidated, DDEntity, DDEntityResult, DDFinding, DDGapItem, DDRegime,
-  DDReportBlock, DDReportMeta, DDReportOptions, DDSeverity, DDTransaction,
+  DDReportBlock, DDReportMeta, DDReportOptions, DDSeverity, DDSupplementDiff, DDTransaction,
 } from "@/types/dd";
+
+/** Supplement section numbering, matching the report's roman chapter numbers. */
+const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+const romanNumeral = (n: number) => ROMAN[n - 1] ?? String(n);
 
 /** Orders findings most-serious-first; never printed (mirrors findings-render.ts's private copy). */
 const SEVERITY_ORDER: Record<DDSeverity, number> = { kritis: 0, material: 1, minor: 2 };
@@ -720,6 +726,94 @@ function assertNeverChapter(kind: never): never {
   throw new Error(`Jenis bab tidak dikenal pada dd-docx-builder: ${JSON.stringify(kind)}`);
 }
 
+/**
+ * Styles, numbering, A4 page setup, header and footer — shared by every document
+ * this module produces. Extracted when the supplement builder arrived: two copies
+ * of this would drift, and the supplement is meant to look like the report it
+ * accompanies, not merely similar to it.
+ */
+function assembleDocument(children: (Paragraph | Table)[], meta: DDReportMeta): Document {
+  return new Document({
+    styles: {
+      default: { document: { run: { font: FONT, size: BODY_SIZE } } },
+      paragraphStyles: [
+        {
+          id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+          run: { size: 32, bold: true, font: FONT },
+          paragraph: { spacing: { before: 360, after: 200 }, outlineLevel: 0 },
+        },
+        {
+          id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
+          run: { size: 26, bold: true, font: FONT },
+          paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 1 },
+        },
+        {
+          id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
+          run: { size: 24, bold: true, font: FONT },
+          paragraph: { spacing: { before: 200, after: 100 }, outlineLevel: 2 },
+        },
+      ],
+    },
+    numbering: {
+      config: [
+        {
+          reference: "bullets",
+          levels: [
+            {
+              level: 0, format: LevelFormat.BULLET, text: "•",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+            },
+          ],
+        },
+        {
+          reference: "numlist",
+          levels: [
+            {
+              level: 0, format: LevelFormat.DECIMAL, text: "%1.",
+              alignment: AlignmentType.LEFT,
+              style: { paragraph: { indent: { left: 720, hanging: 360 } } },
+            },
+          ],
+        },
+      ],
+    },
+    sections: [
+      {
+        properties: {
+          page: {
+            size: { width: 11906, height: 16838 }, // A4
+            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+          },
+        },
+        headers: {
+          default: new Header({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.RIGHT,
+                children: [t(`${confidentialityLegend()} — ${meta.matterRef}`, { size: 16 })],
+              }),
+            ],
+          }),
+        },
+        footers: {
+          default: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 18 })],
+              }),
+            ],
+          }),
+        },
+        children,
+      },
+    ],
+  });
+}
+
+
+
 export async function buildDdReportDocx(args: {
   transaction: DDTransaction;
   results: DDEntityResult[];
@@ -1027,83 +1121,92 @@ export async function buildDdReportDocx(args: {
     p(meta.signatoryTitle)
   );
 
-  const doc = new Document({
-    styles: {
-      default: { document: { run: { font: FONT, size: BODY_SIZE } } },
-      paragraphStyles: [
-        {
-          id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
-          run: { size: 32, bold: true, font: FONT },
-          paragraph: { spacing: { before: 360, after: 200 }, outlineLevel: 0 },
-        },
-        {
-          id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true,
-          run: { size: 26, bold: true, font: FONT },
-          paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 1 },
-        },
-        {
-          id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true,
-          run: { size: 24, bold: true, font: FONT },
-          paragraph: { spacing: { before: 200, after: 100 }, outlineLevel: 2 },
-        },
-      ],
-    },
-    numbering: {
-      config: [
-        {
-          reference: "bullets",
-          levels: [
-            {
-              level: 0, format: LevelFormat.BULLET, text: "•",
-              alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 720, hanging: 360 } } },
-            },
-          ],
-        },
-        {
-          reference: "numlist",
-          levels: [
-            {
-              level: 0, format: LevelFormat.DECIMAL, text: "%1.",
-              alignment: AlignmentType.LEFT,
-              style: { paragraph: { indent: { left: 720, hanging: 360 } } },
-            },
-          ],
-        },
-      ],
-    },
-    sections: [
-      {
-        properties: {
-          page: {
-            size: { width: 11906, height: 16838 }, // A4
-            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
-          },
-        },
-        headers: {
-          default: new Header({
-            children: [
-              new Paragraph({
-                alignment: AlignmentType.RIGHT,
-                children: [t(`${confidentialityLegend()} — ${meta.matterRef}`, { size: 16 })],
-              }),
-            ],
-          }),
-        },
-        footers: {
-          default: new Footer({
-            children: [
-              new Paragraph({
-                alignment: AlignmentType.CENTER,
-                children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 18 })],
-              }),
-            ],
-          }),
-        },
-        children,
-      },
-    ],
+  return Buffer.from(await Packer.toBuffer(assembleDocument(children, meta)));
+}
+
+
+/**
+ * The SUPPLEMENT document.
+ *
+ * Following the precedent, this does not restate the report it follows. It carries
+ * the incorporation clause that makes the two one instrument, then reports what
+ * this examination read that the earlier one did not, and what that changes.
+ *
+ * The gate is the same one the report uses for reliance scope, plus a refusal to
+ * issue a supplement with nothing to report — a document that says nothing while
+ * presenting itself as an addition to a report the client relies on.
+ */
+export async function buildSupplementDocx(args: {
+  transaction: DDTransaction;
+  entity: DDEntity;
+  diff: DDSupplementDiff;
+}): Promise<Buffer> {
+  const { transaction, entity, diff } = args;
+  const meta = transaction.reportMeta ?? PLACEHOLDER_META;
+  const opts = transaction.reportOptions ?? DD_DEFAULT_REPORT_OPTIONS;
+
+  const blocked = supplementBlocker(diff);
+  if (blocked !== "") throw new Error(blocked);
+  if (meta.clientRelease && meta.relianceScope.trim() === "") {
+    throw new Error(
+      "Ekspor Laporan Tambahan untuk klien diblokir: Ruang Lingkup Keterandalan (reliance scope) belum diisi pada Tahap 1. Isi kolom tersebut atau matikan opsi rilis ke klien."
+    );
+  }
+
+  const children: (Paragraph | Table)[] = [];
+
+  children.push(
+    center("SANDIVA LEGAL NETWORK", { bold: true, size: 28, after: 240 }),
+    center(confidentialityLegend(), { bold: true, size: 18, after: 720 }),
+    center(supplementTitle(), { bold: true, size: 32, after: 120 }),
+    center(`(${transactionLabel(transaction.type)})`, { bold: true, size: 24, after: 480 }),
+    center(entity.name, { bold: true, size: 30, after: 720 }),
+    center(`Klien: ${meta.clientName}`, { after: 60 }),
+    center(`Nomor Referensi: ${meta.matterRef}`, { after: 60 }),
+    center(
+      `Tanggal Akhir Uji Tuntas Laporan Tambahan ini: ${formatIndonesianDate(diff.cutoffDateISO)}`,
+      { after: 60 }
+    ),
+    center(
+      `Laporan Sebelumnya, Tanggal Akhir Uji Tuntas: ${formatIndonesianDate(diff.baselineCutoffDateISO)}`,
+      { after: 240 }
+    )
+  );
+  if (!meta.clientRelease) {
+    children.push(center(draftLegend(), { bold: true, size: 24, after: 240 }));
+  }
+  children.push(pageBreak());
+
+  children.push(h1("KEDUDUKAN LAPORAN TAMBAHAN INI"));
+  for (const text of supplementIncorporation({
+    meta,
+    baselineCutoffISO: diff.baselineCutoffDateISO,
+    cutoffISO: diff.cutoffDateISO,
+  })) {
+    children.push(p(text));
+  }
+
+  const sections = renderSupplementSections(diff, opts);
+  sections.forEach((section, i) => {
+    children.push(h1(`${romanNumeral(i + 1)}. ${section.title.toUpperCase()}`));
+    for (const el of renderBlocks(section.blocks)) children.push(el);
   });
 
-  return Buffer.from(await Packer.toBuffer(doc));
+  children.push(
+    p(""),
+    p(
+      "Demikian Laporan Tambahan ini kami sampaikan, untuk dibaca bersama-sama dengan Laporan Sebelumnya " +
+        "sesuai dengan ruang lingkup, asumsi, dan pembatasan yang diuraikan di dalamnya."
+    ),
+    p(""),
+    p("Hormat kami,"),
+    p(""),
+    p("SANDIVA LEGAL NETWORK", { bold: true }),
+    p(""),
+    p(""),
+    p(meta.signatoryName, { bold: true }),
+    p(meta.signatoryTitle)
+  );
+
+  return Buffer.from(await Packer.toBuffer(assembleDocument(children, meta)));
 }
