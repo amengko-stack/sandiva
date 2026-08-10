@@ -5,6 +5,7 @@ import { verifyDocx } from "@/lib/docx-verify";
 import { loadEntityResults } from "@/lib/dd/load-results";
 import { loadContentByFile, readBaselines } from "@/lib/dd/baseline-store";
 import { diffAgainstBaseline } from "@/lib/dd/supplement";
+import { supplementBlocker } from "@/lib/dd/report-boilerplate";
 import { buildSupplementDocx } from "@/lib/dd/dd-docx-builder";
 
 export const maxDuration = 120;
@@ -50,9 +51,26 @@ export async function GET(req: NextRequest) {
       findings: result.findings,
     });
 
-    // buildSupplementDocx throws with the reason when there is nothing to report or
-    // the reliance scope is missing; both are the lawyer's to resolve, so the
-    // message goes back verbatim rather than as a generic failure.
+    // Refusals are decided here so they answer 400, not 500. Live, the blocker fired
+    // correctly and came back as a server error: "nothing has changed since the last
+    // report" is an ordinary state of a matter, not a failure, and dressing it as one
+    // sends the lawyer looking for a bug and buries a real 500 among the noise. The
+    // throw inside buildSupplementDocx stays as a last-resort guard for any other
+    // caller.
+    const blocked = supplementBlocker(diff);
+    if (blocked !== "") return NextResponse.json({ error: blocked }, { status: 400 });
+
+    const meta = transaction.reportMeta;
+    if (meta && meta.clientRelease && meta.relianceScope.trim() === "") {
+      return NextResponse.json(
+        {
+          error:
+            "Ekspor Laporan Tambahan untuk klien diblokir: Ruang Lingkup Keterandalan (reliance scope) belum diisi pada Tahap 1. Isi kolom tersebut atau matikan opsi rilis ke klien.",
+        },
+        { status: 400 }
+      );
+    }
+
     const buf = await buildSupplementDocx({ transaction, entity: result.entity, diff });
     const verdict = verifyDocx(buf);
     if (verdict.bad > 0 || verdict.illegal > 0) {
