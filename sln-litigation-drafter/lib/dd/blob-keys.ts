@@ -24,5 +24,7 @@ export const ddKeys = {
    * state as at the report it supplements, not merely the most recent one.
    */
   baselines: (sid: string, eid: string) => `${ent(sid, eid)}/baselines.json`,
+  /** Which aspects were analysed, and against which documents. */
+  analysisState: (sid: string, eid: string) => `${ent(sid, eid)}/analysis_state.json`,
   consolidated: (sid: string) => `sessions/${sid}/dd/consolidated.json`,
 };

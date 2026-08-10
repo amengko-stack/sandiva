@@ -7,6 +7,9 @@ import { gapToFinding } from "@/lib/dd/gap-engine";
 import { analyzeAspect, promoteDealTriggeredCells } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
+import {
+  aspectDocsDigest, canReuseAspect, parseAnalysisState, type DDAnalysisState,
+} from "@/lib/dd/analysis-state";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
@@ -34,17 +37,23 @@ const emit = (c: ReadableStreamDefaultController<Uint8Array>, m: Msg) =>
   c.enqueue(enc.encode(JSON.stringify(m) + "\n"));
 
 export async function POST(req: NextRequest) {
-  const { sessionId, entityId } = (await req.json()) as { sessionId: string; entityId: string };
+  const { sessionId, entityId, force } = (await req.json()) as {
+    sessionId: string;
+    entityId: string;
+    /** Re-analyse every aspect even where the documents are unchanged. */
+    force?: boolean;
+  };
   if (!isValidSessionId(sessionId) || !isValidEntityId(entityId)) {
     return NextResponse.json({ error: "sessionId/entityId tidak valid" }, { status: 400 });
   }
 
-  const [txnRaw, combined, classifiedRaw, gapsRaw, tablesRaw] = await Promise.all([
+  const [txnRaw, combined, classifiedRaw, gapsRaw, tablesRaw, stateRaw] = await Promise.all([
     readBlobText(ddKeys.transaction(sessionId)),
     readBlobText(ddKeys.extracted(sessionId, entityId)),
     readBlobText(ddKeys.classified(sessionId, entityId)),
     readBlobText(ddKeys.gaps(sessionId, entityId)),
     readBlobText(ddKeys.tables(sessionId, entityId)),
+    readBlobText(ddKeys.analysisState(sessionId, entityId)),
   ]);
   if (!txnRaw || !combined || !classifiedRaw || !gapsRaw) {
     return NextResponse.json({ error: "Selesaikan klasifikasi & gap entitas ini dahulu." }, { status: 400 });
@@ -56,6 +65,7 @@ export async function POST(req: NextRequest) {
   const gaps = JSON.parse(gapsRaw) as DDGapItem[];
   const tables = tablesRaw ? (JSON.parse(tablesRaw) as DDExtractionRow[]) : [];
   const regime = resolveRegime(entity);
+  const priorState = parseAnalysisState(stateRaw);
 
   const blocks = splitDocBlocks(combined);
   const contentByFile = new Map(blocks.map((b) => [b.fileName, b.content]));
@@ -76,6 +86,13 @@ export async function POST(req: NextRequest) {
         // own content rather than its position in the model's output.
         const priorRaw = await readBlobText(ddKeys.findings(sessionId, entityId));
         const prior: DDFinding[] = priorRaw ? (JSON.parse(priorRaw) as DDFinding[]) : [];
+        // The previous run's per-sub-section analysis. A reused aspect must carry
+        // its analysis text too, or its chapters would render as hollow scaffolding
+        // while its findings table stayed full.
+        const priorAnalysesRaw = await readBlobText(ddKeys.analyses(sessionId, entityId));
+        const priorAnalyses: DDSubsectionAnalysis[] = priorAnalysesRaw
+          ? (JSON.parse(priorAnalysesRaw) as DDSubsectionAnalysis[])
+          : [];
 
         // Aspects whose model findings this run has NOT successfully replaced —
         // either not reached yet, or failed. Their previous findings are retained,
@@ -152,15 +169,60 @@ export async function POST(req: NextRequest) {
 
         // Build the per-aspect jobs up front (applying the same <50-char skip
         // gate as before) so we can run them in concurrent waves.
-        const aspectJobs = aspects
+        const allJobs = aspects
           .map((aspectId) => ({
             aspectId,
             docsText: classified
               .filter((c) => c.aspectId === aspectId)
               .map((c) => `=== ${c.fileName} ===\n${contentByFile.get(c.fileName) ?? ""}`)
               .join("\n\n"),
+            docsDigest: aspectDocsDigest(aspectId, classified, contentByFile),
           }))
           .filter((j) => j.docsText.trim().length >= 50);
+
+        // An aspect whose documents are byte-identical to the last run keeps its
+        // findings exactly as they were — ids, review state, grounding verdicts and
+        // all. Re-deriving them would change their identities for no reason: two
+        // consecutive runs over an unchanged data room kept only 21% of finding ids,
+        // which is what made a re-run lose the lawyer's review and made the
+        // supplement report issues as gone when nothing had gone.
+        const priorCount = (a: DDAspectId) =>
+          prior.filter((f) => f.dimension === "risiko" && f.aspectId === a).length;
+        const reusable = force
+          ? []
+          : allJobs.filter((j) =>
+              canReuseAspect({
+                aspectId: j.aspectId,
+                docsDigest: j.docsDigest,
+                prior: priorState,
+                priorFindingCount: priorCount(j.aspectId),
+              })
+            );
+        const reusedAspects = new Set(reusable.map((j) => j.aspectId));
+        const aspectJobs = allJobs.filter((j) => !reusedAspects.has(j.aspectId));
+
+        // Carried verbatim, so their ids never move.
+        const reusedFindings = prior.filter(
+          (f) => f.dimension === "risiko" && f.aspectId !== null && reusedAspects.has(f.aspectId)
+        );
+        for (const a of priorAnalyses) {
+          if (reusedAspects.has(a.aspectId)) aspectAnalyses.push(a);
+        }
+        if (reusedAspects.size > 0) {
+          emit(controller, {
+            type: "step",
+            label:
+              `Dokumen tidak berubah untuk ${reusedAspects.size} aspek (` +
+              `${Array.from(reusedAspects).join(", ").replace(/_/g, " ")}) — ` +
+              `${reusedFindings.length} temuan dipertahankan apa adanya tanpa dianalisis ulang.`,
+          });
+        }
+        if (aspectJobs.length === 0) {
+          emit(controller, {
+            type: "step",
+            label: "Tidak ada aspek yang perlu dianalisis ulang; seluruh temuan dipertahankan.",
+          });
+        }
 
         // The chapter plan tells each aspect which sub-sections it must fill.
         // Without this the analysis chapters render as hollow scaffolding.
@@ -192,6 +254,8 @@ export async function POST(req: NextRequest) {
           if (!jobAspects.has(a)) unrefreshedAspects.delete(a);
         });
         for (const j of aspectJobs) unrefreshedAspects.add(j.aspectId);
+        // A reused aspect is current, not stale: reusedFindings carries it.
+        reusedAspects.forEach((a) => unrefreshedAspects.delete(a));
 
         const aspectFindings: (DDFinding[] | null)[] = new Array(aspectJobs.length).fill(null);
         const failedAspects: DDAspectId[] = [];
@@ -242,6 +306,7 @@ export async function POST(req: NextRequest) {
           // then checkpoint. Only the main task mutates `findings` (between
           // waves) — the concurrent tasks each write only their own index.
           findings = baseFindings.concat(
+            reusedFindings,
             ...aspectFindings.filter((a): a is DDFinding[] => a !== null),
             retainedPrior()
           );
@@ -265,6 +330,18 @@ export async function POST(req: NextRequest) {
               `Temuan aspek tersebut dari pemeriksaan sebelumnya dipertahankan dan BELUM diperbarui.`,
           });
         }
+        // Record what each current aspect was analysed against, so the next run can
+        // tell which ones have genuinely changed. Written only for aspects that are
+        // current now: a failed aspect keeps its previous record so it is retried.
+        const nextState: DDAnalysisState = { aspects: { ...priorState.aspects } };
+        const nowISO = new Date().toISOString();
+        for (const j of allJobs) {
+          const failed = failedAspects.indexOf(j.aspectId) !== -1;
+          if (failed) continue;
+          nextState.aspects[j.aspectId] = { docsDigest: j.docsDigest, analysedAtISO: nowISO };
+        }
+        await writeBlobText(ddKeys.analysisState(sessionId, entityId), JSON.stringify(nextState));
+
         await persist(true);
         emit(controller, { type: "done", findings });
       } catch (e) {
