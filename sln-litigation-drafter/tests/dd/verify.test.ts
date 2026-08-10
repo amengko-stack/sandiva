@@ -136,3 +136,48 @@ describe("verifyFindings", () => {
     expect(out.every((f) => f.verified)).toBe(true);
   });
 });
+
+// A second Stage 5 run reused every aspect and re-derived nothing, yet three
+// findings still vanished: this step re-ran over the carried findings and the
+// skeptic reached a different verdict. The most serious findings — the only ones
+// verified — were therefore the least stable across runs, and one the lawyer had
+// already read could disappear on nothing but a coin landing differently.
+describe("does not re-verify what already survived", () => {
+  const f = (over: Partial<DDFinding> = {}): DDFinding => ({
+    id: "f1", entityId: "e1", aspectId: "perizinan", dimension: "risiko",
+    severity: "kritis", anchor: "a", sourceFile: "nib.pdf", problem: "p",
+    whyItMatters: "w", suggestedFix: "s", verified: false, status: "open",
+    ...over,
+  });
+
+  it("passes an already-verified finding straight through, with no model call", async () => {
+    const client = {
+      messages: {
+        create: async () => {
+          throw new Error("verifyFindings must not call the model here");
+        },
+      },
+    } as unknown as Anthropic;
+    const carried = [f({ verified: true }), f({ id: "f2", verified: true, severity: "kritis" })];
+    const out = await verifyFindings(client, carried, "konteks");
+    expect(out).toBe(carried);
+  });
+
+  it("still verifies a fresh critical finding", async () => {
+    let called = 0;
+    const client = {
+      messages: {
+        create: async () => {
+          called++;
+          return {
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: '{"verdicts":[{"id":"f1","upheld":false}]}' }],
+          };
+        },
+      },
+    } as unknown as Anthropic;
+    const out = await verifyFindings(client, [f({ verified: false })], "konteks");
+    expect(called).toBe(1);
+    expect(out).toEqual([]); // refuted, so dropped
+  });
+});

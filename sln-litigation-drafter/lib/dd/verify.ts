@@ -28,7 +28,20 @@ export async function verifyFindings(
   findings: DDFinding[],
   contextText: string
 ): Promise<DDFinding[]> {
-  const targets = findings.filter((f) => f.severity === "kritis" || f.currencyStatus === "superseded");
+  // A finding that already survived this check is not put through it again.
+  //
+  // Live, a second Stage 5 run reused every aspect and re-derived nothing, yet three
+  // findings still disappeared: this step re-ran over the carried findings and the
+  // skeptic reached a different verdict that time. So the most serious findings —
+  // the only ones verified — were the least stable across runs, and one the lawyer
+  // had already read could vanish for no reason but a coin landing differently.
+  //
+  // Re-verification also cannot see what has changed since: the documents behind a
+  // carried finding are byte-identical, which is why the aspect was reused at all.
+  // A lawyer who wants the whole examination redone has "force".
+  const targets = findings.filter(
+    (f) => !f.verified && (f.severity === "kritis" || f.currencyStatus === "superseded")
+  );
   if (targets.length === 0) return findings;
 
   const context = contextText.slice(0, CONTEXT_CAP);
