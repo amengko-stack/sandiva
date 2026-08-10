@@ -57,6 +57,29 @@ Empat kebiasaan lain yang membuat kutipan gagal diperiksa, semuanya JANGAN dilak
 // Citation-chain / sanction quality bar + prohibitions for findings-producing
 // analysis prompts. Kept as one shared block so redflagSystem (and any future
 // findings prompt) states it identically and economically.
+/**
+ * Three analytical devices taken from the Polyprima acquisition report, the sample
+ * the user singled out because "kajian dalam laporan ini sangat lengkap".
+ *
+ * Reading it against our output, the difference is not length. It is that each of
+ * its findings answers a question ours left hanging:
+ *
+ *   - the sanction exists on paper, but what actually happens in practice?
+ *   - the rule is stated generally, but does it bite on the mechanism THIS company
+ *     used — a circular resolution is not a meeting, and the article may address one
+ *     and not the other;
+ *   - how many are affected, of how many? "11 of 13 shareholders are individuals"
+ *     turns an abstraction into something a buyer can price.
+ *
+ * Asked for as named parts of the analysis rather than as an exhortation to be
+ * thorough, because "be thorough" is the kind of instruction this codebase has
+ * repeatedly proved a model will drop.
+ */
+const DD_ANALYSIS_DEVICES = `KEDALAMAN ANALISIS. Sedapat mungkin, dan HANYA sepanjang didukung dokumen atau ketentuan yang kamu sebutkan, lengkapi temuan dengan tiga hal berikut:
+(i) SANKSI DAN KENYATAAN PENEGAKANNYA. Setelah menyebut sanksi beserta pasalnya, nyatakan pula bagaimana ketentuan itu bekerja dalam praktik — mis. apakah sanksi hanya berlaku bila ada pihak yang mengajukan keberatan, apakah pemulihan masih dimungkinkan sebelum penutupan transaksi, atau apakah akibat sesungguhnya bersifat keperdataan (batal/dapat dibatalkan/tidak dapat dilawankan kepada pihak ketiga) alih-alih sanksi administratif. Jangan menerka praktik regulator; bila tidak dapat dipastikan dari dokumen atau ketentuannya, tulis "[PERLU VERIFIKASI]".
+(ii) ATURAN DIUJI TERHADAP MEKANISME YANG BENAR-BENAR DIPAKAI. Jangan berhenti pada aturan umum. Periksa mekanisme yang nyatanya digunakan Perseroan dan uji apakah ketentuan itu memang menjangkaunya — keputusan pemegang saham di luar rapat (sirkuler) BUKAN RUPS, dan syarat pemanggilan, kuorum, atau risalah dapat berlaku berbeda atau tidak berlaku sama sekali. Sebutkan mekanismenya, lalu simpulkan.
+(iii) HITUNG PIHAK YANG TERKENA. Bila temuan menyangkut pemegang saham, kreditor, karyawan, bidang tanah, perjanjian, atau perizinan, sebutkan jumlahnya terhadap keseluruhan — mis. "11 dari 13 pemegang saham adalah perorangan", "3 dari 8 bidang tanah masih atas nama pihak lain". Angka diambil dari dokumen; JANGAN memperkirakan.`;
+
 const DD_FINDING_QUALITY_BAR = `Setiap temuan HARUS memuat, dalam urutan ini: (1) fakta, lalu (2) rantai kutipan LENGKAP sejauh didukung jenis dokumennya — nomor akta, tanggal, nama notaris, nomor keputusan/persetujuan Menkumham, nomor pendaftaran, dan nomor pengumuman BNRI; (3) ketidaksesuaian spesifiknya; (4) konsekuensi hukumnya, yang diisi pada kolom tersendiri "legalConsequence" — lihat instruksi pada permintaan. Fakta harus mendahului opini. Contoh standar kualitas untuk butir (4) bila memang ada sanksi (keterlambatan pendaftaran menurut UUWDP): "Pasal 32 ayat (1) UUWDP: pidana kurungan 3 bulan atau denda Rp3.000.000". Bila tidak ada sanksi, nyatakan ketiadaannya secara tegas beserta konsekuensi keperdataan/korporasinya. JANGAN mengarang sanksi yang tidak ada dasar pasalnya.
 LARANGAN: (a) jangan membuat pernyataan prediktif atau memberi jaminan mengenai tindakan regulator di masa depan; (b) jangan memberi opini di luar kompetensi konsultan hukum Indonesia (keuangan, teknis, pajak-akuntansi, atau kewajaran komersial); (c) bila suatu fakta tidak dapat dipastikan dari dokumen yang diperiksa, gunakan penanda "[PERLU VERIFIKASI]" beserta alasan singkat — jangan menerka atau berlindung di balik lindungan yang kabur. Ini mengikuti doktrin aspek yuridis formil vs materiil: kebenaran aspek materiil diasumsikan berdasarkan pernyataan manajemen.`;
 
@@ -87,6 +110,7 @@ Setiap temuan HARUS berlabuh pada kutipan verbatim dari dokumen. Tanpa kutipan =
 ${DD_ANCHOR_RULE}
 Sebutkan peraturan yang relevan pada regulationRefs dalam format yang DAPAT DIIDENTIFIKASI SECARA UNIK: nomor, tahun, dan pasal bila ada — mis. "UU 40/2007 Pasal 94 ayat (1)", "PP 5/2021", "POJK 17/POJK.04/2020". Gunakan nomor dan tahun yang lengkap; jangan menyingkat menjadi nama panggilan saja (mis. jangan hanya "UUPT" atau "Cipta Kerja") karena rujukan itu diperiksa kekiniannya secara otomatis.
 ${DD_FINDING_QUALITY_BAR}
+${DD_ANALYSIS_DEVICES}
 ${guardBlock}${DD_DATA_FRAMING}`;
 }
 
