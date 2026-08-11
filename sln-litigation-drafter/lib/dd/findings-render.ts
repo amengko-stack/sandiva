@@ -8,17 +8,23 @@ import type { DDFinding, DDReportOptions, DDSeverity } from "@/types/dd";
  * Renders a chapter's "Temuan" sub-section in the house presentation: a lead-in
  * sentence stating the count, then a dense findings table.
  *
- * On the risk column. The Makarim precedents and the HKHSK standard use no risk
- * rating at all, and I first read that as a rule and hardcoded its absence. The
- * firm's own reports disagree, and the evidence is mixed rather than one-sided:
+ * On the risk column, and a correction worth recording.
  *
- *   LDD_Report_SBN_Divestment  — no risk column
- *   LDD_PT_ITDC_Nusantara      — "Tingkat Risiko" in plain words ("Rendah-Sedang")
- *   LDD_SIIB_Pembubaran_v4     — "Tingkat Risiko" with codes ("Sedang [S]")
+ * This comment used to argue that "the firm's own reports disagree" with the
+ * convention, citing LDD_Report_SBN_Divestment (no column), LDD_PT_ITDC_Nusantara
+ * (plain words) and LDD_SIIB_Pembubaran_v4 (bracket codes). The user has since
+ * confirmed that all three of those documents are themselves Claude output. They
+ * are not evidence of how this firm writes; citing them was circular — validating a
+ * design decision against artefacts produced by the same system.
  *
- * So it is a per-report choice. The default stays "off", matching the
- * convention and the standard's three-state conclusion, with both house
- * notations available when a client expects one.
+ * What actually supports the default: the Makarim precedents and the HKHSK standard
+ * use no risk rating at all (verified: zero occurrences across three precedents and
+ * the standard's notes), and the user stated it directly — "LDD convention Indonesia
+ * tidak menggunakan tingkat risiko".
+ *
+ * So the default is "off" on two independent grounds. The two notations remain
+ * available as options a client may specifically ask for — not because any firm
+ * precedent uses them.
  *
  * The internal DDSeverity scale always orders rows so the most serious read
  * first; it is only PRINTED when a risk column is switched on.

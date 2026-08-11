@@ -258,8 +258,9 @@ const LAMPIRAN_SUBS: DDChapterSub[] = [
 
 // ---------------------------------------------------------------------------
 // exec_summary_led — organised by document category, description and analysis
-// fused in the same chapter (LDD_Report_SBN_Divestment /
-// LDD_SBN_Annotated_Mode2_HybridFraming). Bilingual titles are verbatim from
+// fused in the same chapter. (The sample this shape came from is Claude output,
+// not lawyer-written precedent — it is the user's chosen presentation, not
+// evidence of house practice.) Bilingual titles are verbatim from
 // the sample; the English gloss is kept in a trailing "(...)" so the builder
 // can strip it with one regex when bilingualHeadings is off.
 // ---------------------------------------------------------------------------
@@ -351,7 +352,7 @@ function transactionLabel(type: DDTransactionType): string {
   }
 }
 
-/** Per-chapter "Implikasi terhadap <transaksi>" sub, as the SBN sample uses. */
+/** Per-chapter "Implikasi terhadap <transaksi>" sub-section, off by default. */
 function implicationSub(categoryTitle: string, type: DDTransactionType): DDChapterSub {
   const label = transactionLabel(type);
   if (categoryTitle.startsWith("KETENAGAKERJAAN")) {
@@ -361,7 +362,7 @@ function implicationSub(categoryTitle: string, type: DDTransactionType): DDChapt
 }
 
 // ---------------------------------------------------------------------------
-// Sell-side transaction block. The SBN report is written for the SELLER: it
+// Sell-side transaction block. A seller's report differs in kind: it
 // does not ask whether the seller may transfer, it proves it, so this REPLACES
 // transactionChapters() rather than supplementing it, whenever the firm acts
 // for the seller in a divestasi or akuisisi_saham. Applies across formats.
