@@ -27,7 +27,7 @@
     "unpdf": "^1.6.2"
   },
   "engines": {
-    "node": ">=20.15.0"
+    "node": "24.x"
   },
   "devDependencies": {
     "@types/node": "^20",
