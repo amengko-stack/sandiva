@@ -13,7 +13,9 @@ describe("parseRedFlagResponse", () => {
     }]});
     const out = parseRedFlagResponse(raw, null, { entityId: "e1", aspectId: "perizinan" }).findings;
     expect(out).toHaveLength(1);
-    expect(out[0].id).toBe("e1-risiko-perizinan-0");
+    // Content-derived, not positional: a re-run of the same issue must produce the
+    // same id so the lawyer's review survives it. See tests/dd/review-state.test.ts.
+    expect(out[0].id).toMatch(/^e1-risiko-perizinan-[0-9a-f]{12}$/);
     expect(out[0].dimension).toBe("risiko");
     expect(out[0].status).toBe("open");
     expect(out[0].verified).toBe(false);
@@ -216,5 +218,41 @@ describe("verbatim anchor rule", () => {
 
   it("warns that a quote it cannot find is marked in the client report", () => {
     expect(redflagSystem()).toContain("[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]");
+  });
+});
+
+// Three devices from the Polyprima acquisition report, the sample singled out for
+// the completeness of its analysis. The difference from our output was never length
+// — it was that each of its findings answered a question ours left hanging.
+describe("analysis depth devices", () => {
+  const p = () => redflagSystem();
+
+  it("asks what the sanction does in practice, not only what it says", () => {
+    expect(p()).toContain("KENYATAAN PENEGAKANNYA");
+    expect(p()).toContain("dapat dibatalkan");
+    // Practice must not be guessed: this is the same trap as the tax percentages.
+    expect(p()).toContain("Jangan menerka praktik regulator");
+  });
+
+  // A circular shareholders' resolution is not a general meeting, and an article
+  // about meetings may not reach it at all.
+  it("asks for the rule to be tested against the mechanism actually used", () => {
+    expect(p()).toContain("MEKANISME YANG BENAR-BENAR DIPAKAI");
+    expect(p()).toContain("sirkuler");
+    expect(p()).toContain("BUKAN RUPS");
+  });
+
+  it("asks how many are affected, of how many", () => {
+    expect(p()).toContain("HITUNG PIHAK YANG TERKENA");
+    expect(p()).toContain("11 dari 13");
+    expect(p()).toContain("JANGAN memperkirakan");
+  });
+
+  // The devices are conditional on support in the documents. An unconditional
+  // demand would produce invented enforcement practice and invented counts, which
+  // is exactly what the rest of this prompt exists to prevent.
+  it("makes every device conditional on what the documents support", () => {
+    expect(p()).toContain("HANYA sepanjang didukung dokumen");
+    expect(p()).toContain("[PERLU VERIFIKASI]");
   });
 });

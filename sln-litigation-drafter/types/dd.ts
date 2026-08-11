@@ -242,6 +242,123 @@ export type DDReportBlock =
 // needs. Every entry keeps its source file and a verbatim quote so no sentence in
 // the report is unattributable.
 
+/**
+ * A snapshot of what an issued report covered, kept so a later supplement can say
+ * what changed rather than guess.
+ *
+ * Only what is needed to diff: the documents examined, the checklist items still
+ * outstanding, and a reduced record of each finding. Not the whole report — a
+ * supplement describes changes, and storing a second copy of the report would
+ * invite the two to drift apart.
+ */
+export interface DDExaminedDoc {
+  fileName: string;
+  /**
+   * Digest of the extracted text.
+   *
+   * File name alone is not an identity: a data room routinely replaces a document
+   * under the same name — a re-scan, a signed version, a corrected page. Diffing on
+   * names alone, that document compares equal, drops out of the supplement's list
+   * of what is new, and its changed contents and any findings from them go
+   * unreported. The digest is of the extracted TEXT rather than the bytes, because
+   * the text is what the examination and the quote checks actually read.
+   */
+  digest: string;
+}
+
+export interface DDBaseline {
+  entityId: string;
+  /** When the report this baseline records was issued. */
+  issuedAtISO: string;
+  cutoffDateISO: string;
+  /** The documents examined, sorted by file name. */
+  documents: DDExaminedDoc[];
+  /** Checklist item ids that were missing or incomplete. */
+  outstandingDocIds: string[];
+  findings: {
+    id: string;
+    aspectId: DDAspectId | null;
+    sourceFile: string | null;
+    severity: DDSeverity;
+    /** The lawyer's wording where they replaced the model's. */
+    problem: string;
+    status: DDFindingReviewStatus;
+  }[];
+}
+
+/** What a supplement has to report, all of it derived and none of it inferred. */
+export interface DDSupplementDiff {
+  baselineIssuedAtISO: string;
+  baselineCutoffDateISO: string;
+  cutoffDateISO: string;
+  /**
+   * Documents examined now that were not part of the earlier examination — either
+   * absent from it, or present under the same name with different content.
+   */
+  newDocuments: string[];
+  documentsExaminedNow: number;
+  /**
+   * Requested documents the current gap analysis affirmatively records as supplied.
+   * Never inferred from a checklist id merely disappearing.
+   */
+  gapsClosed: string[];
+  /**
+   * Items that left the outstanding list without being supplied — marked not
+   * applicable, or no longer on the checklist at all. Separate from gapsClosed,
+   * because reporting these as supplied would assert receipt of a document nobody
+   * has seen.
+   */
+  gapsNoLongerListed: string[];
+  /**
+   * Requirements outstanding for the first time in this examination. Deliberately
+   * NOT described as revealed BY the new documents: set arithmetic shows only that
+   * the item was not outstanding before, and a checklist edit or a regime change
+   * produces the same result. Causation would need provenance the baseline does not
+   * record.
+   */
+  gapsFirstListedNow: string[];
+  /** Outstanding at the earlier report and still outstanding now. */
+  gapsStillOutstanding: string[];
+  /**
+   * Documents listed as examined whose text could not be read. Reported rather
+   * than counted in silently: a document nobody could extract was not examined,
+   * and saying it was is a claim the data does not support.
+   */
+  documentsUnreadable: string[];
+  /**
+   * Findings whose source document is one of the new ones AND which the earlier
+   * report did not already raise. The second half matters because a document
+   * replaced under the same name counts as new, and every finding bearing that
+   * file name would otherwise be presented as arising from the replacement —
+   * including ones raised from the earlier version and merely carried forward.
+   */
+  findingsFromNewDocuments: DDFinding[];
+  /**
+   * Findings the earlier report raised that this examination does not. Reported
+   * for the lawyer to resolve, never treated as automatically cured: only a
+   * lawyer can conclude that an earlier finding no longer stands.
+   */
+  findingsNoLongerRaised: DDBaseline["findings"];
+  /**
+   * Findings the examination still raises but the lawyer has dismissed since the
+   * earlier report. The client read them and will not find them next time, so they
+   * have to be accounted for — and the cause is a review decision, not a change in
+   * the documents, which is why they are not in findingsNoLongerRaised.
+   */
+  findingsDismissedSinceBaseline: DDBaseline["findings"];
+  findingsCarriedForward: number;
+  /**
+   * Of those carried forward, how many are materially identical — same severity
+   * and same problem text as the issued report. A persisting id is not evidence
+   * of that on its own: the identity is deliberately blind to severity and
+   * wording so that a reworded finding stays the same finding, which is exactly
+   * why "unchanged" has to be checked rather than assumed.
+   */
+  findingsCarriedUnchanged: number;
+  /** Carried forward but revised in severity or wording since the earlier report. */
+  findingsCarriedRevised: DDBaseline["findings"];
+}
+
 export interface DDDeedRef {
   number: string;          // "16"
   dateISO: string;         // "2009-04-15" (or "" when illegible)

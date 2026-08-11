@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { assignModelFindingIds } from "@/lib/dd/finding-identity";
 import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
 import { redflagSystem } from "@/lib/dd/prompts";
@@ -145,11 +146,14 @@ export function parseRedFlagResponse(
   }
   if (!Array.isArray(p.findings)) throw new Error(`Hasil red-flag tanpa "findings" (${args.aspectId})`);
 
-  const findings = p.findings.map((f, n) => {
+  // Ids are assigned after mapping, from each finding's own content, so a re-run
+  // of the same issue keeps the same id and the lawyer's review survives it. See
+  // lib/dd/finding-identity.ts.
+  const parsed = p.findings.map((f) => {
     const o = f as Record<string, unknown>;
     const sev = String(o.severity ?? "");
     return {
-      id: `${args.entityId}-risiko-${args.aspectId}-${n}`,
+      id: "",
       entityId: args.entityId,
       aspectId: args.aspectId,
       dimension: "risiko" as const,
@@ -168,6 +172,9 @@ export function parseRedFlagResponse(
       status: "open" as const,
     };
   });
+
+  const ids = assignModelFindingIds(parsed);
+  const findings = parsed.map((f, i) => ({ ...f, id: ids[i] }));
 
   return {
     findings,

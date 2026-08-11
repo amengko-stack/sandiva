@@ -6,6 +6,10 @@ import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { gapToFinding } from "@/lib/dd/gap-engine";
 import { analyzeAspect, promoteDealTriggeredCells } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
+import { carryReviewState } from "@/lib/dd/review-state";
+import {
+  aspectDocsDigest, canReuseAspect, parseAnalysisState, type DDAnalysisState,
+} from "@/lib/dd/analysis-state";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
@@ -33,17 +37,23 @@ const emit = (c: ReadableStreamDefaultController<Uint8Array>, m: Msg) =>
   c.enqueue(enc.encode(JSON.stringify(m) + "\n"));
 
 export async function POST(req: NextRequest) {
-  const { sessionId, entityId } = (await req.json()) as { sessionId: string; entityId: string };
+  const { sessionId, entityId, force } = (await req.json()) as {
+    sessionId: string;
+    entityId: string;
+    /** Re-analyse every aspect even where the documents are unchanged. */
+    force?: boolean;
+  };
   if (!isValidSessionId(sessionId) || !isValidEntityId(entityId)) {
     return NextResponse.json({ error: "sessionId/entityId tidak valid" }, { status: 400 });
   }
 
-  const [txnRaw, combined, classifiedRaw, gapsRaw, tablesRaw] = await Promise.all([
+  const [txnRaw, combined, classifiedRaw, gapsRaw, tablesRaw, stateRaw] = await Promise.all([
     readBlobText(ddKeys.transaction(sessionId)),
     readBlobText(ddKeys.extracted(sessionId, entityId)),
     readBlobText(ddKeys.classified(sessionId, entityId)),
     readBlobText(ddKeys.gaps(sessionId, entityId)),
     readBlobText(ddKeys.tables(sessionId, entityId)),
+    readBlobText(ddKeys.analysisState(sessionId, entityId)),
   ]);
   if (!txnRaw || !combined || !classifiedRaw || !gapsRaw) {
     return NextResponse.json({ error: "Selesaikan klasifikasi & gap entitas ini dahulu." }, { status: 400 });
@@ -55,6 +65,7 @@ export async function POST(req: NextRequest) {
   const gaps = JSON.parse(gapsRaw) as DDGapItem[];
   const tables = tablesRaw ? (JSON.parse(tablesRaw) as DDExtractionRow[]) : [];
   const regime = resolveRegime(entity);
+  const priorState = parseAnalysisState(stateRaw);
 
   const blocks = splitDocBlocks(combined);
   const contentByFile = new Map(blocks.map((b) => [b.fileName, b.content]));
@@ -68,16 +79,77 @@ export async function POST(req: NextRequest) {
         // aspect loop — referencing it later would hit the temporal dead zone.
         const aspectAnalyses: DDSubsectionAnalysis[] = [];
 
+        // The lawyer's review of the PREVIOUS run, read before anything here
+        // overwrites it. Re-running this stage is the normal path once documents
+        // arrive after the interim report, and it used to discard every dismissal
+        // and every rewording. Carried by id, which is now derived from a finding's
+        // own content rather than its position in the model's output.
+        const priorRaw = await readBlobText(ddKeys.findings(sessionId, entityId));
+        const prior: DDFinding[] = priorRaw ? (JSON.parse(priorRaw) as DDFinding[]) : [];
+        // The previous run's per-sub-section analysis. A reused aspect must carry
+        // its analysis text too, or its chapters would render as hollow scaffolding
+        // while its findings table stayed full.
+        const priorAnalysesRaw = await readBlobText(ddKeys.analyses(sessionId, entityId));
+        const priorAnalyses: DDSubsectionAnalysis[] = priorAnalysesRaw
+          ? (JSON.parse(priorAnalysesRaw) as DDSubsectionAnalysis[])
+          : [];
+
+        // Aspects whose model findings this run has NOT successfully replaced —
+        // either not reached yet, or failed. Their previous findings are retained,
+        // because "absent from a partial or failed run" is not evidence that the
+        // issue is gone. Without this, the first checkpoint runs before any aspect
+        // has been analysed, so every previously reviewed model finding would look
+        // dropped and be written away; a timeout right after that checkpoint would
+        // lose both the findings and the review permanently. A failed aspect used
+        // to be indistinguishable from one that found nothing, which erased that
+        // aspect's findings on a transient model or parse error.
+        // Seeded from the previous run's own aspects, BEFORE the first checkpoint.
+        // Seeding later (from the job list) would leave that first checkpoint with
+        // nothing retained — the exact window in which a timeout loses the review.
+        const unrefreshedAspects = new Set<DDAspectId>();
+        for (const f of prior) {
+          if (f.dimension === "risiko" && f.aspectId !== null) unrefreshedAspects.add(f.aspectId);
+        }
+        const retainedPrior = (): DDFinding[] =>
+          prior.filter(
+            (f) =>
+              f.dimension === "risiko" &&
+              f.aspectId !== null &&
+              unrefreshedAspects.has(f.aspectId)
+          );
+
         // Checkpoint after every stage so a worst-case timeout never discards
         // findings already computed (mirrors extract/recheck-ocr's per-batch
         // persistence). JSON.stringify([]) is "[]" — always a non-empty body.
         // Both are checkpointed together: a maxDuration kill runs no catch or
         // finally, so anything not written before the kill is simply lost.
-        const persist = () =>
-          Promise.all([
+        //
+        // The carry happens inside persist, not once at the end, so a checkpoint
+        // written just before a timeout kill also keeps the review rather than
+        // saving a stripped copy over it.
+        // `final` gates the two things that are only true of a complete run: the
+        // count of reviewed findings this examination no longer raises, and the
+        // absence of any retained prior findings. Reporting either from a partial
+        // checkpoint would state that a finding is gone when its aspect simply had
+        // not run yet.
+        const persist = (final = false) => {
+          const carried = carryReviewState(findings, prior);
+          findings = carried.findings;
+          if (final && (carried.carried > 0 || carried.dropped > 0)) {
+            emit(controller, {
+              type: "step",
+              label:
+                `Review sebelumnya dipertahankan: ${carried.carried} temuan` +
+                (carried.dropped > 0
+                  ? `; ${carried.dropped} temuan yang sudah ditelaah tidak lagi muncul pada pemeriksaan ini`
+                  : ""),
+            });
+          }
+          return Promise.all([
             writeBlobText(ddKeys.findings(sessionId, entityId), JSON.stringify(findings)),
             writeBlobText(ddKeys.analyses(sessionId, entityId), JSON.stringify(aspectAnalyses)),
           ]);
+        };
 
         emit(controller, { type: "step", label: "Temuan gap (kelengkapan)" });
         findings.push(...gaps.map(gapToFinding).filter((f): f is DDFinding => f !== null));
@@ -86,6 +158,8 @@ export async function POST(req: NextRequest) {
         findings.push(...promoteDealTriggeredCells(tables, entityId));
 
         const baseFindings = findings.slice();
+        // Prior model findings ride along until their aspect is actually re-analysed.
+        findings = baseFindings.concat(retainedPrior());
         await persist();
 
         // Aspects with substantive documents; agreements are covered by the tables.
@@ -95,15 +169,60 @@ export async function POST(req: NextRequest) {
 
         // Build the per-aspect jobs up front (applying the same <50-char skip
         // gate as before) so we can run them in concurrent waves.
-        const aspectJobs = aspects
+        const allJobs = aspects
           .map((aspectId) => ({
             aspectId,
             docsText: classified
               .filter((c) => c.aspectId === aspectId)
               .map((c) => `=== ${c.fileName} ===\n${contentByFile.get(c.fileName) ?? ""}`)
               .join("\n\n"),
+            docsDigest: aspectDocsDigest(aspectId, classified, contentByFile),
           }))
           .filter((j) => j.docsText.trim().length >= 50);
+
+        // An aspect whose documents are byte-identical to the last run keeps its
+        // findings exactly as they were — ids, review state, grounding verdicts and
+        // all. Re-deriving them would change their identities for no reason: two
+        // consecutive runs over an unchanged data room kept only 21% of finding ids,
+        // which is what made a re-run lose the lawyer's review and made the
+        // supplement report issues as gone when nothing had gone.
+        const priorCount = (a: DDAspectId) =>
+          prior.filter((f) => f.dimension === "risiko" && f.aspectId === a).length;
+        const reusable = force
+          ? []
+          : allJobs.filter((j) =>
+              canReuseAspect({
+                aspectId: j.aspectId,
+                docsDigest: j.docsDigest,
+                prior: priorState,
+                priorFindingCount: priorCount(j.aspectId),
+              })
+            );
+        const reusedAspects = new Set(reusable.map((j) => j.aspectId));
+        const aspectJobs = allJobs.filter((j) => !reusedAspects.has(j.aspectId));
+
+        // Carried verbatim, so their ids never move.
+        const reusedFindings = prior.filter(
+          (f) => f.dimension === "risiko" && f.aspectId !== null && reusedAspects.has(f.aspectId)
+        );
+        for (const a of priorAnalyses) {
+          if (reusedAspects.has(a.aspectId)) aspectAnalyses.push(a);
+        }
+        if (reusedAspects.size > 0) {
+          emit(controller, {
+            type: "step",
+            label:
+              `Dokumen tidak berubah untuk ${reusedAspects.size} aspek (` +
+              `${Array.from(reusedAspects).join(", ").replace(/_/g, " ")}) — ` +
+              `${reusedFindings.length} temuan dipertahankan apa adanya tanpa dianalisis ulang.`,
+          });
+        }
+        if (aspectJobs.length === 0) {
+          emit(controller, {
+            type: "step",
+            label: "Tidak ada aspek yang perlu dianalisis ulang; seluruh temuan dipertahankan.",
+          });
+        }
 
         // The chapter plan tells each aspect which sub-sections it must fill.
         // Without this the analysis chapters render as hollow scaffolding.
@@ -127,7 +246,19 @@ export async function POST(req: NextRequest) {
           return ch.subs.filter((sub) => !sub.findings).map((sub) => sub.title);
         };
 
+        // An aspect the previous run covered but this one does not examine at all —
+        // its documents are gone from the classification — is not "unrefreshed", it
+        // is out of scope now, so its old findings must not ride along.
+        const jobAspects = new Set(aspectJobs.map((j) => j.aspectId));
+        Array.from(unrefreshedAspects).forEach((a) => {
+          if (!jobAspects.has(a)) unrefreshedAspects.delete(a);
+        });
+        for (const j of aspectJobs) unrefreshedAspects.add(j.aspectId);
+        // A reused aspect is current, not stale: reusedFindings carries it.
+        reusedAspects.forEach((a) => unrefreshedAspects.delete(a));
+
         const aspectFindings: (DDFinding[] | null)[] = new Array(aspectJobs.length).fill(null);
+        const failedAspects: DDAspectId[] = [];
         const processAspect = async (i: number) => {
           try {
             const res = await analyzeAspect(client, {
@@ -147,11 +278,17 @@ export async function POST(req: NextRequest) {
               return { ...f, grounding: { verdict: g.verdict, coverage: g.coverage, note: g.note } };
             });
             for (const a of res.analyses) aspectAnalyses.push(a);
+            // Only now may this aspect's previous findings be replaced.
+            unrefreshedAspects.delete(aspectJobs[i].aspectId);
           } catch (e) {
             // Per-aspect soft-fail: one malformed aspect response must not abort
             // the whole run (mirrors extract/recheck-ocr per-item catch).
             console.error("[dd/analyze] aspect failed:", aspectJobs[i].aspectId, e instanceof Error ? e.message : e);
-            aspectFindings[i] = [];
+            // Left null and still in unrefreshedAspects: a transient model or parse
+            // failure must not read as "this aspect was examined and found nothing",
+            // which would delete the aspect's earlier findings and the review on
+            // them. The previous findings are retained and the failure is reported.
+            failedAspects.push(aspectJobs[i].aspectId);
           }
         };
 
@@ -169,7 +306,9 @@ export async function POST(req: NextRequest) {
           // then checkpoint. Only the main task mutates `findings` (between
           // waves) — the concurrent tasks each write only their own index.
           findings = baseFindings.concat(
-            ...aspectFindings.filter((a): a is DDFinding[] => a !== null)
+            reusedFindings,
+            ...aspectFindings.filter((a): a is DDFinding[] => a !== null),
+            retainedPrior()
           );
           await persist();
         }
@@ -183,7 +322,27 @@ export async function POST(req: NextRequest) {
         emit(controller, { type: "step", label: "Verifikasi adversarial temuan kritis" });
         findings = await verifyFindings(client, findings, combined);
 
-        await persist();
+        if (failedAspects.length > 0) {
+          emit(controller, {
+            type: "step",
+            label:
+              `Aspek yang gagal dianalisis pada pemeriksaan ini: ${failedAspects.join(", ").replace(/_/g, " ")}. ` +
+              `Temuan aspek tersebut dari pemeriksaan sebelumnya dipertahankan dan BELUM diperbarui.`,
+          });
+        }
+        // Record what each current aspect was analysed against, so the next run can
+        // tell which ones have genuinely changed. Written only for aspects that are
+        // current now: a failed aspect keeps its previous record so it is retried.
+        const nextState: DDAnalysisState = { aspects: { ...priorState.aspects } };
+        const nowISO = new Date().toISOString();
+        for (const j of allJobs) {
+          const failed = failedAspects.indexOf(j.aspectId) !== -1;
+          if (failed) continue;
+          nextState.aspects[j.aspectId] = { docsDigest: j.docsDigest, analysedAtISO: nowISO };
+        }
+        await writeBlobText(ddKeys.analysisState(sessionId, entityId), JSON.stringify(nextState));
+
+        await persist(true);
         emit(controller, { type: "done", findings });
       } catch (e) {
         try { emit(controller, { type: "error", message: e instanceof Error ? e.message : "Error" }); } catch {}

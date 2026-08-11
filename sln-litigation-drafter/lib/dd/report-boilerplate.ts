@@ -5,9 +5,11 @@ import type {
   DDRegime,
   DDReportMeta,
   DDSeverity,
+  DDSupplementDiff,
   DDTransaction,
 } from "@/types/dd";
 import { transactionLabel } from "@/config/ddTransactionTypes";
+import { supplementIsWarranted } from "@/lib/dd/supplement";
 
 // ---------------------------------------------------------------------------
 // Dates
@@ -207,21 +209,58 @@ const ASSUMPTIONS_PANJANG = [
   "tidak terdapat tindakan, pemeriksaan, atau rencana tindakan oleh instansi pemerintah atau regulator terhadap Perseroan yang belum diungkapkan",
 ];
 
+/**
+ * An interim report cannot assume the data room is complete.
+ *
+ * The standard assumption set says the data room was complete and nothing material
+ * was withheld, and that the information supplied is complete. In an interim report
+ * that is a direct contradiction: chapter 1.4 names the documents that were
+ * requested and have not arrived. Left in, the report would assume away the very
+ * limitation it states, and an assumption of completeness is exactly what a reader
+ * would rely on when deciding how much weight the conclusions carry.
+ *
+ * The assumption is not dropped, it is replaced with the true one: what was
+ * supplied is assumed accurate, and completeness is expressly not assumed.
+ */
+const INTERIM_ASSUMPTION_SUBSTITUTIONS: { match: RegExp; replacement: string }[] = [
+  {
+    match: /ruang data \(data room\) yang disediakan lengkap/,
+    replacement:
+      "ruang data (data room) yang disediakan BELUM dinyatakan lengkap pada Tanggal Akhir Uji Tuntas; kelengkapannya tidak diasumsikan, dan dokumen yang belum tersedia diuraikan dalam Laporan ini",
+  },
+  {
+    match: /benar, akurat, lengkap, dan tidak berubah/,
+    replacement:
+      "benar dan akurat sepanjang isinya serta tidak berubah, namun TIDAK diasumsikan lengkap karena penyerahan dokumen belum selesai",
+  },
+];
+
+function forStage(text: string, stage: DDReportMeta["reportStage"]): string {
+  if (stage !== "interim") return text;
+  for (const s of INTERIM_ASSUMPTION_SUBSTITUTIONS) {
+    if (s.match.test(text)) return text.replace(s.match, s.replacement);
+  }
+  return text;
+}
+
 /** C. Asumsi */
-export function openingAssumptions(variant: "ringkas" | "panjang"): DDBoilerplateBlock {
+export function openingAssumptions(
+  variant: "ringkas" | "panjang",
+  stage: DDReportMeta["reportStage"] = "final"
+): DDBoilerplateBlock {
   if (variant === "ringkas") {
     const markers = ["i", "ii", "iii", "iv"];
     return {
       letter: "C",
       heading: "Asumsi",
-      body: ASSUMPTIONS_RINGKAS.map((text, i) => `(${markers[i]}) ${text}`),
+      body: ASSUMPTIONS_RINGKAS.map((text, i) => `(${markers[i]}) ${forStage(text, stage)}`),
     };
   }
   const letters = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"];
   return {
     letter: "C",
     heading: "Asumsi",
-    body: ASSUMPTIONS_PANJANG.map((text, i) => `(${letters[i]}) ${text}`),
+    body: ASSUMPTIONS_PANJANG.map((text, i) => `(${letters[i]}) ${forStage(text, stage)}`),
   };
 }
 
@@ -294,7 +333,7 @@ export function openingBlocks(
   return [
     openingScope({ transaction, entity, meta }),
     openingDocuments({ transaction, meta, outstanding }),
-    openingAssumptions(meta.assumptionsVariant),
+    openingAssumptions(meta.assumptionsVariant, meta.reportStage),
     openingQualifications(meta.reportStage),
     openingReliance({ meta }),
   ];
@@ -339,6 +378,68 @@ export function reportTitle(stage: DDReportMeta["reportStage"]): string {
 
 export function interimLegend(): string {
   return "LAPORAN INTERIM — PEMERIKSAAN BELUM SELESAI, KESIMPULAN DAPAT BERUBAH";
+}
+
+export function supplementTitle(): string {
+  return "LAPORAN TAMBAHAN (SUPPLEMENT) ATAS LAPORAN UJI TUNTAS DARI SEGI HUKUM";
+}
+
+/**
+ * The clause that makes a supplement work as a legal instrument.
+ *
+ * Following the precedent, a supplement does not restate or replace the report it
+ * follows: it is read together with it, and only what it says is changed is
+ * changed. Saying that explicitly is what stops a reader treating the supplement
+ * as a standalone report — which would be the worst outcome, since a supplement
+ * on its own describes a fraction of the examination and would read as if that
+ * fraction were the whole of it.
+ */
+export function supplementIncorporation(params: {
+  meta: DDReportMeta;
+  /** Cut-off date of the report being supplemented. */
+  baselineCutoffISO: string;
+  /** Cut-off date of this supplement. */
+  cutoffISO: string;
+}): string[] {
+  const before = params.baselineCutoffISO
+    ? formatIndonesianDate(params.baselineCutoffISO)
+    : "[TANGGAL AKHIR UJI TUNTAS LAPORAN SEBELUMNYA]";
+  const now = params.cutoffISO
+    ? formatIndonesianDate(params.cutoffISO)
+    : "[TANGGAL AKHIR UJI TUNTAS LAPORAN TAMBAHAN INI]";
+  const m = metaOrPlaceholder(params.meta);
+  return [
+    `Laporan Tambahan (Supplement) ini merupakan tambahan atas Laporan Uji Tuntas Dari Segi Hukum dengan ` +
+      `nomor referensi ${m.matterRef} yang Tanggal Akhir Uji Tuntasnya ${before} ("Laporan Sebelumnya"). ` +
+      `Laporan Tambahan ini dan Laporan Sebelumnya merupakan satu kesatuan yang tidak dapat dipisahkan dan ` +
+      `wajib dibaca serta ditafsirkan bersama-sama.`,
+    `Laporan Tambahan ini TIDAK menggantikan dan tidak mengulang Laporan Sebelumnya. Uraian, asumsi, ` +
+      `pembatasan, dan ketentuan keterandalan dalam Laporan Sebelumnya tetap berlaku sepenuhnya, kecuali ` +
+      `sepanjang secara tegas diubah dalam Laporan Tambahan ini. Hal yang tidak disebut dalam Laporan ` +
+      `Tambahan ini berarti tidak berubah.`,
+    `Laporan Tambahan ini memuat hasil pemeriksaan atas dokumen yang TIDAK termasuk dalam pemeriksaan ` +
+      `Laporan Sebelumnya, sebagaimana diperiksa sampai dengan ${now}, yaitu Tanggal Akhir Uji Tuntas ` +
+      `Laporan Tambahan ini. Kami tidak menyatakan kapan dokumen tersebut diterima; yang kami nyatakan ` +
+      `adalah dokumen tersebut belum tercakup dalam pemeriksaan sampai dengan ${before}. Peristiwa atau ` +
+      `dokumen setelah ${now} tidak diperiksa.`,
+  ];
+}
+
+/**
+ * Why a supplement must not be issued, or "" when it may be.
+ *
+ * A supplement with nothing to report would be a document that says nothing while
+ * presenting itself as an addition to a report the client relies on — and it would
+ * suggest the examination moved when it did not.
+ */
+export function supplementBlocker(diff: DDSupplementDiff): string {
+  if (supplementIsWarranted(diff)) return "";
+  return (
+    "Laporan Tambahan tidak dapat diterbitkan: dibandingkan laporan sebelumnya, tidak ada dokumen baru " +
+    "yang diperiksa, tidak ada perubahan pada daftar dokumen yang belum tersedia, dan tidak ada perubahan " +
+    "pada temuan. Jalankan ulang ekstraksi dan analisis setelah dokumen tambahan diunggah, atau terbitkan " +
+    "laporan final."
+  );
 }
 
 /**

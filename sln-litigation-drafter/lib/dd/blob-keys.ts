@@ -18,5 +18,13 @@ export const ddKeys = {
   findings: (sid: string, eid: string) => `${ent(sid, eid)}/findings.json`,
   narrative: (sid: string, eid: string) => `${ent(sid, eid)}/narrative_i.json`,
   analyses: (sid: string, eid: string) => `${ent(sid, eid)}/analyses.json`,
+  /**
+   * Snapshots of reports already issued, oldest first. A list because a matter can
+   * run interim -> supplement -> supplement -> final, and each supplement needs the
+   * state as at the report it supplements, not merely the most recent one.
+   */
+  baselines: (sid: string, eid: string) => `${ent(sid, eid)}/baselines.json`,
+  /** Which aspects were analysed, and against which documents. */
+  analysisState: (sid: string, eid: string) => `${ent(sid, eid)}/analysis_state.json`,
   consolidated: (sid: string) => `sessions/${sid}/dd/consolidated.json`,
 };
