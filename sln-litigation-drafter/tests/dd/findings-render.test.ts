@@ -92,9 +92,11 @@ describe("renderVerdictLine", () => {
 });
 
 // The risk column is a per-report choice, not a convention. Evidence from the
-// firm's own reports: LDD_Report_SBN_Divestment has none, LDD_PT_ITDC uses plain
-// words ("Rendah-Sedang"), LDD_SIIB_Pembubaran_v4 uses codes ("Sedang [S]").
-// Default stays off, matching the Makarim precedents and the HKHSK standard.
+// The default is off, on two independent grounds: the Makarim precedents and the
+// HKHSK standard use no risk rating at all, and the user stated the convention
+// directly. An earlier note here justified the two notations by citing three "firm
+// reports" that use them — those documents are Claude output, so they were no
+// evidence of anything. The notations remain because a client may ask for a rating.
 describe("risk column as a report option", () => {
   const f = (severity: DDSeverity, over: Partial<DDFinding> = {}): DDFinding => ({
     id: "x", entityId: "e1", aspectId: "pendirian_ad", dimension: "risiko", severity,
@@ -118,7 +120,7 @@ describe("risk column as a report option", () => {
     expect(JSON.stringify(rowsOf(renderFindingsTable([f("kritis")])))).not.toMatch(/Tinggi|kritis/);
   });
 
-  it("renders plain words in the ITDC notation", () => {
+  it("renders plain words when that notation is asked for", () => {
     const blocks = renderFindingsTable([f("kritis"), f("material"), f("minor")], {
       ...DD_DEFAULT_REPORT_OPTIONS, riskColumn: "kata",
     });
@@ -127,7 +129,7 @@ describe("risk column as a report option", () => {
     expect(rowsOf(blocks).map((r) => r[col])).toEqual(["Tinggi", "Sedang", "Rendah"]);
   });
 
-  it("renders bracket codes in the SIIB notation", () => {
+  it("renders bracket codes when that notation is asked for", () => {
     const blocks = renderFindingsTable([f("kritis"), f("material"), f("minor")], {
       ...DD_DEFAULT_REPORT_OPTIONS, riskColumn: "kode",
     });

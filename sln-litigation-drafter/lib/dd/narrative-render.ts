@@ -4,7 +4,7 @@ import type {
 } from "@/types/dd";
 
 /**
- * Renders BAB II (Profil Perseroan) the way the firm's own reports do: a short
+ * Renders BAB II (Profil Perseroan) in the shape the user chose: a short
  * narrative lead-in sentence that summarises and counts, followed by a dense
  * table. This is the house pattern confirmed against
  * LDD_SIIB_Pembubaran_FINAL_v4.docx §2.2 "Riwayat Pendirian & Perubahan

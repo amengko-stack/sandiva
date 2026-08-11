@@ -133,15 +133,20 @@ export interface DDEntity {
 }
 
 /**
- * Which report format to render. Format is a DELIVERABLE choice driven by what
- * the client needs, not something derivable from the data room — the firm's own
- * samples use two different shapes for the same kind of work.
+ * Which report format to render. Format is a DELIVERABLE choice driven by what the
+ * client needs, not something derivable from the data room.
+ *
+ * Provenance, because it was recorded wrongly once: the shapes below were taken
+ * from documents in the client's matter folders that turned out to be earlier
+ * Claude output, not lawyer-written precedent. The user reviewed them and chose
+ * this structure, so it is a legitimate preference of theirs — but it is NOT
+ * evidence of established house practice, and must not be cited as such.
  *
  * "pendahuluan_led"  — BAB I Pendahuluan, BAB II Profil, then analysis chapters
- *                      per aspect (as in the SIIB and ITDC reports).
+ *                      per aspect. The shape the user picked as their preferred
+ *                      presentation.
  * "exec_summary_led" — opens with Ringkasan Eksekutif, then chapters by DOCUMENT
- *                      CATEGORY with description and analysis fused (as in the
- *                      SBN divestment reports).
+ *                      CATEGORY with description and analysis fused.
  * "lut_pasar_modal"  — the capital-markets LUT. Not a free choice: where the
  *                      target is Tbk and the report feeds a prospectus, HKHSK
  *                      Annex VII / POJK 7/2017 prescribe the content.
@@ -154,15 +159,15 @@ export type DDReportFormat =
   | "findings_only";
 
 /**
- * Presentation options that vary between the firm's own reports, so none of
- * them can be hardcoded.
+ * Presentation choices that differ from client to client, so none can be
+ * hardcoded.
  *
- * riskColumn deserves a note. The Makarim precedents and the HKHSK standard use
- * no risk rating at all, and I first read that as a rule and banned it. The
- * firm's own reports disagree: the SBN divestment report has none, ITDC uses
- * plain words ("Tinggi" / "Rendah-Sedang"), and SIIB uses bracket codes
- * ("Sedang [S]"). So it is a per-report choice, and the correct default is the
- * convention (off) with both house notations available.
+ * riskColumn deserves a note. The default is "off" because the Makarim precedents
+ * and the HKHSK standard use no risk rating at all, and because the user said so
+ * directly. An earlier version of this comment justified the options by pointing at
+ * three "firm reports" that use them; those documents are Claude output, so they
+ * proved nothing. The options stay because a client may ask for a rating, not
+ * because any precedent shows one. See lib/dd/findings-render.ts.
  */
 export interface DDReportOptions {
   riskColumn: "off" | "kata" | "kode";

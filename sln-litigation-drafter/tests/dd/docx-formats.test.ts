@@ -178,7 +178,7 @@ describe("report options reach the document", () => {
     expect(bilingual).toContain("INFORMASI KORPORASI");
   });
 
-  it("shows the risk column in each house notation when asked", async () => {
+  it("shows the risk column in either notation when asked", async () => {
     const kata = await build("pendahuluan_led", { options: { riskColumn: "kata" } });
     expect(kata).toContain("Tingkat Risiko");
     expect(kata).toContain("Tinggi");

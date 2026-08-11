@@ -4,12 +4,12 @@ import { DD_ASPECTS } from "@/config/ddAspects";
 import { resolveRegime } from "@/lib/dd/regime";
 import type { DDAspectId, DDEntity, DDReportFormat } from "@/types/dd";
 
-// Format is a deliverable choice driven by client need. The firm's own samples use
+// Format is a deliverable choice driven by client need. The user picked between
 // two different shapes for comparable work:
-//   LDD_SIIB / LDD_PT_ITDC       -> Pendahuluan, Profil, analysis per aspect
-//   LDD_Report_SBN_Divestment    -> Ringkasan Eksekutif, then document-category
+//   pendahuluan_led   -> Pendahuluan, Profil, analysis per aspect
+//   exec_summary_led  -> Ringkasan Eksekutif, then document-category
 //                                   chapters with description and analysis fused
-// and the SBN one is a SELLER's report, which changes the transaction chapters.
+// and a SELLER's report changes the transaction chapters.
 
 const entity = (over: Partial<DDEntity> = {}): DDEntity => ({
   id: "e1", name: "PT Alpha", role: "target", dataRoomPath: "x", files: [], ...over,
@@ -84,7 +84,7 @@ describe("format: exec_summary_led", () => {
   });
 });
 
-// The SBN report is a seller's report: it does not ask whether the seller may
+// A seller's report does not ask whether the seller may
 // transfer, it proves it. So the transaction chapters differ by client role.
 describe("format: sell-side transaction chapters", () => {
   it("replaces the buy-side chapter when acting for the seller", () => {
