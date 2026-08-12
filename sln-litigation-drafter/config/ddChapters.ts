@@ -185,9 +185,35 @@ function transactionChapters(type: DDTransactionType): { title: string; subs: st
             "Kewajiban dari Perkara yang Berjalan",
           ],
         },
+        // The firm's own written instruction for a dissolution LDD
+        // (LDD_instructions_DISSOLUTION.md, BAB XI) asks for this chapter, and it
+        // was missing entirely. It is not an appendix to a liquidation report, it is
+        // the part that decides the legal route: if the assets do not cover the
+        // liabilities, UUPT Pasal 142 gives way to insolvency, and the liquidator's
+        // payment order under Pasal 150 becomes a question of who goes unpaid.
+        //
+        // Figures are copied from the documents and referred to an accountant — see
+        // financialFigureQualification() in report-boilerplate.ts. The examination
+        // itself excludes the truth of financial data, so the report may repeat what
+        // a document states and reason about the legal consequence, and may not
+        // value anything or compute an estimate of its own.
+        {
+          title: "ANALISIS ASET YANG AKAN DILIKUIDASI",
+          subs: [
+            "Inventarisasi Aset untuk Dilikuidasi",
+            "Analisis Solvabilitas",
+            "Aset Bermasalah",
+          ],
+        },
         {
           title: "PROSES PEMBUBARAN DAN LIKUIDASI",
-          subs: ["Tahapan Pembubaran menurut UUPT", "Pengumuman dan Jangka Waktu"],
+          subs: [
+            "Tahapan Pembubaran menurut UUPT",
+            "Pengumuman dan Jangka Waktu",
+            // BAB XII.3. Kept as a component list drawn from documents, not a total
+            // the report computes.
+            "Komponen Biaya Likuidasi",
+          ],
         },
       ];
     case "merger":
@@ -249,6 +275,18 @@ const KESIMPULAN_SUBS: DDChapterSub[] = [
   { title: "Penilaian Kepatuhan per Bab" },
   { title: "Hal yang Memerlukan Konfirmasi Lebih Lanjut" },
   { title: "Rekomendasi Tindak Lanjut" },
+];
+
+/**
+ * A dissolution conclusion carries one more sub-section than any other, because
+ * the question the whole report exists to answer is whether the estate covers the
+ * claims. The firm's written instruction puts it at 13.2, right after the summary
+ * of findings, and it is the sentence a shareholder reads first.
+ */
+const KESIMPULAN_SUBS_LIKUIDASI: DDChapterSub[] = [
+  KESIMPULAN_SUBS[0],
+  { title: "Analisis Solvabilitas Final" },
+  ...KESIMPULAN_SUBS.slice(1),
 ];
 
 const LAMPIRAN_SUBS: DDChapterSub[] = [
@@ -550,7 +588,11 @@ export function planChapters(args: {
     pushCapitalMarkets();
     pushBumn();
 
-    push("kesimpulan", "KESIMPULAN DAN REKOMENDASI", KESIMPULAN_SUBS);
+    push(
+      "kesimpulan",
+      "KESIMPULAN DAN REKOMENDASI",
+      transactionType === "likuidasi" ? KESIMPULAN_SUBS_LIKUIDASI : KESIMPULAN_SUBS
+    );
     push("lampiran", "LAMPIRAN", LAMPIRAN_SUBS);
     push("disclaimer", "DISCLAIMER", []);
   } else if (format === "findings_only") {
@@ -599,7 +641,11 @@ export function planChapters(args: {
       { title: "Kewajiban Keterbukaan Berkelanjutan" },
     ]);
 
-    push("kesimpulan", "KESIMPULAN DAN REKOMENDASI", KESIMPULAN_SUBS);
+    push(
+      "kesimpulan",
+      "KESIMPULAN DAN REKOMENDASI",
+      transactionType === "likuidasi" ? KESIMPULAN_SUBS_LIKUIDASI : KESIMPULAN_SUBS
+    );
     push("lampiran", "LAMPIRAN", LAMPIRAN_SUBS);
     push("disclaimer", "DISCLAIMER", []);
   } else {
@@ -619,7 +665,11 @@ export function planChapters(args: {
     pushCapitalMarkets();
     pushBumn();
 
-    push("kesimpulan", "KESIMPULAN DAN REKOMENDASI", KESIMPULAN_SUBS);
+    push(
+      "kesimpulan",
+      "KESIMPULAN DAN REKOMENDASI",
+      transactionType === "likuidasi" ? KESIMPULAN_SUBS_LIKUIDASI : KESIMPULAN_SUBS
+    );
     push("lampiran", "LAMPIRAN", LAMPIRAN_SUBS);
     push("disclaimer", "DISCLAIMER", []);
   }
