@@ -383,57 +383,6 @@ export default function DDStage1Setup() {
         {showReportOptions && (
           <div style={{ display: "grid", gap: 10 }}>
             <div>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>Kolom risiko pada tabel temuan</div>
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="radio"
-                    name="riskColumn"
-                    id="riskColumn-off"
-                    checked={reportOptions.riskColumn === "off"}
-                    onChange={() => patchReportOptions({ riskColumn: "off" })}
-                  />
-                  Tanpa kolom risiko
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="radio"
-                    name="riskColumn"
-                    id="riskColumn-kata"
-                    checked={reportOptions.riskColumn === "kata"}
-                    onChange={() => patchReportOptions({ riskColumn: "kata" })}
-                  />
-                  Tinggi / Sedang / Rendah
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input
-                    type="radio"
-                    name="riskColumn"
-                    id="riskColumn-kode"
-                    checked={reportOptions.riskColumn === "kode"}
-                    onChange={() => patchReportOptions({ riskColumn: "kode" })}
-                  />
-                  Tinggi [T] / Sedang [S] / Rendah [R]
-                </label>
-              </div>
-              <div style={helpText}>
-                Konvensi LDD Indonesia dan standar profesi tidak menggunakan peringkat risiko — laporan
-                selalu memuat kesimpulan tiga-keadaan (memenuhi / memenuhi dengan catatan / tidak
-                memenuhi). Kolom ini tersedia karena sebagian klien tetap mengharapkannya.
-              </div>
-            </div>
-
-            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input
-                type="checkbox"
-                id="legalConsequenceColumn"
-                checked={reportOptions.legalConsequenceColumn}
-                onChange={(ev) => patchReportOptions({ legalConsequenceColumn: ev.target.checked })}
-              />
-              Kolom Konsekuensi Hukum pada tabel temuan
-            </label>
-
-            <div>
               <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <input
                   type="checkbox"

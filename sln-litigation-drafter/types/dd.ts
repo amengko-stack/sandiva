@@ -162,15 +162,12 @@ export type DDReportFormat =
  * Presentation choices that differ from client to client, so none can be
  * hardcoded.
  *
- * riskColumn deserves a note. The default is "off" because the Makarim precedents
- * and the HKHSK standard use no risk rating at all, and because the user said so
- * directly. An earlier version of this comment justified the options by pointing at
- * three "firm reports" that use them; those documents are Claude output, so they
- * proved nothing. The options stay because a client may ask for a rating, not
- * because any precedent shows one. See lib/dd/findings-render.ts.
+ * There is deliberately no risk-rating option: risk rating is not Indonesian LDD
+ * convention, the Makarim precedents and the HKHSK standard carry none, and the
+ * documents once cited to justify one turned out to be Claude output. See
+ * lib/dd/findings-render.ts for the full history.
  */
 export interface DDReportOptions {
-  riskColumn: "off" | "kata" | "kode";
   legalConsequenceColumn: boolean;
   bilingualHeadings: boolean;
   includeTimPemeriksa: boolean;
@@ -179,7 +176,6 @@ export interface DDReportOptions {
 }
 
 export const DD_DEFAULT_REPORT_OPTIONS: DDReportOptions = {
-  riskColumn: "off",
   legalConsequenceColumn: true,
   bilingualHeadings: false,
   includeTimPemeriksa: false,

@@ -4,11 +4,15 @@ import { financialFigureQualification, solvencyUndeterminedNote } from "@/lib/dd
 import { redflagSystem } from "@/lib/dd/prompts";
 import type { DDAspectId, DDRegime } from "@/types/dd";
 
-// Checked against the firm's own written instruction for a dissolution LDD
-// (LDD_instructions_DISSOLUTION.md, BAB VIII-XIII). That file is human-written —
-// unlike the LDD reports in the same folders, which turned out to be Claude output
-// and were therefore no evidence of anything. Comparing the plan against it found
-// BAB XI missing entirely, along with 12.3 and 13.2.
+// The dissolution chapters exist because UUPT requires the analysis: Pasal 149
+// makes inventorying assets and liabilities the liquidator's first duty, Pasal 150
+// fixes the payment order, and whether the estate covers the claims decides whether
+// Pasal 142 applies at all or the matter belongs in insolvency.
+//
+// The gap was noticed while comparing against an instruction file in the client's
+// folders, which was cited at the time as the firm's written specification. It is
+// Claude output, like the LDD reports beside it — so it is not authority for
+// anything. The statute is, and these chapters answer to it.
 
 const regime = { layers: ["uupt"], capitalMarkets: false, parentTbkName: null } as unknown as DDRegime;
 const ALL: DDAspectId[] = [

@@ -389,11 +389,13 @@ export function interimLegend(): string {
  * qualifications that the examination does not cover the truth of financial data,
  * and a lawyer opining on valuation is outside their competence.
  *
- * The firm's written instruction resolves it, and this encodes that resolution:
- * "Selalu nyatakan bahwa angka adalah estimasi dan perlu diverifikasi oleh
- * akuntan/auditor". So a figure may be REPEATED from a document that states it,
- * with the source named, and the legal consequence may be reasoned from it. A
- * figure may never be valued, computed, or estimated by the report itself.
+ * The rule the user chose: a figure may be REPEATED from a document that states
+ * it, with the source named, and the legal consequence may be reasoned from it. A
+ * figure may never be valued, computed, or estimated by the report itself, and
+ * every figure carries the statement that an accountant must verify it.
+ *
+ * That keeps the report inside UUPT Pasal 149's terms — the liquidator inventories,
+ * the lawyer says what follows in law — without the firm opining on value.
  */
 export function financialFigureQualification(): string {
   return (

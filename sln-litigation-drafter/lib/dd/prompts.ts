@@ -87,8 +87,8 @@ const DD_ANALYSIS_DEVICES = `KEDALAMAN ANALISIS. Sedapat mungkin, dan HANYA sepa
  * decides whether UUPT Pasal 142 applies at all or the matter belongs in
  * insolvency. But the report's own qualifications say the examination does not
  * cover the truth of financial data, and valuation is outside a lawyer's
- * competence. The firm's written instruction resolves it: state that figures are
- * estimates requiring an accountant's verification.
+ * competence. The user's resolution: state that figures are quoted from documents
+ * and are estimates an accountant must verify.
  *
  * So: repeat what a document says, name the document, reason about the legal
  * consequence — and never compute, total, or estimate anything. Stated as a rule

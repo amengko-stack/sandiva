@@ -178,13 +178,9 @@ describe("report options reach the document", () => {
     expect(bilingual).toContain("INFORMASI KORPORASI");
   });
 
-  it("shows the risk column in either notation when asked", async () => {
-    const kata = await build("pendahuluan_led", { options: { riskColumn: "kata" } });
-    expect(kata).toContain("Tingkat Risiko");
-    expect(kata).toContain("Tinggi");
-
-    const kode = await build("pendahuluan_led", { options: { riskColumn: "kode" } });
-    expect(kode).toContain("Tinggi [T]");
+  it("never prints a risk column, which is not Indonesian LDD convention", async () => {
+    const text = await build("pendahuluan_led", {});
+    expect(text).not.toContain("Tingkat Risiko");
   });
 
   it("adds Tim Pemeriksa without dropping Asumsi dan Pembatasan", async () => {
