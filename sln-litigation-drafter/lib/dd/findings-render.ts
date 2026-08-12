@@ -8,23 +8,22 @@ import type { DDFinding, DDReportOptions, DDSeverity } from "@/types/dd";
  * Renders a chapter's "Temuan" sub-section in the house presentation: a lead-in
  * sentence stating the count, then a dense findings table.
  *
- * On the risk column, and a correction worth recording.
+ * There is no risk column, and the history of that decision is worth keeping.
  *
- * This comment used to argue that "the firm's own reports disagree" with the
- * convention, citing LDD_Report_SBN_Divestment (no column), LDD_PT_ITDC_Nusantara
- * (plain words) and LDD_SIIB_Pembubaran_v4 (bracket codes). The user has since
- * confirmed that all three of those documents are themselves Claude output. They
- * are not evidence of how this firm writes; citing them was circular — validating a
- * design decision against artefacts produced by the same system.
+ * A findings table here once offered "Tingkat Risiko" in two notations, justified by
+ * three LDD reports in the client's matter folders that use them. Those reports are
+ * Claude output. So were the instruction files found later in the same folders. Each
+ * time, a design decision was being validated against artefacts produced by the same
+ * system that was making it.
  *
- * What actually supports the default: the Makarim precedents and the HKHSK standard
- * use no risk rating at all (verified: zero occurrences across three precedents and
- * the standard's notes), and the user stated it directly — "LDD convention Indonesia
- * tidak menggunakan tingkat risiko".
+ * What survives scrutiny: the Makarim precedents and the HKHSK standard use no risk
+ * rating at all — verified, zero occurrences — and the user has stated twice that
+ * risk rating is not Indonesian LDD convention. The column is therefore gone rather
+ * than defaulted off, because an option nobody should choose is not a feature.
  *
- * So the default is "off" on two independent grounds. The two notations remain
- * available as options a client may specifically ask for — not because any firm
- * precedent uses them.
+ * The internal kritis/material/minor scale stays. It orders rows so the most serious
+ * reads first, and it decides which findings go to adversarial verification. It is
+ * never printed.
  *
  * The internal DDSeverity scale always orders rows so the most serious read
  * first; it is only PRINTED when a risk column is switched on.
@@ -34,19 +33,6 @@ const SEVERITY_ORDER: Record<DDSeverity, number> = {
   kritis: 0,
   material: 1,
   minor: 2,
-};
-
-/** House mapping from the internal scale to the words the reports use. */
-const RISK_WORD: Record<DDSeverity, string> = {
-  kritis: "Tinggi",
-  material: "Sedang",
-  minor: "Rendah",
-};
-
-const RISK_CODE: Record<DDSeverity, string> = {
-  kritis: "Tinggi [T]",
-  material: "Sedang [S]",
-  minor: "Rendah [R]",
 };
 
 const NO_DEFECT = "Tidak ada cacat formal";
@@ -68,12 +54,6 @@ function problemText(f: DDFinding): string {
   return base;
 }
 
-export function riskLabel(severity: DDSeverity, mode: DDReportOptions["riskColumn"]): string {
-  if (mode === "kata") return RISK_WORD[severity];
-  if (mode === "kode") return RISK_CODE[severity];
-  return "";
-}
-
 function sortBySeverity(findings: DDFinding[]): DDFinding[] {
   return [...findings].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 }
@@ -90,11 +70,9 @@ export function renderFindingsTable(
   const count = active.length;
   const countLabel = count === 1 ? "satu hal" : `${count} hal`;
 
-  const showRisk = options.riskColumn !== "off";
   const showConsequence = options.legalConsequenceColumn;
 
   const headers = ["No.", "Temuan", "Pasal yang Relevan"];
-  if (showRisk) headers.push("Tingkat Risiko");
   if (showConsequence) headers.push("Konsekuensi Hukum");
   headers.push("Rekomendasi");
 
@@ -104,7 +82,6 @@ export function renderFindingsTable(
       problemText(f),
       f.regulationRefs && f.regulationRefs.length > 0 ? f.regulationRefs.join("; ") : NO_DEFECT,
     ];
-    if (showRisk) row.push(riskLabel(f.severity, options.riskColumn));
     if (showConsequence) row.push(f.legalConsequence || "—");
     row.push(f.suggestedFix);
     return row;

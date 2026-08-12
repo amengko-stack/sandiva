@@ -185,12 +185,22 @@ function transactionChapters(type: DDTransactionType): { title: string; subs: st
             "Kewajiban dari Perkara yang Berjalan",
           ],
         },
-        // The firm's own written instruction for a dissolution LDD
-        // (LDD_instructions_DISSOLUTION.md, BAB XI) asks for this chapter, and it
-        // was missing entirely. It is not an appendix to a liquidation report, it is
-        // the part that decides the legal route: if the assets do not cover the
-        // liabilities, UUPT Pasal 142 gives way to insolvency, and the liquidator's
-        // payment order under Pasal 150 becomes a question of who goes unpaid.
+        // Required by UUPT itself, and it was missing entirely.
+        //
+        // Pasal 149 ayat (1) makes the inventory of assets and liabilities the
+        // liquidator's first duty; Pasal 150 fixes the order in which claims are
+        // paid. Neither means anything without knowing what there is to pay with,
+        // and if the estate does not cover the claims the matter is not a
+        // liquidation under Pasal 142 at all — it belongs in insolvency, and the
+        // payment order stops being a sequence and becomes a question of which
+        // creditors go unpaid.
+        //
+        // A note on how this was found, because the reasoning was wrong the first
+        // time: a dissolution instruction file in the client's folders lists this
+        // chapter, and it was cited here as the firm's written specification. That
+        // file is Claude output, like the LDD reports beside it. The chapter stays
+        // because the statute requires the analysis, which is checkable; the
+        // instruction file proves nothing either way.
         //
         // Figures are copied from the documents and referred to an accountant — see
         // financialFigureQualification() in report-boilerplate.ts. The examination
