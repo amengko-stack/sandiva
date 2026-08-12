@@ -80,6 +80,28 @@ const DD_ANALYSIS_DEVICES = `KEDALAMAN ANALISIS. Sedapat mungkin, dan HANYA sepa
 (ii) ATURAN DIUJI TERHADAP MEKANISME YANG BENAR-BENAR DIPAKAI. Jangan berhenti pada aturan umum. Periksa mekanisme yang nyatanya digunakan Perseroan dan uji apakah ketentuan itu memang menjangkaunya — keputusan pemegang saham di luar rapat (sirkuler) BUKAN RUPS, dan syarat pemanggilan, kuorum, atau risalah dapat berlaku berbeda atau tidak berlaku sama sekali. Sebutkan mekanismenya, lalu simpulkan.
 (iii) HITUNG PIHAK YANG TERKENA. Bila temuan menyangkut pemegang saham, kreditor, karyawan, bidang tanah, perjanjian, atau perizinan, sebutkan jumlahnya terhadap keseluruhan — mis. "11 dari 13 pemegang saham adalah perorangan", "3 dari 8 bidang tanah masih atas nama pihak lain". Angka diambil dari dokumen; JANGAN memperkirakan.`;
 
+/**
+ * How the report may handle money, added when the dissolution chapters arrived.
+ *
+ * A liquidation report cannot avoid figures — whether the estate covers the claims
+ * decides whether UUPT Pasal 142 applies at all or the matter belongs in
+ * insolvency. But the report's own qualifications say the examination does not
+ * cover the truth of financial data, and valuation is outside a lawyer's
+ * competence. The firm's written instruction resolves it: state that figures are
+ * estimates requiring an accountant's verification.
+ *
+ * So: repeat what a document says, name the document, reason about the legal
+ * consequence — and never compute, total, or estimate anything. Stated as a rule
+ * with worked wrong examples, because "do not invent figures" in the abstract is
+ * exactly the kind of instruction this codebase has watched a model drop.
+ */
+const DD_FINANCIAL_RULE = `ANGKA DAN NILAI UANG. Kamu boleh MENYALIN angka dari dokumen, dan HANYA itu.
+JANGAN menjumlahkan, mengurangkan, menghitung selisih, merata-rata, atau menaksir nilai apa pun — termasuk nilai pasar, nilai wajar, estimasi biaya, atau total kewajiban. Bila laporan membutuhkan suatu jumlah dan tidak ada dokumen yang menyatakannya, tulis "[PERLU VERIFIKASI — tidak dinyatakan dalam dokumen]".
+SALAH: "Total kewajiban Rp 4.150.000.000 (jumlah dari tiga utang di atas)" — itu hitunganmu.
+SALAH: "Estimasi nilai pasar tanah Rp 12 miliar" — tidak ada dokumen yang menyatakannya.
+BENAR: "Laporan Keuangan 31 Desember 2024 menyatakan total liabilitas Rp 4.150.000.000." — disalin, dengan sumbernya.
+Setiap angka WAJIB menyebut dokumen sumbernya. Kesimpulan solvabilitas dinyatakan sebagai akibat hukum ("apabila harta tidak mencukupi, penyelesaian tidak dapat ditempuh melalui likuidasi menurut UUPT Pasal 142 melainkan melalui kepailitan"), BUKAN sebagai penilaian keuangan.`;
+
 const DD_FINDING_QUALITY_BAR = `Setiap temuan HARUS memuat, dalam urutan ini: (1) fakta, lalu (2) rantai kutipan LENGKAP sejauh didukung jenis dokumennya — nomor akta, tanggal, nama notaris, nomor keputusan/persetujuan Menkumham, nomor pendaftaran, dan nomor pengumuman BNRI; (3) ketidaksesuaian spesifiknya; (4) konsekuensi hukumnya, yang diisi pada kolom tersendiri "legalConsequence" — lihat instruksi pada permintaan. Fakta harus mendahului opini. Contoh standar kualitas untuk butir (4) bila memang ada sanksi (keterlambatan pendaftaran menurut UUWDP): "Pasal 32 ayat (1) UUWDP: pidana kurungan 3 bulan atau denda Rp3.000.000". Bila tidak ada sanksi, nyatakan ketiadaannya secara tegas beserta konsekuensi keperdataan/korporasinya. JANGAN mengarang sanksi yang tidak ada dasar pasalnya.
 LARANGAN: (a) jangan membuat pernyataan prediktif atau memberi jaminan mengenai tindakan regulator di masa depan; (b) jangan memberi opini di luar kompetensi konsultan hukum Indonesia (keuangan, teknis, pajak-akuntansi, atau kewajaran komersial); (c) bila suatu fakta tidak dapat dipastikan dari dokumen yang diperiksa, gunakan penanda "[PERLU VERIFIKASI]" beserta alasan singkat — jangan menerka atau berlindung di balik lindungan yang kabur. Ini mengikuti doktrin aspek yuridis formil vs materiil: kebenaran aspek materiil diasumsikan berdasarkan pernyataan manajemen.`;
 
@@ -111,6 +133,7 @@ ${DD_ANCHOR_RULE}
 Sebutkan peraturan yang relevan pada regulationRefs dalam format yang DAPAT DIIDENTIFIKASI SECARA UNIK: nomor, tahun, dan pasal bila ada — mis. "UU 40/2007 Pasal 94 ayat (1)", "PP 5/2021", "POJK 17/POJK.04/2020". Gunakan nomor dan tahun yang lengkap; jangan menyingkat menjadi nama panggilan saja (mis. jangan hanya "UUPT" atau "Cipta Kerja") karena rujukan itu diperiksa kekiniannya secara otomatis.
 ${DD_FINDING_QUALITY_BAR}
 ${DD_ANALYSIS_DEVICES}
+${DD_FINANCIAL_RULE}
 ${guardBlock}${DD_DATA_FRAMING}`;
 }
 

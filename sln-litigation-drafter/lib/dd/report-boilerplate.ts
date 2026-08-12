@@ -380,6 +380,48 @@ export function interimLegend(): string {
   return "LAPORAN INTERIM — PEMERIKSAAN BELUM SELESAI, KESIMPULAN DAPAT BERUBAH";
 }
 
+/**
+ * The sentence that must accompany any money figure in the report.
+ *
+ * A dissolution LDD cannot avoid figures: whether the estate covers the claims
+ * decides the legal route, and UUPT Pasal 150's payment order is meaningless
+ * without knowing what there is to pay with. But the report states in its own
+ * qualifications that the examination does not cover the truth of financial data,
+ * and a lawyer opining on valuation is outside their competence.
+ *
+ * The firm's written instruction resolves it, and this encodes that resolution:
+ * "Selalu nyatakan bahwa angka adalah estimasi dan perlu diverifikasi oleh
+ * akuntan/auditor". So a figure may be REPEATED from a document that states it,
+ * with the source named, and the legal consequence may be reasoned from it. A
+ * figure may never be valued, computed, or estimated by the report itself.
+ */
+export function financialFigureQualification(): string {
+  return (
+    "Seluruh angka pada bagian ini dikutip dari dokumen yang disebutkan sebagai sumbernya dan " +
+    "merupakan estimasi yang WAJIB diverifikasi oleh akuntan atau auditor. Pemeriksaan ini adalah " +
+    "pemeriksaan hukum: kami tidak menilai kewajaran, tidak melakukan valuasi, dan tidak menghitung " +
+    "sendiri angka mana pun. Kesimpulan hukum yang ditarik dari angka tersebut hanya berlaku sepanjang " +
+    "angkanya benar."
+  );
+}
+
+/**
+ * What the report may say when solvency cannot be determined from the documents.
+ *
+ * Silence would be the wrong answer: a dissolution report that says nothing about
+ * solvency reads as though the estate is adequate. The absence has to be stated as
+ * an absence.
+ */
+export function solvencyUndeterminedNote(): string {
+  return (
+    "Dokumen Yang Diperiksa tidak memuat data yang cukup untuk menyatakan apakah harta Perseroan " +
+    "mencukupi seluruh kewajibannya. Hal ini WAJIB dipastikan sebelum pembubaran dilaksanakan: apabila " +
+    "harta tidak mencukupi, penyelesaian tidak dapat ditempuh melalui likuidasi berdasarkan UUPT " +
+    "Pasal 142 dan seterusnya, melainkan melalui kepailitan, dan urutan pembayaran menurut UUPT " +
+    "Pasal 150 menjadi persoalan mengenai kreditor mana yang tidak terbayar. [PERLU VERIFIKASI]"
+  );
+}
+
 export function supplementTitle(): string {
   return "LAPORAN TAMBAHAN (SUPPLEMENT) ATAS LAPORAN UJI TUNTAS DARI SEGI HUKUM";
 }
