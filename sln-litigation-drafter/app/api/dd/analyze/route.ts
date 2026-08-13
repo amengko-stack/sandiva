@@ -356,11 +356,18 @@ export async function POST(req: NextRequest) {
             .digest("hex")
             .slice(0, 32);
           const priorTxn = priorAnalyses.filter((a) => a.aspectId === "transaksi");
+          // Reuse only a COMPLETE previous result. A truncated response once left six
+          // of seventeen sub-sections unanalysed, and reusing on "some exist" would
+          // have frozen that hole in place: the digest never changes while the
+          // documents do not, so the missing chapters would never be retried and the
+          // report would print "[BELUM DIANALISIS]" for the rest of the matter.
+          const priorTitles = new Set(priorTxn.map((a) => a.subsectionTitle));
+          const priorCovers = txnSubs.every((t) => priorTitles.has(t));
           const reuseTxn =
             !force &&
             priorState.aspects[TXN_KEY] !== undefined &&
             priorState.aspects[TXN_KEY].docsDigest === txnDigest &&
-            priorTxn.length > 0;
+            priorCovers;
           if (reuseTxn) {
             for (const a of priorTxn) aspectAnalyses.push(a);
             emit(controller, {
