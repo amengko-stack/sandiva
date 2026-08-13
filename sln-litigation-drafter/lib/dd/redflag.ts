@@ -2,7 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { assignModelFindingIds } from "@/lib/dd/finding-identity";
 import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
-import { redflagSystem } from "@/lib/dd/prompts";
+import { redflagSystem, transactionAnalysisSystem } from "@/lib/dd/prompts";
+import { transactionLabel } from "@/config/ddTransactionTypes";
 import type {
   DDAspectId, DDExtractionRow, DDFinding, DDRegime, DDSeverity, DDSubsectionAnalysis, DDTransactionType,
 } from "@/types/dd";
@@ -180,6 +181,76 @@ export function parseRedFlagResponse(
     findings,
     analyses: parseAnalyses(p.analisis, args.aspectId, args.subsections ?? []),
   };
+}
+
+/**
+ * Analysis for the transaction chapters, whose sub-sections belong to no aspect.
+ *
+ * One call for all of them: they share a subject — whether the steps this
+ * transaction requires have been taken — so splitting them per sub-section would
+ * ask the model the same question repeatedly against the same documents.
+ */
+export async function analyzeTransactionChapters(
+  client: Anthropic,
+  args: {
+    entityId: string; entityName: string; docsText: string;
+    transactionType: DDTransactionType; regime: DDRegime; subsections: string[];
+  }
+): Promise<DDSubsectionAnalysis[]> {
+  if (args.subsections.length === 0) return [];
+  const prompt = `PERSEROAN: ${args.entityName}
+RENCANA TRANSAKSI: ${transactionLabel(args.transactionType)}
+
+SUB-BAGIAN YANG HARUS DIISI (gunakan judul persis seperti tertulis):
+${args.subsections.map((t, i) => `${i + 1}. ${t}`).join("\n")}
+
+=== DOKUMEN ===
+${args.docsText.slice(0, 220_000)}
+=== AKHIR DOKUMEN ===
+
+Kembalikan HANYA JSON:
+{"analyses":[{"subsectionTitle":"judul persis","analysis":["paragraf 1","paragraf 2"],"verification":["hal yang belum dapat dipastikan"],"table":{"headers":["..."],"rows":[["..."]]}}]}
+"table" bersifat opsional; sertakan hanya bila daftar lebih terbaca daripada prosa.`;
+
+  const response = await client.messages.create({
+    model: MODELS.ddRedFlag,
+    max_tokens: 8000,
+    system: transactionAnalysisSystem(args.regime, args.entityName),
+    messages: [{ role: "user", content: prompt }],
+  });
+  const raw = response.content.find((b) => b.type === "text")?.text ?? "";
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("Analisis bab transaksi bukan JSON");
+  let jsonStr = match[0];
+  if (response.stop_reason === "max_tokens") jsonStr = repairTruncatedJson(jsonStr);
+  let parsed: { analyses?: unknown[] };
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    parsed = JSON.parse(repairTruncatedJson(jsonStr));
+  }
+  const wanted = new Set(args.subsections);
+  const out: DDSubsectionAnalysis[] = [];
+  for (const a of parsed.analyses ?? []) {
+    const o = a as Record<string, unknown>;
+    const title = String(o.subsectionTitle ?? "");
+    // Only titles the plan actually contains: an invented heading would be dropped
+    // silently by the builder, which places analyses by title.
+    if (!wanted.has(title)) continue;
+    const analysis = Array.isArray(o.analysis) ? o.analysis.map((x) => String(x)).filter((x) => x.trim() !== "") : [];
+    if (analysis.length === 0) continue;
+    const verification = Array.isArray(o.verification) ? o.verification.map((x) => String(x)) : [];
+    const t = o.table as { headers?: unknown[]; rows?: unknown[] } | undefined;
+    const table =
+      t && Array.isArray(t.headers) && Array.isArray(t.rows)
+        ? {
+            headers: t.headers.map((x) => String(x)),
+            rows: (t.rows as unknown[][]).map((row) => (Array.isArray(row) ? row.map((c) => String(c)) : [])),
+          }
+        : undefined;
+    out.push({ aspectId: "transaksi", subsectionTitle: title, analysis, verification, table });
+  }
+  return out;
 }
 
 export async function analyzeAspect(

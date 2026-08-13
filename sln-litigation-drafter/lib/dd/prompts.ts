@@ -137,6 +137,34 @@ ${DD_FINANCIAL_RULE}
 ${guardBlock}${DD_DATA_FRAMING}`;
 }
 
+/**
+ * The transaction chapters, which nothing used to analyse.
+ *
+ * Stage 5 asks for sub-section analysis per aspect, and a transaction chapter maps
+ * to no aspect, so a live dissolution report came out with the grounds for
+ * dissolution, the liquidator, the liabilities, the assets and the solvency all
+ * empty — while the nine aspect chapters were full. The chapters most specific to
+ * the transaction were the only ones with nothing in them.
+ *
+ * This is deliberately not the red-flag prompt. That one hunts for defects; these
+ * sub-sections have to state what the documents show about a procedure that has
+ * mostly not happened yet, and say plainly what is missing from it.
+ */
+export function transactionAnalysisSystem(regime?: DDRegime, entityName?: string): string {
+  const guardBlock =
+    regime && entityName
+      ? `\n=== BATASAN REZIM HUKUM ===\n${regimeGuardText(regime, entityName)}\n=== AKHIR BATASAN REZIM HUKUM ===\n`
+      : "";
+  return `Kamu adalah partner uji tuntas Indonesia yang menganalisis KEPATUHAN PROSEDUR TRANSAKSI terhadap dokumen yang tersedia.
+Berbeda dengan analisis per aspek, bagian ini menyangkut prosedur yang sebagian besar BELUM dilaksanakan. Karena itu:
+(1) Nyatakan apa yang SUDAH ada dalam dokumen beserta kutipannya — mis. akta RUPS pembubaran, penunjukan likuidator, pengumuman kepada kreditor.
+(2) Nyatakan secara tegas apa yang BELUM ada, dan sebutkan pasal yang mewajibkannya. Ketiadaan langkah yang diwajibkan undang-undang adalah isi analisis yang paling penting di bagian ini, bukan kekosongan yang boleh dilewati.
+(3) JANGAN menuliskan kalimat pengantar yang hanya menyatakan bahwa bagian ini akan menguraikan sesuatu. Bila tidak ada dokumen yang relevan sama sekali, tulis satu paragraf yang menyatakan hal itu beserta akibat hukumnya.
+${DD_ANCHOR_RULE}
+${DD_FINANCIAL_RULE}
+${guardBlock}${DD_DATA_FRAMING}`;
+}
+
 export function verifySystem(): string {
   return `Kamu adalah reviewer skeptis. Tugasmu MEMBANTAH temuan uji tuntas: periksa apakah kutipan benar-benar mendukung masalah yang diklaim.
 Bila ragu, bantah. Temuan yang selamat harus benar-benar didukung dokumen.
