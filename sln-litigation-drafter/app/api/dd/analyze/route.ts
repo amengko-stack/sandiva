@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { createHash } from "crypto";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { splitDocBlocks } from "@/lib/extract-format";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { gapToFinding } from "@/lib/dd/gap-engine";
-import { analyzeAspect, promoteDealTriggeredCells } from "@/lib/dd/redflag";
+import { analyzeAspect, analyzeTransactionChapters, promoteDealTriggeredCells } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
 import {
@@ -216,7 +217,9 @@ export async function POST(req: NextRequest) {
           (f) => f.dimension === "risiko" && f.aspectId !== null && reusedAspects.has(f.aspectId)
         );
         for (const a of priorAnalyses) {
-          if (reusedAspects.has(a.aspectId)) aspectAnalyses.push(a);
+          // "transaksi" analyses are carried by the transaction block below, which
+          // has its own reuse test; here only aspect analyses are in scope.
+          if (a.aspectId !== "transaksi" && reusedAspects.has(a.aspectId)) aspectAnalyses.push(a);
         }
         if (reusedAspects.size > 0) {
           emit(controller, {
@@ -326,6 +329,72 @@ export async function POST(req: NextRequest) {
             retainedPrior()
           );
           await persist();
+        }
+
+        // The transaction chapters. Nothing analysed these until now: Stage 5 asks
+        // for sub-section analysis per aspect, and a transaction chapter belongs to
+        // no aspect, so a live dissolution report came out with all twelve of its
+        // transaction sub-sections empty while the nine aspect chapters were full.
+        //
+        // Reused on the same terms as an aspect — keyed on the whole corpus, since
+        // these chapters read across all of it rather than one aspect's documents.
+        const TXN_KEY = "transaksi";
+        const txnSubs: string[] = [];
+        for (const ch of chapterPlan) {
+          if (ch.kind !== "transaksi") continue;
+          for (const sub of ch.subs) txnSubs.push(sub.title);
+        }
+        if (txnSubs.length > 0) {
+          const txnDigest = createHash("sha256")
+            .update(txnSubs.join("|") + "::" + combined)
+            .digest("hex")
+            .slice(0, 32);
+          const priorTxn = priorAnalyses.filter((a) => a.aspectId === "transaksi");
+          const reuseTxn =
+            !force &&
+            priorState.aspects[TXN_KEY] !== undefined &&
+            priorState.aspects[TXN_KEY].docsDigest === txnDigest &&
+            priorTxn.length > 0;
+          if (reuseTxn) {
+            for (const a of priorTxn) aspectAnalyses.push(a);
+            emit(controller, {
+              type: "step",
+              label: `Bab transaksi tidak berubah — ${priorTxn.length} sub-bagian dipertahankan.`,
+            });
+          } else {
+            emit(controller, { type: "step", label: "Analisis bab transaksi" });
+            try {
+              const txnAnalyses = await analyzeTransactionChapters(client, {
+                entityId,
+                entityName: entity.name,
+                docsText: combined,
+                transactionType: txn.type,
+                regime,
+                subsections: txnSubs,
+              });
+              for (const a of txnAnalyses) aspectAnalyses.push(a);
+              nextState.aspects[TXN_KEY] = {
+                docsDigest: txnDigest,
+                analysedAtISO: new Date().toISOString(),
+              };
+              const missing = txnSubs.length - txnAnalyses.length;
+              if (missing > 0) {
+                emit(controller, {
+                  type: "step",
+                  label: `${missing} dari ${txnSubs.length} sub-bagian bab transaksi tidak terisi dan akan ditandai "[BELUM DIANALISIS]" pada laporan.`,
+                });
+              }
+            } catch (e) {
+              // Soft-fail like an aspect: the rest of the report is still worth
+              // producing, and the builder marks every unfilled sub-section.
+              console.error("[dd/analyze] transaction chapters failed:", e instanceof Error ? e.message : e);
+              emit(controller, {
+                type: "step",
+                label: 'Analisis bab transaksi gagal; sub-bagiannya ditandai "[BELUM DIANALISIS]".',
+              });
+            }
+            await persist();
+          }
         }
 
         emit(controller, { type: "step", label: "Pemeriksaan keberlakuan peraturan" });

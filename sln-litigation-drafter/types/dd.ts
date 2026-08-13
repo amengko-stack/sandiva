@@ -444,7 +444,11 @@ export interface DDNarrativeSectionI {
  * derived from the same deeds the profile chapter tabulates).
  */
 export interface DDSubsectionAnalysis {
-  aspectId: DDAspectId;
+  /**
+   * "transaksi" for the transaction-specific chapters, which belong to no aspect.
+   * Placement is by subsectionTitle; this only says where the analysis came from.
+   */
+  aspectId: DDAspectId | "transaksi";
   /** Must match a DDChapterSub.title so the builder can place it. */
   subsectionTitle: string;
   /** Paragraphs: applicable provision, application to the facts, conclusion. */

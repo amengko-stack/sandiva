@@ -304,18 +304,66 @@ function findingsForChapter(r: DDEntityResult, chapter: DDChapterPlan): DDFindin
   return r.findings.filter((f) => f.status !== "dismissed" && f.aspectId !== null && aspectSet.has(f.aspectId));
 }
 
-/** BAB for the transaction-specific chapter: framing paragraphs, then the UUPT obligation table. */
+/**
+ * BAB for the transaction-specific chapters: the analysis of each sub-section, then
+ * the UUPT obligation table.
+ *
+ * These chapters used to print one generated sentence per sub-section — "Bagian ini
+ * menguraikan pemenuhan ketentuan ... terkait analisis solvabilitas" — and nothing
+ * else. A live dissolution report came out with all twelve of its transaction
+ * sub-sections in that state while the nine aspect chapters were full: the grounds
+ * for dissolution, the liquidator, the liabilities, the assets and the solvency were
+ * empty, in a report about a dissolution.
+ *
+ * The renderer was only half the fault. Nothing ever produced the analysis either:
+ * Stage 5 asks for sub-section analysis per ASPECT, and a transaction chapter maps
+ * to no aspect, so none was ever requested. Both halves are fixed; this one now uses
+ * an analysis when there is one.
+ *
+ * The fallback says the sub-section has not been analysed, rather than describing
+ * what it would have covered. A sentence that reads like an introduction to absent
+ * content is worse than an admission — the reader takes it for a summary.
+ */
 function renderTransaksiChapter(
-  chNo: number, sub: DDChapterSub[], txnType: DDTransaction["type"], out: (Paragraph | Table)[]
+  chNo: number, sub: DDChapterSub[], txnType: DDTransaction["type"], r: DDEntityResult,
+  opts: DDReportOptions, out: (Paragraph | Table)[]
 ): void {
+  const analyses = r.analyses ?? [];
   sub.forEach((s, i) => {
     out.push(h2(`${subNumber(chNo, i)} ${s.title}`));
-    out.push(
-      p(
-        `Bagian ini menguraikan pemenuhan ketentuan Undang-Undang Perseroan Terbatas terkait ${s.title.toLowerCase()} ` +
-          `sehubungan dengan rencana ${transactionLabel(txnType).toLowerCase()}.`
-      )
+    const analysis = analyses.find((a) => a.subsectionTitle === s.title);
+    if (!analysis) {
+      out.push(
+        p(
+          `[BELUM DIANALISIS] Bagian ini belum dianalisis terhadap Dokumen Yang Diperiksa sehubungan dengan ` +
+            `rencana ${transactionLabel(txnType).toLowerCase()}. Ketiadaan uraian di sini BUKAN pernyataan bahwa ` +
+            `tidak terdapat masalah pada ${s.title.toLowerCase()}.`
+        )
+      );
+      return;
+    }
+    for (const para of analysis.analysis) out.push(p(para));
+    if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+
+    const subFindings = r.findings.filter(
+      (f) => f.status !== "dismissed" && f.subsectionTitle === s.title
     );
+    for (const el of renderBlocks(renderFindingsTable(subFindings, opts))) out.push(el);
+
+    if (analysis.verification.length > 0) {
+      out.push(p("Hal yang perlu diverifikasi:", { bold: true }));
+      for (const item of analysis.verification) {
+        out.push(
+          new Paragraph({
+            numbering: { reference: "bullets", level: 0 },
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            indent: { left: 1080, hanging: 360 },
+            children: [t(item)],
+          })
+        );
+      }
+    }
   });
   const obligations = obligationsForLayer("uupt", txnType);
   out.push(p("Kewajiban yang relevan berdasarkan Undang-Undang Perseroan Terbatas adalah sebagai berikut:"));
@@ -978,7 +1026,7 @@ export async function buildDdReportDocx(args: {
           renderTransaksiJualChapter(chNo, chapter, r, children, opts);
           break;
         case "transaksi":
-          renderTransaksiChapter(chNo, chapter.subs, transaction.type, children);
+          renderTransaksiChapter(chNo, chapter.subs, transaction.type, r, opts, children);
           break;
         case "pasar_modal":
           renderPasarModalChapter(chNo, chapter.subs, regime, r.entity, transaction.type, children);
