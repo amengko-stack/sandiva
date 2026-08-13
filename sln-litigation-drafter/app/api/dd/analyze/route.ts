@@ -132,6 +132,15 @@ export async function POST(req: NextRequest) {
         // absence of any retained prior findings. Reporting either from a partial
         // checkpoint would state that a finding is gone when its aspect simply had
         // not run yet.
+        // Written with EVERY checkpoint, not once at the end.
+        //
+        // The first run over an 83-document data room reached the aspects and the
+        // currency check and then hit the 300s ceiling during verification. The
+        // state write sat after that, so nothing recorded which aspects had just
+        // been analysed, and the next run would have redone all seven and timed out
+        // in the same place — an incremental design that never gets to be
+        // incremental. It now advances as the work completes.
+        const nextState: DDAnalysisState = { aspects: { ...priorState.aspects } };
         const persist = (final = false) => {
           const carried = carryReviewState(findings, prior);
           findings = carried.findings;
@@ -148,6 +157,7 @@ export async function POST(req: NextRequest) {
           return Promise.all([
             writeBlobText(ddKeys.findings(sessionId, entityId), JSON.stringify(findings)),
             writeBlobText(ddKeys.analyses(sessionId, entityId), JSON.stringify(aspectAnalyses)),
+            writeBlobText(ddKeys.analysisState(sessionId, entityId), JSON.stringify(nextState)),
           ]);
         };
 
@@ -278,8 +288,13 @@ export async function POST(req: NextRequest) {
               return { ...f, grounding: { verdict: g.verdict, coverage: g.coverage, note: g.note } };
             });
             for (const a of res.analyses) aspectAnalyses.push(a);
-            // Only now may this aspect's previous findings be replaced.
+            // Only now may this aspect's previous findings be replaced — and only
+            // now is it recorded as analysed against these documents.
             unrefreshedAspects.delete(aspectJobs[i].aspectId);
+            nextState.aspects[aspectJobs[i].aspectId] = {
+              docsDigest: aspectJobs[i].docsDigest,
+              analysedAtISO: new Date().toISOString(),
+            };
           } catch (e) {
             // Per-aspect soft-fail: one malformed aspect response must not abort
             // the whole run (mirrors extract/recheck-ocr per-item catch).
@@ -330,18 +345,6 @@ export async function POST(req: NextRequest) {
               `Temuan aspek tersebut dari pemeriksaan sebelumnya dipertahankan dan BELUM diperbarui.`,
           });
         }
-        // Record what each current aspect was analysed against, so the next run can
-        // tell which ones have genuinely changed. Written only for aspects that are
-        // current now: a failed aspect keeps its previous record so it is retried.
-        const nextState: DDAnalysisState = { aspects: { ...priorState.aspects } };
-        const nowISO = new Date().toISOString();
-        for (const j of allJobs) {
-          const failed = failedAspects.indexOf(j.aspectId) !== -1;
-          if (failed) continue;
-          nextState.aspects[j.aspectId] = { docsDigest: j.docsDigest, analysedAtISO: nowISO };
-        }
-        await writeBlobText(ddKeys.analysisState(sessionId, entityId), JSON.stringify(nextState));
-
         await persist(true);
         emit(controller, { type: "done", findings });
       } catch (e) {
