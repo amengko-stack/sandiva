@@ -186,9 +186,17 @@ export function parseRedFlagResponse(
 /**
  * Analysis for the transaction chapters, whose sub-sections belong to no aspect.
  *
- * One call for all of them: they share a subject — whether the steps this
- * transaction requires have been taken — so splitting them per sub-section would
- * ask the model the same question repeatedly against the same documents.
+ * One call PER CHAPTER, not one for all of them.
+ *
+ * The first live run asked for all 17 sub-sections at once and got 11 back. The
+ * eleven were the first eleven and the six missing were the last six, in document
+ * order — the signature of a response truncated at max_tokens, salvaged by the JSON
+ * repair, which necessarily loses the tail. The chapters that went missing were the
+ * assets, the solvency and the liquidation procedure: the end of the report, and for
+ * a dissolution the part that matters most.
+ *
+ * A chapter is the right unit anyway. Its sub-sections share a subject, so they are
+ * cheaper to answer together, and no chapter is long enough to run out of room.
  */
 export async function analyzeTransactionChapters(
   client: Anthropic,

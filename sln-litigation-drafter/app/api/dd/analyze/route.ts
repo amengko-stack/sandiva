@@ -339,10 +339,16 @@ export async function POST(req: NextRequest) {
         // Reused on the same terms as an aspect — keyed on the whole corpus, since
         // these chapters read across all of it rather than one aspect's documents.
         const TXN_KEY = "transaksi";
+        // Grouped by chapter: asking for all of them in one response truncated at
+        // max_tokens and silently lost the last six sub-sections.
+        const txnGroups: string[][] = [];
         const txnSubs: string[] = [];
         for (const ch of chapterPlan) {
           if (ch.kind !== "transaksi") continue;
-          for (const sub of ch.subs) txnSubs.push(sub.title);
+          const titles = ch.subs.map((sub) => sub.title);
+          if (titles.length === 0) continue;
+          txnGroups.push(titles);
+          for (const t of titles) txnSubs.push(t);
         }
         if (txnSubs.length > 0) {
           const txnDigest = createHash("sha256")
@@ -364,14 +370,19 @@ export async function POST(req: NextRequest) {
           } else {
             emit(controller, { type: "step", label: "Analisis bab transaksi" });
             try {
-              const txnAnalyses = await analyzeTransactionChapters(client, {
-                entityId,
-                entityName: entity.name,
-                docsText: combined,
-                transactionType: txn.type,
-                regime,
-                subsections: txnSubs,
-              });
+              const settled = await Promise.allSettled(
+                txnGroups.map((subsections) =>
+                  analyzeTransactionChapters(client, {
+                    entityId,
+                    entityName: entity.name,
+                    docsText: combined,
+                    transactionType: txn.type,
+                    regime,
+                    subsections,
+                  })
+                )
+              );
+              const txnAnalyses = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
               for (const a of txnAnalyses) aspectAnalyses.push(a);
               nextState.aspects[TXN_KEY] = {
                 docsDigest: txnDigest,
