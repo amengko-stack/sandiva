@@ -14,6 +14,7 @@ import {
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
+import { badCitations, checkUUPTCitations } from "@/lib/dd/statute";
 import { chapterForAspect, planChapters } from "@/config/ddChapters";
 import type {
   DDAspectId, DDClassifiedDoc, DDExtractionRow, DDFinding, DDGapItem, DDSubsectionAnalysis, DDTransaction,
@@ -420,6 +421,30 @@ export async function POST(req: NextRequest) {
         const currencyMap = await checkCurrency(refs);
         findings = applyCurrency(findings, currencyMap);
         await persist();
+
+        // Do the articles the report cites actually exist as written?
+        //
+        // Reading a live report found "UUPT Pasal 142 ayat (2) huruf c" carrying a
+        // rule attributed to it; that ayat has only a and b. Nothing looked: the
+        // quote check verifies text against documents, and the currency check
+        // confirms a regulation is in force, which UUPT is. Neither reads the
+        // article. This catches a citation that cannot be right whatever it claims.
+        {
+          const cited = findings
+            .map((f) => [f.problem, f.whyItMatters, f.legalConsequence ?? "", (f.regulationRefs ?? []).join(" ")].join(" "))
+            .concat(aspectAnalyses.flatMap((a) => a.analysis))
+            .join("\n");
+          const bad = badCitations(checkUUPTCitations(cited));
+          if (bad.length > 0) {
+            emit(controller, {
+              type: "step",
+              label:
+                `PERIKSA: ${bad.length} rujukan UUPT tidak ada sebagaimana ditulis — ` +
+                bad.map((b) => b.ref).join("; ") +
+                ". Rujukan tersebut wajib diperbaiki sebelum laporan diandalkan.",
+            });
+          }
+        }
 
         emit(controller, { type: "step", label: "Verifikasi adversarial temuan kritis" });
         findings = await verifyFindings(client, findings, combined);
