@@ -134,6 +134,7 @@ Sebutkan peraturan yang relevan pada regulationRefs dalam format yang DAPAT DIID
 ${DD_FINDING_QUALITY_BAR}
 ${DD_ANALYSIS_DEVICES}
 ${DD_FINANCIAL_RULE}
+${DD_UUPT_TRAPS}
 ${guardBlock}${DD_DATA_FRAMING}`;
 }
 
@@ -162,8 +163,34 @@ Berbeda dengan analisis per aspek, bagian ini menyangkut prosedur yang sebagian 
 (3) JANGAN menuliskan kalimat pengantar yang hanya menyatakan bahwa bagian ini akan menguraikan sesuatu. Bila tidak ada dokumen yang relevan sama sekali, tulis satu paragraf yang menyatakan hal itu beserta akibat hukumnya.
 ${DD_ANCHOR_RULE}
 ${DD_FINANCIAL_RULE}
+${DD_UUPT_TRAPS}
 ${guardBlock}${DD_DATA_FRAMING}`;
 }
+
+/**
+ * Facts about UUPT the model got wrong in a live report, stated so it cannot.
+ *
+ * Every one of these was verified against the statute text in data/statutes/. They
+ * are here rather than in a general instruction because "cite accurately" is exactly
+ * the kind of exhortation this codebase has watched a model sail past, and because
+ * each of these errors survived every other check: the article exists, so the
+ * citation check passes it, and the regulation is in force, so the currency check
+ * passes it. Only the words of the article disagree.
+ *
+ * The payment-ranking one has a cause worth remembering. A chapter sub-section asks
+ * for "Urutan Pembayaran dalam Likuidasi", and UUPT contains no ranking at all — the
+ * words urutan, prioritas, didahulukan, preferen and istimewa appear zero times in
+ * the enacting text. Asked for something the statute does not provide, the model
+ * manufactured an article to provide it. A heading that presumes a rule will get one.
+ */
+const DD_UUPT_TRAPS = `KETENTUAN UUPT YANG SERING SALAH DIKUTIP — gunakan bunyi berikut, jangan versi lain:
+(1) Pasal 142 ayat (1) memuat ENAM sebab pembubaran: keputusan RUPS; berakhirnya jangka waktu dalam anggaran dasar; penetapan pengadilan; dicabutnya kepailitan karena harta pailit tidak cukup membayar biaya kepailitan; harta pailit dalam keadaan insolvensi; dan dicabutnya izin usaha sehingga mewajibkan likuidasi. TIDAK ada "penetapan Menteri" sebagai sebab pembubaran.
+(2) Pasal 142 ayat (2) hanya memiliki huruf a dan b (wajib diikuti likuidasi; Perseroan tidak dapat melakukan perbuatan hukum kecuali untuk pemberesan). TIDAK ada huruf c.
+(3) Kewajiban mengajukan pailit bila utang melebihi harta ada pada Pasal 149 ayat (2), dan WAJIB disebut pengecualiannya: kecuali peraturan perundang-undangan menentukan lain DAN semua kreditor yang diketahui identitas dan alamatnya menyetujui pemberesan di luar kepailitan.
+(4) Pasal 147 ayat (1) mewajibkan likuidator memberitahukan pembubaran dalam 30 hari kepada kreditor dengan cara MENGUMUMKAN dalam Surat Kabar DAN Berita Negara Republik Indonesia, serta memberitahukan kepada Menteri. TIDAK ada kewajiban "surat tercatat" dalam pasal ini.
+(5) UUPT TIDAK memuat urutan prioritas pembayaran kreditor dalam likuidasi. Pasal 149 ayat (1) memuat kewajiban likuidator, bukan urutan pembayaran. Bila menganalisis urutan pembayaran, nyatakan bahwa UUPT tidak mengaturnya dan sebutkan dasar yang sebenarnya berlaku (mis. hak jaminan kebendaan, hak istimewa menurut KUHPerdata, hak pekerja menurut peraturan ketenagakerjaan, atau UU Kepailitan bila harta tidak mencukupi) — dan tandai [PERLU VERIFIKASI] bila tidak dapat dipastikan dari dokumen.
+(6) Keberatan kreditor atas rencana pembagian kekayaan hasil likuidasi diatur Pasal 149 ayat (3) dan (4), bukan Pasal 151. Pasal 151 mengatur penggantian likuidator yang tidak melaksanakan kewajibannya.
+ATURAN UMUM: jangan menyatakan suatu aturan berasal dari sebuah pasal kecuali pasal itu memang memuatnya. Bila undang-undang diam mengenai suatu hal, NYATAKAN bahwa undang-undang tidak mengaturnya — jangan mengisi kekosongan itu dengan pasal yang kebetulan bernomor dekat.`;
 
 export function verifySystem(): string {
   return `Kamu adalah reviewer skeptis. Tugasmu MEMBANTAH temuan uji tuntas: periksa apakah kutipan benar-benar mendukung masalah yang diklaim.
