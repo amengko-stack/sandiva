@@ -5,6 +5,7 @@ import {
   ayatText, badCitations, checkCitations, checkUUPTCitations, hasHuruf, parseStatute,
 } from "@/lib/dd/statute";
 import { UUPT_STRUCTURE } from "@/config/uuptStructure";
+import { redflagSystem } from "@/lib/dd/prompts";
 
 // Built after reading a live report that made three claims about UUPT Pasal 142 in
 // two adjacent sentences, and got all three wrong — including a citation to a huruf
@@ -167,5 +168,63 @@ describe("checkUUPTCitations, the path that runs in production", () => {
         for (const L of letters) expect(hasHuruf(scope, L), `Pasal ${no} (${n}) ${L}`).toBe(true);
       }
     }
+  });
+});
+
+// Five substantive misstatements of UUPT were found by reading one live report, and
+// the citation check above catches exactly one of them: the others cite articles
+// that exist and simply say something else. There is no mechanical test for that, so
+// the provisions themselves are stated in the prompt — verified here against the
+// statute text so the prompt cannot drift from the law it is quoting.
+describe("the provisions the model misquoted, stated in the prompt", () => {
+  const p = redflagSystem();
+  const body = readFileSync(join(process.cwd(), "data/statutes/uu40-2007.txt"), "utf8");
+  const enacting = body.slice(0, body.search(/^\s*P\s?E\s?N\s?J\s?E\s?L\s?A\s?S\s?A\s?N\s*$/m));
+
+  it("tells the model Pasal 142 ayat (1) has six grounds and no ministerial decree", () => {
+    expect(p).toContain("ENAM sebab pembubaran");
+    expect(p).toContain('TIDAK ada "penetapan Menteri"');
+    // And the statute agrees: six lettered grounds, a through f.
+    const a1 = ayatText(articles.get("142") ?? "", 1) ?? "";
+    for (const L of "abcdef") expect(hasHuruf(a1, L), L).toBe(true);
+    expect(hasHuruf(a1, "g")).toBe(false);
+  });
+
+  it("tells it Pasal 142 ayat (2) has no huruf c", () => {
+    expect(p).toContain("hanya memiliki huruf a dan b");
+  });
+
+  // The exception is the point: the report dropped it, and for a company whose debt
+  // is almost all to related parties it decides whether liquidation is available.
+  it("requires the creditor-consent exception in Pasal 149 ayat (2) to be stated", () => {
+    expect(p).toContain("Pasal 149 ayat (2)");
+    expect(p).toContain("menyetujui pemberesan di luar kepailitan");
+    expect(ayatText(articles.get("149") ?? "", 2) ?? "").toContain("di luar kepailitan");
+  });
+
+  it("corrects the invented registered-letter obligation in Pasal 147 ayat (1)", () => {
+    expect(p).toContain('TIDAK ada kewajiban "surat tercatat"');
+    const a1 = ayatText(articles.get("147") ?? "", 1) ?? "";
+    expect(a1).toContain("Surat Kabar");
+    expect(a1).toContain("Berita Negara");
+    expect(a1).not.toContain("surat tercatat");
+  });
+
+  // UUPT ranks nobody. A heading that presumes a ranking will be given one.
+  it("says UUPT contains no payment ranking, which the statute bears out", () => {
+    expect(p).toContain("TIDAK memuat urutan prioritas pembayaran");
+    for (const w of ["urutan", "prioritas", "didahulukan", "preferen", "istimewa"]) {
+      expect(enacting.toLowerCase().includes(w), w).toBe(false);
+    }
+  });
+
+  it("puts the distribution-plan objection in Pasal 149, not Pasal 151", () => {
+    expect(p).toContain("Pasal 149 ayat (3) dan (4), bukan Pasal 151");
+    expect(ayatText(articles.get("149") ?? "", 3) ?? "").toContain("keberatan atas rencana pembagian");
+    expect(articles.get("151") ?? "").toContain("mengangkat likuidator baru");
+  });
+
+  it("states the general rule: where the statute is silent, say so", () => {
+    expect(p).toContain("NYATAKAN bahwa undang-undang tidak mengaturnya");
   });
 });
