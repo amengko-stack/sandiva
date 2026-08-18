@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  EMPTY_ANALYSIS_STATE, aspectDocsDigest, canReuseAspect, parseAnalysisState,
+  EMPTY_ANALYSIS_STATE, aspectDocsDigest, canReuseAspect, parseAnalysisState, promptDigest,
 } from "@/lib/dd/analysis-state";
 import type { DDAnalysisState } from "@/lib/dd/analysis-state";
 import type { DDClassifiedDoc } from "@/types/dd";
@@ -72,26 +72,29 @@ describe("aspectDocsDigest", () => {
 
 describe("canReuseAspect", () => {
   const digest = aspectDocsDigest("pendirian_ad", CLASSIFIED, TEXT);
+  const PROMPT = promptDigest("instruksi versi A");
   const prior: DDAnalysisState = {
-    aspects: { pendirian_ad: { docsDigest: digest, analysedAtISO: "2026-08-01T00:00:00.000Z" } },
+    aspects: {
+      pendirian_ad: { docsDigest: digest, promptDigest: PROMPT, analysedAtISO: "2026-08-01T00:00:00.000Z" },
+    },
   };
 
   it("reuses an aspect whose documents and findings are both intact", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, prior, priorFindingCount: 8 })).toBe(true);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: PROMPT, prior, priorFindingCount: 8 })).toBe(true);
   });
 
   it("re-analyses when the documents have changed", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: "lain", prior, priorFindingCount: 8 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: "lain", promptDigest: PROMPT, prior, priorFindingCount: 8 })).toBe(false);
   });
 
   it("re-analyses an aspect that was never analysed before", () => {
-    expect(canReuseAspect({ aspectId: "perizinan", docsDigest: digest, prior, priorFindingCount: 8 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "perizinan", docsDigest: digest, promptDigest: PROMPT, prior, priorFindingCount: 8 })).toBe(false);
   });
 
   // Skipping an aspect with nothing to carry would drop it from the report
   // silently, which is worse than paying for the analysis again.
   it("re-analyses when there are no prior findings to carry", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, prior, priorFindingCount: 0 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: PROMPT, prior, priorFindingCount: 0 })).toBe(false);
   });
 });
 
@@ -110,5 +113,44 @@ describe("parseAnalysisState", () => {
     expect(parseAnalysisState("{bukan json")).toEqual(EMPTY_ANALYSIS_STATE);
     expect(parseAnalysisState("[]")).toEqual(EMPTY_ANALYSIS_STATE);
     expect(parseAnalysisState("null")).toEqual(EMPTY_ANALYSIS_STATE);
+  });
+});
+
+// Five misstatements of UUPT were corrected in the prompt after reading a live
+// report, and none of those corrections would have reached an existing matter: reuse
+// turned only on the documents, which had not changed. An improvement nobody
+// receives is indistinguishable from no improvement.
+describe("a change of instructions invalidates the analysis", () => {
+  const digest = aspectDocsDigest("pendirian_ad", CLASSIFIED, TEXT);
+  const before = promptDigest("instruksi versi A");
+  const after = promptDigest("instruksi versi A, ditambah koreksi Pasal 142");
+  const prior: DDAnalysisState = {
+    aspects: {
+      pendirian_ad: { docsDigest: digest, promptDigest: before, analysedAtISO: "2026-08-01T00:00:00.000Z" },
+    },
+  };
+
+  it("re-analyses when the prompt changed, even though the documents did not", () => {
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: after, prior, priorFindingCount: 8 })).toBe(false);
+  });
+
+  it("still reuses when neither changed", () => {
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: before, prior, priorFindingCount: 8 })).toBe(true);
+  });
+
+  // A hand-maintained version number is forgotten exactly when it matters: the run
+  // after a fix. Hashing the prompt itself cannot be forgotten.
+  it("derives the digest from the prompt text, so any edit changes it", () => {
+    expect(promptDigest("a")).not.toBe(promptDigest("a "));
+    expect(promptDigest("a")).toBe(promptDigest("a"));
+  });
+
+  // A state written before this field existed must re-analyse once rather than
+  // silently serve an answer produced under unknown instructions.
+  it("re-analyses a record written before prompts were tracked", () => {
+    const old: DDAnalysisState = {
+      aspects: { pendirian_ad: { docsDigest: digest, analysedAtISO: "2026-08-01T00:00:00.000Z" } },
+    };
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: after, prior: old, priorFindingCount: 8 })).toBe(false);
   });
 });

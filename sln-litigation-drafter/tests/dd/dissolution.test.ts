@@ -5,14 +5,16 @@ import { redflagSystem } from "@/lib/dd/prompts";
 import type { DDAspectId, DDRegime } from "@/types/dd";
 
 // The dissolution chapters exist because UUPT requires the analysis: Pasal 149
-// makes inventorying assets and liabilities the liquidator's first duty, Pasal 150
-// fixes the payment order, and whether the estate covers the claims decides whether
-// Pasal 142 applies at all or the matter belongs in insolvency.
+// ayat (1) makes inventorying the assets and debts the liquidator's first duty, and
+// whether the estate covers the claims decides whether Pasal 142 applies at all or
+// the matter belongs in insolvency under Pasal 149 ayat (2).
 //
-// The gap was noticed while comparing against an instruction file in the client's
-// folders, which was cited at the time as the firm's written specification. It is
-// Claude output, like the LDD reports beside it — so it is not authority for
-// anything. The statute is, and these chapters answer to it.
+// An earlier version of this comment also said Pasal 150 fixes the payment order. It
+// does not, and neither does any other article: UUPT contains no ranking of
+// creditors anywhere. That claim came from the same instruction file that prompted
+// these chapters — a file in the client's folders that reads like the firm's written
+// specification and is in fact Claude output. It is not authority for anything. The
+// statute is, and these chapters answer to it.
 
 const regime = { layers: ["uupt"], capitalMarkets: false, parentTbkName: null } as unknown as DDRegime;
 const ALL: DDAspectId[] = [
@@ -27,7 +29,7 @@ const titles = (type: "likuidasi" | "akuisisi_saham") => plan(type).map((c) => c
 const subsOf = (type: "likuidasi" | "akuisisi_saham", title: string) =>
   (plan(type).find((c) => c.title === title)?.subs ?? []).map((s) => s.title);
 
-describe("dissolution chapters against the firm's written instruction", () => {
+describe("dissolution chapters, measured against UUPT", () => {
   it("keeps the three chapters that already matched the instruction", () => {
     expect(subsOf("likuidasi", "DASAR DAN ALASAN PEMBUBARAN")).toEqual([
       "Dasar Hukum Pembubaran", "Alasan Pembubaran", "Keabsahan Keputusan RUPS Pembubaran",
@@ -78,8 +80,9 @@ describe("dissolution chapters against the firm's written instruction", () => {
 });
 
 // The report says in its own qualifications that the examination does not cover the
-// truth of financial data, and valuation is outside a lawyer's competence. The
-// firm's instruction resolves it: figures are estimates requiring an accountant.
+// truth of financial data, and valuation is outside a lawyer's competence. The rule
+// the user chose: quote figures from the documents, name the source, and state that
+// an accountant must verify them.
 describe("money in a legal report", () => {
   it("states that figures are copied, are estimates, and need an accountant", () => {
     const q = financialFigureQualification();
