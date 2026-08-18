@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { buildRedFlagPrompt, parseRedFlagResponse, promoteDealTriggeredCells } from "@/lib/dd/redflag";
+import {
+  buildRedFlagPrompt, parseRedFlagResponse, promoteDealTriggeredCells, selectAspectDocs,
+} from "@/lib/dd/redflag";
 import { extractTableSystem, redflagSystem } from "@/lib/dd/prompts";
 import type { DDExtractionRow } from "@/types/dd";
 import { DD_ASPECTS } from "@/config/ddAspects";
@@ -254,5 +256,78 @@ describe("analysis depth devices", () => {
   it("makes every device conditional on what the documents support", () => {
     expect(p()).toContain("HANYA sepanjang didukung dokumen");
     expect(p()).toContain("[PERLU VERIFIKASI]");
+  });
+});
+
+// SBN's tax aspect held six years of audited accounts. The corpus was cut at 40,000
+// characters mid-way through the first, and the report then said the analysis was
+// "terbatas pada dokumen yang tersedia di data room, yaitu Laporan Keuangan 2020" —
+// telling the client their data room lacked five statements they had supplied. A
+// pipeline limit reported as the client's failure is worse than no analysis.
+describe("selecting documents for an aspect", () => {
+  const doc = (fileName: string, size: number) => ({ fileName, text: "x".repeat(size) });
+
+  it("keeps whole documents rather than cutting one in half", () => {
+    const { docsText } = selectAspectDocs([doc("a.pdf", 300), doc("b.pdf", 300)], 1000);
+    expect(docsText).toContain("=== a.pdf ===");
+    expect(docsText).toContain("=== b.pdf ===");
+    // Half a financial statement invites a conclusion drawn from a balance sheet
+    // without its notes.
+    expect((docsText.match(/x/g) ?? []).length).toBe(600);
+  });
+
+  it("names what did not fit instead of dropping it silently", () => {
+    const { docsText, omitted } = selectAspectDocs(
+      [doc("kecil.pdf", 100), doc("besar.pdf", 5000)],
+      1000
+    );
+    expect(omitted).toEqual(["besar.pdf"]);
+    expect(docsText).toContain("kecil.pdf");
+    expect(docsText).not.toContain("besar.pdf");
+  });
+
+  // One enormous scan should not cost the report every licence behind it.
+  it("packs smallest first so a single huge document cannot crowd out several", () => {
+    const { omitted } = selectAspectDocs(
+      [doc("raksasa.pdf", 9000), doc("a.pdf", 200), doc("b.pdf", 200), doc("c.pdf", 200)],
+      1000
+    );
+    expect(omitted).toEqual(["raksasa.pdf"]);
+  });
+
+  it("always keeps at least one document, even past the cap", () => {
+    const { docsText, omitted } = selectAspectDocs([doc("sendirian.pdf", 9000)], 100);
+    expect(docsText).toContain("sendirian.pdf");
+    expect(omitted).toEqual([]);
+  });
+
+  it("presents kept documents in data-room order, not size order", () => {
+    const { docsText } = selectAspectDocs([doc("z.pdf", 300), doc("a.pdf", 100)], 5000);
+    expect(docsText.indexOf("z.pdf")).toBeLessThan(docsText.indexOf("a.pdf"));
+  });
+
+  it("omits nothing when everything fits", () => {
+    expect(selectAspectDocs([doc("a.pdf", 10), doc("b.pdf", 10)]).omitted).toEqual([]);
+  });
+});
+
+describe("the prompt says what it was not shown", () => {
+  const withOmitted = (omittedDocs: string[]) =>
+    buildRedFlagPrompt({
+      entityName: "PT Alpha", aspectId: "perpajakan", docsText: "isi",
+      transactionType: "likuidasi", omittedDocs,
+    });
+
+  // The distinction the report turns on: "not supplied" and "not shown to me" call
+  // for opposite sentences to the client.
+  it("names the omitted documents and forbids calling them unavailable", () => {
+    const p = withOmitted(["FS 2021.pdf", "FS 2022.pdf"]);
+    expect(p).toContain("FS 2021.pdf; FS 2022.pdf");
+    expect(p).toContain("JANGAN menyatakan dokumen tersebut tidak tersedia");
+    expect(p).toContain("[PERLU VERIFIKASI]");
+  });
+
+  it("says nothing when nothing was omitted", () => {
+    expect(withOmitted([])).not.toContain("TIDAK DISERTAKAN");
   });
 });
