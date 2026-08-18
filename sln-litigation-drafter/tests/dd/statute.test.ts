@@ -228,3 +228,35 @@ describe("the provisions the model misquoted, stated in the prompt", () => {
     expect(p).toContain("NYATAKAN bahwa undang-undang tidak mengaturnya");
   });
 });
+
+// Found by reading BAB IV of the same report: "Pasal 56 ayat (1) mewajibkan
+// pemindahan hak atas saham dicatat dalam DPS dan DPS ditandatangani oleh anggota
+// Direksi". Wrong twice over, and both halves verified against the statute below.
+describe("Pasal 56, misquoted in the capital chapter", () => {
+  const p = redflagSystem();
+
+  it("states what 56 ayat (1) actually requires: a transfer deed", () => {
+    expect(p).toContain("AKTA PEMINDAHAN HAK");
+    expect(ayatText(articles.get("56") ?? "", 1) ?? "").toContain("akta pemindahan hak");
+  });
+
+  it("puts the recording duty in ayat (3), where it is", () => {
+    expect(p).toContain("Pasal 56 ayat (3), bukan ayat (1)");
+    const a3 = ayatText(articles.get("56") ?? "", 3) ?? "";
+    expect(a3).toContain("wajib mencatat");
+    expect(a3).toContain("30");
+  });
+
+  // The signing requirement was invented outright: the word appears seven times in
+  // the enacting text, about deeds, ministerial decisions and GMS minutes — never
+  // about the shareholder register.
+  it("says UUPT does not require the register to be signed, which it does not", () => {
+    expect(p).toContain("TIDAK mewajibkan daftar pemegang saham ditandatangani");
+    const enacting = readFileSync(join(process.cwd(), "data/statutes/uu40-2007.txt"), "utf8");
+    const cut = enacting.search(/^\s*P\s?E\s?N\s?J\s?E\s?L\s?A\s?S\s?A\s?N\s*$/m);
+    const text = (cut === -1 ? enacting : enacting.slice(0, cut)).replace(/\s+/g, " ");
+    for (const m of Array.from(text.matchAll(/.{60}ditandatangani/gi))) {
+      expect(m[0].toLowerCase()).not.toContain("daftar pemegang saham");
+    }
+  });
+});
