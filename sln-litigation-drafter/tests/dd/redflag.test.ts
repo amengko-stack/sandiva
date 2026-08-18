@@ -331,3 +331,44 @@ describe("the prompt says what it was not shown", () => {
     expect(withOmitted([])).not.toContain("TIDAK DISERTAKAN");
   });
 });
+
+// Naming the omissions showed the packing rule was wrong. Across one real matter,
+// smallest-first cost the licensing chapter its NIB, the insurance chapter both
+// policies, and the tax chapter five financial statements and the tax return. Size is
+// a packing constraint; it says nothing about what a chapter is about.
+describe("what a chapter is about goes in first", () => {
+  const doc = (fileName: string, size: number, answersChecklistItem = false) => ({
+    fileName, text: "x".repeat(size), answersChecklistItem,
+  });
+
+  it("keeps a large checklist document over several small unmatched ones", () => {
+    const { docsText, omitted } = selectAspectDocs(
+      [doc("kecil-1.pdf", 400), doc("kecil-2.pdf", 400), doc("NIB.pdf", 700, true)],
+      1000
+    );
+    expect(docsText).toContain("NIB.pdf");
+    expect(omitted.length).toBeGreaterThan(0);
+    expect(omitted).not.toContain("NIB.pdf");
+  });
+
+  it("still packs smallest first among documents of equal standing", () => {
+    const { omitted } = selectAspectDocs(
+      [doc("raksasa.pdf", 9000), doc("a.pdf", 200), doc("b.pdf", 200)],
+      1000
+    );
+    expect(omitted).toEqual(["raksasa.pdf"]);
+  });
+
+  it("omits a checklist document only when even it cannot fit alongside another", () => {
+    const { docsText } = selectAspectDocs(
+      [doc("besar.pdf", 900, true), doc("juga-besar.pdf", 900, true)],
+      1000
+    );
+    expect(docsText).toContain("besar.pdf");
+  });
+
+  it("behaves as before when nothing answers a checklist item", () => {
+    const { omitted } = selectAspectDocs([doc("a.pdf", 200), doc("b.pdf", 9000)], 1000);
+    expect(omitted).toEqual(["b.pdf"]);
+  });
+});

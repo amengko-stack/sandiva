@@ -197,7 +197,11 @@ export async function POST(req: NextRequest) {
             ...selectAspectDocs(
               classified
                 .filter((c) => c.aspectId === aspectId)
-                .map((c) => ({ fileName: c.fileName, text: contentByFile.get(c.fileName) ?? "" }))
+                .map((c) => ({
+                  fileName: c.fileName,
+                  text: contentByFile.get(c.fileName) ?? "",
+                  answersChecklistItem: c.expectedDocId !== null,
+                }))
             ),
             docsDigest: "",
           }))
