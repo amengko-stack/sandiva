@@ -8,7 +8,54 @@ import type {
   DDAspectId, DDExtractionRow, DDFinding, DDRegime, DDSeverity, DDSubsectionAnalysis, DDTransactionType,
 } from "@/types/dd";
 
-const ASPECT_CHAR_CAP = 40_000;
+/**
+ * How much document text one aspect call may carry.
+ *
+ * The cap itself is fine; what was wrong was cutting the corpus mid-stream and
+ * telling nobody. SBN's tax aspect held six years of audited accounts, the cut fell
+ * inside the first one, and the report then said the analysis was "terbatas pada
+ * dokumen yang tersedia di data room, yaitu Laporan Keuangan 2020" — telling the
+ * client their data room lacked five financial statements they had in fact supplied.
+ * A pipeline limit reported as the client's failure is worse than no analysis.
+ *
+ * Documents are now selected whole, and whichever do not fit are named to the model
+ * so it can say what was left out instead of mistaking absence for non-existence.
+ */
+export const ASPECT_CHAR_CAP = 40_000;
+
+/**
+ * Whole documents up to the cap, plus the names of those left out.
+ *
+ * Whole ones because half a financial statement invites a conclusion drawn from a
+ * balance sheet without its notes. Largest-last so a single enormous document cannot
+ * crowd out several smaller ones — a scanned annual report should not cost the
+ * report its licences.
+ */
+export function selectAspectDocs(
+  docs: { fileName: string; text: string }[],
+  cap: number = ASPECT_CHAR_CAP
+): { docsText: string; omitted: string[] } {
+  const ordered = docs.slice().sort((a, b) => a.text.length - b.text.length);
+  const kept: { fileName: string; text: string }[] = [];
+  const omitted: string[] = [];
+  let used = 0;
+  for (const d of ordered) {
+    const block = `=== ${d.fileName} ===\n${d.text}`;
+    if (used + block.length > cap && kept.length > 0) {
+      omitted.push(d.fileName);
+      continue;
+    }
+    kept.push(d);
+    used += block.length + 2;
+  }
+  // Back to the order the data room presents them in; size was only a packing rule.
+  const order = new Map(docs.map((d, i) => [d.fileName, i]));
+  kept.sort((a, b) => (order.get(a.fileName) ?? 0) - (order.get(b.fileName) ?? 0));
+  return {
+    docsText: kept.map((d) => `=== ${d.fileName} ===\n${d.text}`).join("\n\n"),
+    omitted: omitted.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)),
+  };
+}
 const SEVERITIES = new Set(["kritis", "material", "minor"]);
 
 /**
@@ -45,6 +92,8 @@ export function buildRedFlagPrompt(args: {
   entityName: string; aspectId: DDAspectId; docsText: string; transactionType: DDTransactionType;
   /** Sub-section titles of the analysis chapter this aspect belongs to. */
   subsections?: string[];
+  /** In the data room for this aspect but not shown to the model. */
+  omittedDocs?: string[];
 }): string {
   // The analysis chapters previously rendered as hollow scaffolding: each
   // sub-section repeated one templated sentence and every finding piled into a
@@ -69,12 +118,18 @@ Isi "verification" dengan hal yang belum dapat dipastikan pada sub-bagian itu (b
 Sertakan "table" HANYA bila daftar/register lebih mudah dibaca sebagai tabel daripada prosa (mis. daftar RUPS: Tanggal, Jenis, Agenda, Kuorum, Sah?).
 Pada setiap temuan, isi "subsection" dengan judul sub-bagian yang paling tepat dari daftar di atas.
 `;
+  // Named, not silently dropped: the model must be able to tell "not supplied" from
+  // "not shown to me", because the report says something very different about each.
+  const omittedBlock =
+    args.omittedDocs && args.omittedDocs.length > 0
+      ? `\n\nDOKUMEN BERIKUT ADA DALAM RUANG DATA TETAPI TIDAK DISERTAKAN DI ATAS karena batas ukuran, sehingga TIDAK kamu periksa: ${args.omittedDocs.join("; ")}.\nJANGAN menyatakan dokumen tersebut tidak tersedia atau tidak diserahkan — dokumen itu ada. Bila analisismu memerlukannya, nyatakan bahwa dokumen tersebut belum diperiksa dan tandai "[PERLU VERIFIKASI]".`
+      : "";
   return `Entitas: ${args.entityName}. Aspek: ${args.aspectId.replace(/_/g, " ")}. Transaksi: ${args.transactionType.replace(/_/g, " ")}.
 ${analysisBlock}
 
 === DOKUMEN ASPEK INI ===
-${args.docsText.slice(0, ASPECT_CHAR_CAP)}
-=== AKHIR DOKUMEN ===
+${args.docsText}
+=== AKHIR DOKUMEN ===${omittedBlock}
 
 Identifikasi red flag hukum yang NYATA dari dokumen di atas untuk transaksi ini (mis. izin kedaluwarsa, modal belum disetor penuh, aset dibebani jaminan, perkara berjalan, ketidaksesuaian anggaran dasar).
 
@@ -267,6 +322,8 @@ export async function analyzeAspect(
     entityId: string; entityName: string; aspectId: DDAspectId;
     docsText: string; transactionType: DDTransactionType; regime: DDRegime;
     subsections?: string[];
+    /** In the data room for this aspect but not shown to the model. */
+    omittedDocs?: string[];
   }
 ): Promise<DDAspectAnalysisResult> {
   const response = await client.messages.create({

@@ -5,7 +5,9 @@ import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { splitDocBlocks } from "@/lib/extract-format";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { gapToFinding } from "@/lib/dd/gap-engine";
-import { analyzeAspect, analyzeTransactionChapters, promoteDealTriggeredCells } from "@/lib/dd/redflag";
+import {
+  analyzeAspect, analyzeTransactionChapters, promoteDealTriggeredCells, selectAspectDocs,
+} from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
 import {
@@ -192,10 +194,11 @@ export async function POST(req: NextRequest) {
         const allJobs = aspects
           .map((aspectId) => ({
             aspectId,
-            docsText: classified
-              .filter((c) => c.aspectId === aspectId)
-              .map((c) => `=== ${c.fileName} ===\n${contentByFile.get(c.fileName) ?? ""}`)
-              .join("\n\n"),
+            ...selectAspectDocs(
+              classified
+                .filter((c) => c.aspectId === aspectId)
+                .map((c) => ({ fileName: c.fileName, text: contentByFile.get(c.fileName) ?? "" }))
+            ),
             docsDigest: aspectDocsDigest(aspectId, classified, contentByFile),
           }))
           .filter((j) => j.docsText.trim().length >= 50);
@@ -277,6 +280,20 @@ export async function POST(req: NextRequest) {
           if (!jobAspects.has(a)) unrefreshedAspects.delete(a);
         });
         for (const j of aspectJobs) unrefreshedAspects.add(j.aspectId);
+
+        // Say what could not be shown. Silent truncation once made a report tell the
+        // client their data room lacked five financial statements they had supplied.
+        const omittedAll = allJobs.filter((j) => j.omitted.length > 0);
+        if (omittedAll.length > 0) {
+          emit(controller, {
+            type: "step",
+            label:
+              "Melebihi batas ukuran per aspek, dokumen berikut TIDAK diperiksa: " +
+              omittedAll
+                .map((j) => `${j.aspectId.replace(/_/g, " ")} (${j.omitted.join(", ")})`)
+                .join("; "),
+          });
+        }
         // A reused aspect is current, not stale: reusedFindings carries it.
         reusedAspects.forEach((a) => unrefreshedAspects.delete(a));
 
@@ -289,6 +306,7 @@ export async function POST(req: NextRequest) {
               entityName: entity.name,
               aspectId: aspectJobs[i].aspectId,
               docsText: aspectJobs[i].docsText,
+              omittedDocs: aspectJobs[i].omitted,
               transactionType: txn.type,
               regime,
               subsections: subsectionsFor(aspectJobs[i].aspectId),
