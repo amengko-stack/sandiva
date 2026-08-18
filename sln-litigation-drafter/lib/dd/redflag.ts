@@ -28,7 +28,7 @@ import type {
  * packing constraint; it says nothing about what a chapter is about. Documents that
  * answer a checklist item now go in first, and size only orders what is left.
  */
-export const ASPECT_CHAR_CAP = 40_000;
+export const ASPECT_CHAR_CAP = 200_000;
 
 /**
  * Whole documents up to the cap, plus the names of those left out.
