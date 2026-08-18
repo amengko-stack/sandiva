@@ -75,6 +75,26 @@ export function parseAnalysisState(raw: string | null): DDAnalysisState {
  * analysis: a replaced document keeps its name, and a re-OCR changes the text under
  * an unchanged name. Sorted so file ordering cannot produce a spurious difference.
  */
+/**
+ * Digest of exactly what the model was shown, and of what it was told it could not
+ * see.
+ *
+ * aspectDocsDigest below hashes the whole corpus for an aspect. That is the right
+ * answer to "did the documents change", and the wrong answer to "would this run
+ * produce the same analysis" — which is what reuse actually turns on. Selection
+ * sits between the two: when whole-document packing replaced a mid-stream cut, the
+ * corpus was identical, so every existing matter would have kept serving analysis
+ * written from a truncated view of its own data room. Hashing the selected text
+ * closes that, and closes it for any future change to the cap or the packing rule
+ * without anyone having to remember.
+ */
+export function seenDigest(docsText: string, omitted: string[]): string {
+  return createHash("sha256")
+    .update(`${docsText}\u0000${omitted.join("|")}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
 export function aspectDocsDigest(
   aspectId: DDAspectId,
   classified: DDClassifiedDoc[],
