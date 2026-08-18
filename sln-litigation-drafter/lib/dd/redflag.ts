@@ -20,6 +20,13 @@ import type {
  *
  * Documents are now selected whole, and whichever do not fit are named to the model
  * so it can say what was left out instead of mistaking absence for non-existence.
+ *
+ * Naming them showed the packing rule was wrong too. Smallest-first filled the budget
+ * with small documents and dropped the large ones, which across one real matter meant
+ * the licensing chapter lost the NIB, the insurance chapter lost both policies, and
+ * the tax chapter lost five financial statements and the tax return. Size is a
+ * packing constraint; it says nothing about what a chapter is about. Documents that
+ * answer a checklist item now go in first, and size only orders what is left.
  */
 export const ASPECT_CHAR_CAP = 40_000;
 
@@ -32,10 +39,16 @@ export const ASPECT_CHAR_CAP = 40_000;
  * report its licences.
  */
 export function selectAspectDocs(
-  docs: { fileName: string; text: string }[],
+  docs: { fileName: string; text: string; answersChecklistItem?: boolean }[],
   cap: number = ASPECT_CHAR_CAP
 ): { docsText: string; omitted: string[] } {
-  const ordered = docs.slice().sort((a, b) => a.text.length - b.text.length);
+  const ordered = docs.slice().sort((a, b) => {
+    // A document the checklist asked for is the subject of the chapter. It goes in
+    // before anything, whatever it weighs.
+    const rank = Number(b.answersChecklistItem ?? false) - Number(a.answersChecklistItem ?? false);
+    if (rank !== 0) return rank;
+    return a.text.length - b.text.length;
+  });
   const kept: { fileName: string; text: string }[] = [];
   const omitted: string[] = [];
   let used = 0;
