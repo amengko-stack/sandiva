@@ -79,12 +79,29 @@ export function parseStatute(text: string): Map<string, string> {
   return out;
 }
 
-/** The text of one numbered paragraph, or null when the article has no such ayat. */
+/**
+ * The text of one numbered paragraph, or null when the article has no such ayat.
+ *
+ * Accepts "1)" as well as "(1)". The statute text is a scrape, and in at least one
+ * article — Pasal 152 — the opening bracket of the first paragraph is missing. A
+ * checker that insisted on "(1)" read that article as having no paragraphs at all
+ * and then accused two correct citations of naming paragraphs that do not exist.
+ * That reached a live run. A false accusation about a lawyer's citation is worse
+ * than no check, so this tolerates the defect rather than reporting it as the
+ * lawyer's.
+ */
 export function ayatText(articleBody: string, n: number): string | null {
-  const start = articleBody.indexOf(`(${n})`);
+  const find = (k: number): number => {
+    const bracketed = articleBody.indexOf(`(${k})`);
+    if (bracketed !== -1) return bracketed;
+    // Only at a boundary, so "Pasal 152" cannot match "2)" inside a number.
+    const m = new RegExp(`(^|[^0-9(])${k}\\)`).exec(articleBody);
+    return m === null ? -1 : m.index + m[1].length;
+  };
+  const start = find(n);
   if (start === -1) return null;
-  const next = articleBody.indexOf(`(${n + 1})`, start);
-  return articleBody.slice(start, next === -1 ? articleBody.length : next);
+  const next = find(n + 1);
+  return articleBody.slice(start, next === -1 || next <= start ? articleBody.length : next);
 }
 
 /** Letters are written "a." at the start of each item. */

@@ -260,3 +260,39 @@ describe("Pasal 56, misquoted in the capital chapter", () => {
     }
   });
 });
+
+// The statute text is a scrape, and in six articles the opening bracket of a
+// paragraph is missing — "1)" instead of "(1)". A parser that insisted on the
+// bracketed form read those articles as having no paragraphs and then accused
+// correct citations of naming paragraphs that do not exist. Two such accusations
+// reached a live run, against Pasal 152 ayat (1) and ayat (3), both of which are
+// real. A false accusation about a lawyer's citation is worse than no check.
+describe("articles whose paragraph markers the source text mangled", () => {
+  it("reads Pasal 152, where the first paragraph opens as \"1)\"", () => {
+    const p152 = articles.get("152") ?? "";
+    expect(ayatText(p152, 1)).toContain("Likuidator bertanggung jawab kepada RUPS");
+    expect(ayatText(p152, 3)).toContain("mengumumkan hasil akhir proses likuidasi");
+    expect(UUPT_STRUCTURE["152"]["1"]).toBeDefined();
+    expect(UUPT_STRUCTURE["152"]["3"]).toBeDefined();
+  });
+
+  it("no longer accuses the citations that were wrongly flagged live", () => {
+    const bad = badCitations(
+      checkUUPTCitations(
+        "Likuidator wajib bertanggung jawab kepada RUPS menurut UUPT Pasal 152 ayat (1) dan mengumumkan hasil akhir likuidasi menurut UUPT Pasal 152 ayat (3)."
+      )
+    );
+    expect(bad).toEqual([]);
+  });
+
+  it("carries the paragraphs of every article the artefact affected", () => {
+    for (const no of ["17", "31", "65", "79", "98", "152"]) {
+      expect(Object.keys(UUPT_STRUCTURE[no]), `Pasal ${no}`).not.toEqual(["0"]);
+    }
+  });
+
+  // Tolerating "1)" must not make "Pasal 152" itself look like paragraph 2.
+  it("does not read a paragraph number out of an article number", () => {
+    expect(ayatText("Ketentuan Pasal 152 berlaku juga.", 2)).toBeNull();
+  });
+});
