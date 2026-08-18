@@ -549,6 +549,15 @@ const CONTRACT_FILENAME_RE = /perjanjian|pks|nda|akta|kontrak/i;
 // matter because an unchanged aspect is not re-analysed.
 const PDF_KRITIS_CHAR_CAP = 200_000;
 const PENDUKUNG_CHAR_CAP = 120_000;
+
+/** How deeply a category is read. Exported so the cache can tell a stale depth. */
+export function charCapFor(category: DocCategory): number {
+  return category === "KRITIS"
+    ? PDF_KRITIS_CHAR_CAP
+    : category === "PENDUKUNG"
+      ? PENDUKUNG_CHAR_CAP
+      : REFERENSI_CHAR_CAP;
+}
 const REFERENSI_CHAR_CAP = 5_000;
 
 // Avg chars/page below this ⇒ treat as scanned (image) PDF needing external OCR
