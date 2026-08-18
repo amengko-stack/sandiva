@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
+import { charCapFor, extractWithTier, getFileLastModified } from "@/lib/sharepoint";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
 import { formatDocBlock } from "@/lib/extract-format";
@@ -130,6 +130,7 @@ export async function POST(req: NextRequest) {
             extractedAt: new Date().toISOString(),
             sharePointPath: file.path,
             fileModifiedAt: currentModifiedAt ?? "",
+            charCap: charCapFor(category),
           };
           docBlocks[i] = formatDocBlock(metadata, content);
           await writeExtractionCache(file.path, { content, metadata });

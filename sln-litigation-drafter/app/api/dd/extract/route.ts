@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
+import { charCapFor, extractWithTier, getFileLastModified } from "@/lib/sharepoint";
 import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { formatDocBlock } from "@/lib/extract-format";
@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
           const currentModifiedAt = await getFileLastModified(file.path);
 
           // Cache: valid when fileModifiedAt matches AND under 7 days old
-          const cached = await readExtractionCache(file.path, currentModifiedAt, category);
+          const cached = await readExtractionCache(file.path, currentModifiedAt, category, charCapFor(category));
           if (cached && isBlank(cached.content)) {
             // Stale empty cache entry — fall through to fresh extraction.
             console.log(`[read-files] cache-hit empty → fall through name=${file.name}`);
@@ -147,6 +147,7 @@ export async function POST(req: NextRequest) {
             extractedAt: new Date().toISOString(),
             sharePointPath: file.path,
             fileModifiedAt: currentModifiedAt ?? "",
+            charCap: charCapFor(category),
           };
           docBlocks[i] = formatDocBlock(metadata, content);
           await writeExtractionCache(file.path, { content, metadata });
