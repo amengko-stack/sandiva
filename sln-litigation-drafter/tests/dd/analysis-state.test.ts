@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EMPTY_ANALYSIS_STATE, aspectDocsDigest, canReuseAspect, parseAnalysisState, promptDigest,
+  seenDigest,
 } from "@/lib/dd/analysis-state";
 import type { DDAnalysisState } from "@/lib/dd/analysis-state";
 import type { DDClassifiedDoc } from "@/types/dd";
@@ -152,5 +153,29 @@ describe("a change of instructions invalidates the analysis", () => {
       aspects: { pendirian_ad: { docsDigest: digest, analysedAtISO: "2026-08-01T00:00:00.000Z" } },
     };
     expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: after, prior: old, priorFindingCount: 8 })).toBe(false);
+  });
+});
+
+// Reuse must turn on what the model was shown, not on what the data room holds.
+// When whole-document packing replaced a mid-stream cut, the corpus was byte for
+// byte identical, so every existing matter would have gone on serving analysis
+// written from a truncated view of its own documents.
+describe("seenDigest", () => {
+  it("changes when the selected text changes", () => {
+    expect(seenDigest("a", [])).not.toBe(seenDigest("ab", []));
+  });
+
+  it("changes when a document is omitted that was not omitted before", () => {
+    expect(seenDigest("a", [])).not.toBe(seenDigest("a", ["besar.pdf"]));
+  });
+
+  it("is stable for the same view", () => {
+    expect(seenDigest("a", ["x.pdf"])).toBe(seenDigest("a", ["x.pdf"]));
+  });
+
+  // The separator matters: without it, text ending in a name and an empty omission
+  // list would collide with shorter text and that name omitted.
+  it("does not collide across the text and omission boundary", () => {
+    expect(seenDigest("ax.pdf", [])).not.toBe(seenDigest("a", ["x.pdf"]));
   });
 });

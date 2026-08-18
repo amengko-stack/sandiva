@@ -11,7 +11,7 @@ import {
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
 import {
-  aspectDocsDigest, canReuseAspect, parseAnalysisState, promptDigest, type DDAnalysisState,
+  canReuseAspect, parseAnalysisState, promptDigest, seenDigest, type DDAnalysisState,
 } from "@/lib/dd/analysis-state";
 import { redflagSystem, transactionAnalysisSystem } from "@/lib/dd/prompts";
 import { verifyFindings } from "@/lib/dd/verify";
@@ -199,9 +199,12 @@ export async function POST(req: NextRequest) {
                 .filter((c) => c.aspectId === aspectId)
                 .map((c) => ({ fileName: c.fileName, text: contentByFile.get(c.fileName) ?? "" }))
             ),
-            docsDigest: aspectDocsDigest(aspectId, classified, contentByFile),
+            docsDigest: "",
           }))
-          .filter((j) => j.docsText.trim().length >= 50);
+          .filter((j) => j.docsText.trim().length >= 50)
+          // From what the model will actually be shown, not from the whole corpus:
+          // a change to the cap or the packing rule must invalidate the cache too.
+          .map((j) => ({ ...j, docsDigest: seenDigest(j.docsText, j.omitted) }));
 
         // An aspect whose documents are byte-identical to the last run keeps its
         // findings exactly as they were — ids, review state, grounding verdicts and
