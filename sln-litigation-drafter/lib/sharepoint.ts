@@ -538,8 +538,17 @@ export async function getFileLastModified(filePath: string): Promise<string | nu
 //   REFERENSI: first 5.000 chars, labeled [Ekstraksi Ringkas]
 // ---------------------------------------------------------------------------
 const CONTRACT_FILENAME_RE = /perjanjian|pks|nda|akta|kontrak/i;
-const PDF_KRITIS_CHAR_CAP = 80_000;
-const PENDUKUNG_CHAR_CAP = 30_000;
+// Raised after measuring a real data room. At 80k/30k, six audited financial
+// statements came out at exactly 30,000 characters each — the balance sheet kept,
+// the notes cut — and one insurance policy at exactly 80,000. Nothing in the
+// extracted text or the method label said a word about it, so the analysis, and then
+// the report, treated a truncated document as the whole document.
+//
+// The cost of raising these is input tokens on the aspect call, which are cheap
+// relative to the output tokens that dominate its latency, and are paid once per
+// matter because an unchanged aspect is not re-analysed.
+const PDF_KRITIS_CHAR_CAP = 200_000;
+const PENDUKUNG_CHAR_CAP = 120_000;
 const REFERENSI_CHAR_CAP = 5_000;
 
 // Avg chars/page below this ⇒ treat as scanned (image) PDF needing external OCR
@@ -631,7 +640,18 @@ export async function extractWithTier(
     if (smart.needsOcr) {
       return { content: "", extractionMethod: "perlu_ocr", needsOcr: true };
     }
-    const raw = smart.text;
+    // A document cut at the cap must say so in its own text. The cap is applied
+    // while reading the PDF, so the "[Terpotong]" branch further down — which
+    // compares raw.length against the cap — could never fire for a PDF: by then the
+    // text is already at the cap, never over it. Six audited financial statements
+    // came through at exactly 30,000 characters with nothing to indicate the notes
+    // had been cut off, and the solvency analysis was written on them as though they
+    // were complete. Nearly every data-room document is a PDF, so this path is the
+    // one that matters.
+    const raw =
+      smart.text.length >= charCap
+        ? `${smart.text}\n\n[TERPOTONG — hanya ${charCap.toLocaleString("id-ID")} karakter pertama dokumen ini yang dibaca. Bagian selanjutnya, termasuk catatan atas laporan keuangan bila ada, TIDAK diperiksa.]`
+        : smart.text;
 
     if (category === "KRITIS") {
       // Contracts: structured extraction over text PDFs.
