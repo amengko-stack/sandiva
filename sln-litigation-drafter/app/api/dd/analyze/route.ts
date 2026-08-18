@@ -9,8 +9,9 @@ import { analyzeAspect, analyzeTransactionChapters, promoteDealTriggeredCells } 
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
 import {
-  aspectDocsDigest, canReuseAspect, parseAnalysisState, type DDAnalysisState,
+  aspectDocsDigest, canReuseAspect, parseAnalysisState, promptDigest, type DDAnalysisState,
 } from "@/lib/dd/analysis-state";
+import { redflagSystem, transactionAnalysisSystem } from "@/lib/dd/prompts";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
@@ -76,6 +77,13 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       try {
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        // The instructions this run would use. Hashing the system prompts makes any
+        // change to the quote rule, the money rule, the analysis devices or the
+        // statutory corrections invalidate the cache on its own — five UUPT
+        // corrections would otherwise never have reached an existing matter, because
+        // reuse turned only on the documents and those had not changed.
+        const aspectPromptDigest = promptDigest(redflagSystem(regime, entity.name));
+        const txnPromptDigest = promptDigest(transactionAnalysisSystem(regime, entity.name));
         let findings: DDFinding[] = [];
         // Declared before persist(), which closes over it and runs before the
         // aspect loop — referencing it later would hit the temporal dead zone.
@@ -206,6 +214,7 @@ export async function POST(req: NextRequest) {
               canReuseAspect({
                 aspectId: j.aspectId,
                 docsDigest: j.docsDigest,
+                promptDigest: aspectPromptDigest,
                 prior: priorState,
                 priorFindingCount: priorCount(j.aspectId),
               })
@@ -297,6 +306,7 @@ export async function POST(req: NextRequest) {
             unrefreshedAspects.delete(aspectJobs[i].aspectId);
             nextState.aspects[aspectJobs[i].aspectId] = {
               docsDigest: aspectJobs[i].docsDigest,
+              promptDigest: aspectPromptDigest,
               analysedAtISO: new Date().toISOString(),
             };
           } catch (e) {
@@ -368,6 +378,7 @@ export async function POST(req: NextRequest) {
             !force &&
             priorState.aspects[TXN_KEY] !== undefined &&
             priorState.aspects[TXN_KEY].docsDigest === txnDigest &&
+            priorState.aspects[TXN_KEY].promptDigest === txnPromptDigest &&
             priorCovers;
           if (reuseTxn) {
             for (const a of priorTxn) aspectAnalyses.push(a);
@@ -394,6 +405,7 @@ export async function POST(req: NextRequest) {
               for (const a of txnAnalyses) aspectAnalyses.push(a);
               nextState.aspects[TXN_KEY] = {
                 docsDigest: txnDigest,
+                promptDigest: txnPromptDigest,
                 analysedAtISO: new Date().toISOString(),
               };
               const missing = txnSubs.length - txnAnalyses.length;
