@@ -22,7 +22,12 @@ const finding = (over: Partial<DDFinding> = {}): DDFinding =>
 
 const flat = (blocks: ReturnType<typeof renderFindingsTable>) =>
   blocks
-    .map((b) => (b.kind === "table" ? b.rows.map((r) => r.join(" | ")).join("\n") : b.text))
+    .map((b) => {
+      if (b.kind === "table") return b.rows.map((r) => r.join(" | ")).join("\n");
+      if (b.kind === "list") return b.items.join("\n");
+      if (b.kind === "defs") return b.rows.map((r) => r.join(": ")).join("\n");
+      return b.text;
+    })
     .join("\n");
 
 describe("citation marking in the findings table", () => {

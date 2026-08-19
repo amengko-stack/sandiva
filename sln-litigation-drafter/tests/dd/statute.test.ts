@@ -227,6 +227,29 @@ describe("the provisions the model misquoted, stated in the prompt", () => {
   it("states the general rule: where the statute is silent, say so", () => {
     expect(p).toContain("NYATAKAN bahwa undang-undang tidak mengaturnya");
   });
+
+  // A different shape from the rest, and the reason the existence check earns its
+  // keep: the article is real, the paragraph is real, only the letter is invented.
+  // Both articles do allow further requirements to be imposed — but in ayat (2), as a
+  // separate rule, not as a fourth letter of ayat (1). A model reaching for that
+  // content lands on "huruf e", which reads like a provision and is not one. Both were
+  // caught in freshly generated analysis on the live dissolution.
+  it.each([
+    ["93", "Direksi"],
+    ["110", "Dewan Komisaris"],
+  ])("tells it Pasal %s ayat (1) stops at huruf c", (article, organ) => {
+    expect(p).toContain(`Pasal ${article} ayat (1)`);
+    expect(p).toContain(organ);
+    const a1 = ayatText(articles.get(article) ?? "", 1) ?? "";
+    for (const L of "abc") expect(hasHuruf(a1, L), L).toBe(true);
+    for (const L of "de") expect(hasHuruf(a1, L), L).toBe(false);
+    // The additional-requirements rule the invented letter was reaching for.
+    expect(ayatText(articles.get(article) ?? "", 2) ?? "").toContain("persyaratan tambahan");
+  });
+
+  it("forbids inventing a letter when the article does not carry the rule", () => {
+    expect(p).toContain("JANGAN menambah huruf atau ayat baru");
+  });
 });
 
 // Found by reading BAB IV of the same report: "Pasal 56 ayat (1) mewajibkan

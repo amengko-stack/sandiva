@@ -182,6 +182,13 @@ ${guardBlock}${DD_DATA_FRAMING}`;
  * words urutan, prioritas, didahulukan, preferen and istimewa appear zero times in
  * the enacting text. Asked for something the statute does not provide, the model
  * manufactured an article to provide it. A heading that presumes a rule will get one.
+ *
+ * The director/commissioner ones are a different shape and the reason the existence
+ * check earns its keep: the article is real, the paragraph is real, and only the
+ * letter is invented. Both articles allow further requirements to be set by the
+ * competent authority — but in ayat (2), as a separate rule, not as a fourth letter
+ * of ayat (1). A model reaching for that content lands on "huruf d" or "huruf e",
+ * which reads like a provision and is not one.
  */
 const DD_UUPT_TRAPS = `KETENTUAN UUPT YANG SERING SALAH DIKUTIP — gunakan bunyi berikut, jangan versi lain:
 (1) Pasal 142 ayat (1) memuat ENAM sebab pembubaran: keputusan RUPS; berakhirnya jangka waktu dalam anggaran dasar; penetapan pengadilan; dicabutnya kepailitan karena harta pailit tidak cukup membayar biaya kepailitan; harta pailit dalam keadaan insolvensi; dan dicabutnya izin usaha sehingga mewajibkan likuidasi. TIDAK ada "penetapan Menteri" sebagai sebab pembubaran.
@@ -189,6 +196,9 @@ const DD_UUPT_TRAPS = `KETENTUAN UUPT YANG SERING SALAH DIKUTIP — gunakan buny
 (3) Kewajiban mengajukan pailit bila utang melebihi harta ada pada Pasal 149 ayat (2), dan WAJIB disebut pengecualiannya: kecuali peraturan perundang-undangan menentukan lain DAN semua kreditor yang diketahui identitas dan alamatnya menyetujui pemberesan di luar kepailitan.
 (4) Pasal 147 ayat (1) mewajibkan likuidator memberitahukan pembubaran dalam 30 hari kepada kreditor dengan cara MENGUMUMKAN dalam Surat Kabar DAN Berita Negara Republik Indonesia, serta memberitahukan kepada Menteri. TIDAK ada kewajiban "surat tercatat" dalam pasal ini.
 (5) UUPT TIDAK memuat urutan prioritas pembayaran kreditor dalam likuidasi. Pasal 149 ayat (1) memuat kewajiban likuidator, bukan urutan pembayaran. Bila menganalisis urutan pembayaran, nyatakan bahwa UUPT tidak mengaturnya dan sebutkan dasar yang sebenarnya berlaku (mis. hak jaminan kebendaan, hak istimewa menurut KUHPerdata, hak pekerja menurut peraturan ketenagakerjaan, atau UU Kepailitan bila harta tidak mencukupi) — dan tandai [PERLU VERIFIKASI] bila tidak dapat dipastikan dari dokumen.
+(6) Pasal 93 ayat (1) (syarat anggota Direksi) hanya memiliki huruf a, b dan c: pernah dinyatakan pailit; pernah menjadi anggota Direksi atau Dewan Komisaris yang dinyatakan bersalah menyebabkan suatu Perseroan dinyatakan pailit; atau pernah dihukum karena tindak pidana yang merugikan keuangan negara dan/atau berkaitan dengan sektor keuangan. TIDAK ada huruf d maupun huruf e. Kemungkinan instansi teknis menetapkan persyaratan TAMBAHAN diatur pada Pasal 93 ayat (2), bukan sebagai huruf lanjutan pada ayat (1).
+(7) Pasal 110 ayat (1) (syarat anggota Dewan Komisaris) berbunyi sama dan juga hanya memiliki huruf a, b dan c, dengan persyaratan tambahan pada Pasal 110 ayat (2). TIDAK ada huruf d maupun huruf e.
+(8) Bila suatu aturan yang kamu perlukan tidak ada dalam huruf atau ayat mana pun dari pasal yang kamu rujuk, JANGAN menambah huruf atau ayat baru. Nyatakan bahwa pasal tersebut tidak mengaturnya.
 (6) Keberatan kreditor atas rencana pembagian kekayaan hasil likuidasi diatur Pasal 149 ayat (3) dan (4), bukan Pasal 151. Pasal 151 mengatur penggantian likuidator yang tidak melaksanakan kewajibannya.
 (7) Pasal 56 ayat (1) berbunyi: pemindahan hak atas saham dilakukan dengan AKTA PEMINDAHAN HAK. Kewajiban Direksi MENCATAT pemindahan itu dalam daftar pemegang saham dan memberitahukannya kepada Menteri dalam 30 hari ada pada Pasal 56 ayat (3), bukan ayat (1). UUPT TIDAK mewajibkan daftar pemegang saham ditandatangani oleh Direksi — kewajiban Direksi adalah mengadakan dan menyimpannya (Pasal 50).
 ATURAN UMUM: jangan menyatakan suatu aturan berasal dari sebuah pasal kecuali pasal itu memang memuatnya. Bila undang-undang diam mengenai suatu hal, NYATAKAN bahwa undang-undang tidak mengaturnya — jangan mengisi kekosongan itu dengan pasal yang kebetulan bernomor dekat.`;
