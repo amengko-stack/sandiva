@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "document-shadow-worker",
+  "activation": "disabled",
+  "instances": 0,
+  "entrypoint": "workers/document-shadow-worker.ts",
+  "environment": {
+    "DOCUMENT_SHADOW_STAGE1_PUBLISHER_ENABLED": "false",
+    "DOCUMENT_SHADOW_STAGE1_WORKER_ENABLED": "false",
+    "DOCUMENT_SHADOW_STAGE1_SAMPLE_RATE": "0",
+    "DOCUMENT_SHADOW_STAGE1_KILL_SWITCH": "true",
+    "DOCUMENT_SHADOW_STAGE1_RETENTION_MS": "86400000",
+    "DOCUMENT_SHADOW_STAGE1_LEASE_MS": "60000",
+    "DOCUMENT_SHADOW_STAGE1_WORKER_TIMEOUT_MS": "60000",
+    "DOCUMENT_SHADOW_STAGE1_MAX_ATTEMPTS": "3"
+  },
+  "queue": {
+    "payload": "pointer-only",
+    "retry": "provider-adapter-required",
+    "deadLetter": "provider-adapter-required"
+  },
+  "storage": {
+    "immutability": "provider-adapter-required",
+    "retentionMs": 86400000
+  }
+}

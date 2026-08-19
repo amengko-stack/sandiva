@@ -26,6 +26,7 @@ vi.mock("@/lib/extract-format", () => format);
 vi.mock("@/lib/document-shadow-runtime", () => shadow);
 
 import { documentNormalizer } from "@/lib/document-normalizer";
+import { createDisabledShadowPublisher, publishShadowDetached } from "@/lib/document-shadow-stage1/publisher";
 
 const metadata: ExtractionMetadata = {
   filename: "Akta Pendirian.pdf",
@@ -131,5 +132,29 @@ describe("DocumentNormalizer compatibility facade", () => {
     expect(shadow.observeDocumentShadow).toHaveBeenCalledWith(observation);
     expect(sharepoint.extractWithTier).not.toHaveBeenCalled();
     expect(cache.writeExtractionCache).not.toHaveBeenCalled();
+  });
+
+  it("keeps disabled Stage 1 handoff detached from extraction, caches, and user-visible output", async () => {
+    const authoritativeOutput = {
+      content: "authoritative primary text",
+      extractionMethod: "mammoth",
+      needsOcr: false,
+    };
+    sharepoint.extractWithTier.mockResolvedValue(authoritativeOutput);
+
+    const result = await documentNormalizer.extractWithTier("/file", "agreement.docx", "KRITIS");
+    publishShadowDetached(createDisabledShadowPublisher(), {
+      tenantId: "tenant-a",
+      sourceRevision: "rev-1",
+      sourceBytes: Buffer.from("immutable bytes"),
+      fileClass: "docx",
+    });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(result).toBe(authoritativeOutput);
+    expect(sharepoint.extractWithTier).toHaveBeenCalledOnce();
+    expect(cache.readExtractionCache).not.toHaveBeenCalled();
+    expect(cache.writeExtractionCache).not.toHaveBeenCalled();
+    expect(format.formatDocBlock).not.toHaveBeenCalled();
   });
 });
