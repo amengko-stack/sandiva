@@ -58,7 +58,7 @@ interface ShadowObserverOptions {
   enabled: boolean;
   sampleRate: number;
   random?: () => number;
-  convert: (sourceBytes: Buffer, fileClass: "docx" | "txt") => Promise<string>;
+  convert: (sourceBytes: Buffer, fileClass: "docx" | "txt", signal: AbortSignal) => Promise<string>;
   emit: (event: ShadowEvent) => void;
   tenantSalt: string;
   converterVersion?: string;
@@ -163,12 +163,19 @@ export function createShadowObserver(options: ShadowObserverOptions) {
       emit({ type: "shadow_sampled" });
       emit({ type: "shadow_started" });
 
+      const cancellation = new AbortController();
+      const conversion = options.convert(input.sourceBytes, fileClass, cancellation.signal);
+      let timedOut = false;
       let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         const shadowText = await Promise.race([
-          options.convert(input.sourceBytes, fileClass),
+          conversion,
           new Promise<never>((_, reject) => {
-            timeout = setTimeout(() => reject(new Error("shadow_timeout")), timeoutMs);
+            timeout = setTimeout(() => {
+              timedOut = true;
+              cancellation.abort();
+              reject(new Error("shadow_timeout"));
+            }, timeoutMs);
           }),
         ]);
         emit({ type: "shadow_completed", durationMs: Date.now() - started });
@@ -182,10 +189,13 @@ export function createShadowObserver(options: ShadowObserverOptions) {
           ),
         });
       } catch (error) {
+        if (timedOut) await conversion.catch(() => undefined);
         emit({
           type: "shadow_failed",
           durationMs: Date.now() - started,
-          errorCode: error instanceof Error && error.message === "shadow_timeout" ? "timeout" : "converter_error",
+          errorCode: timedOut || (error instanceof Error && error.message === "shadow_timeout")
+            ? "timeout"
+            : "converter_error",
         });
       } finally {
         if (timeout) clearTimeout(timeout);

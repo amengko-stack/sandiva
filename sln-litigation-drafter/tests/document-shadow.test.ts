@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import {
   compareShadowOutputs,
   createShadowObserver,
@@ -133,7 +134,79 @@ describe("MarkItDown worker boundary", () => {
     });
     const convert = createMarkItDownConverter({ run });
 
-    await expect(convert(Buffer.from("document bytes"), "docx")).resolves.toBe("# Converted");
+    await expect(convert(
+      Buffer.from("document bytes"),
+      "docx",
+      new AbortController().signal,
+    )).resolves.toBe("# Converted");
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("aborts the worker on timeout and waits for termination before failing open", async () => {
+    vi.useFakeTimers();
+    try {
+      let terminated = false;
+      const events: ShadowEvent[] = [];
+      const convert = createMarkItDownConverter({
+        run: (_bytes, _fileClass, signal) => new Promise<string>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            terminated = true;
+            reject(new Error("markitdown_worker_aborted"));
+          }, { once: true });
+        }),
+      });
+      const observer = createShadowObserver({
+        enabled: true,
+        sampleRate: 1,
+        random: () => 0,
+        convert,
+        emit: (event) => events.push(event),
+        tenantSalt: "test-only-salt",
+        timeoutMs: 10,
+      });
+
+      const pending = observer.observe({
+        sourceBytes: Buffer.from("source"),
+        fileName: "notes.txt",
+        mimeType: "text/plain",
+        sourceRevision: "rev-1",
+        tenantId: "tenant-a",
+        matterId: "matter-a",
+        documentId: "document-a",
+        primaryText: "primary",
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      await expect(pending).resolves.toBeUndefined();
+
+      expect(terminated).toBe(true);
+      expect(events.at(-1)).toMatchObject({ type: "shadow_failed", errorCode: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hard-kills the spawned worker when conversion is cancelled", async () => {
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr,
+      stdin: { end: vi.fn() },
+      kill: vi.fn(() => {
+        queueMicrotask(() => child.emit("close", null));
+        return true;
+      }),
+    });
+    const spawnWorker = vi.fn(() => child);
+    const convert = createMarkItDownConverter({ spawn: spawnWorker as never });
+    const cancellation = new AbortController();
+
+    const pending = convert(Buffer.from("document bytes"), "docx", cancellation.signal);
+    cancellation.abort();
+
+    await expect(pending).rejects.toThrow("markitdown_worker_aborted");
+    expect(child.kill).toHaveBeenCalledOnce();
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
   });
 });
