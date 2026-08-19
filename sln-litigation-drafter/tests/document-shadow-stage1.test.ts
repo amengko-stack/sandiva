@@ -286,11 +286,12 @@ describe("Stage 1 worker containment", () => {
     vi.useFakeTimers();
     try {
       let aborted = false;
+      let settleObservation!: () => void;
       const deps = dependencies({
         observe: ((input: { signal: AbortSignal }) => new Promise<void>((_resolve, reject) => {
           input.signal.addEventListener("abort", () => {
             aborted = true;
-            reject(new Error("cancelled"));
+            settleObservation = () => reject(new Error("cancelled"));
           }, { once: true });
         })) as never,
       });
@@ -300,10 +301,154 @@ describe("Stage 1 worker containment", () => {
       });
       const pending = worker.handle(envelope());
       await vi.advanceTimersByTimeAsync(10);
-      await pending;
 
       expect(aborted).toBe(true);
+      expect(deps.queue.retry).not.toHaveBeenCalled();
+
+      settleObservation();
+      await pending;
       expect(deps.queue.retry).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the lease renewed while timed-out observation is still terminating", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T10:00:00Z"));
+    try {
+      let settleObservation!: () => void;
+      const lifecycle = new InMemoryShadowLifecycleStore();
+      const deps = dependencies({
+        observe: ({ signal }) => new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            settleObservation = () => reject(new Error("cancelled"));
+          }, { once: true });
+        }),
+      });
+      const worker = createShadowWorker({
+        enabled: true, killSwitch: false, lifecycle, ...deps,
+        workerId: "worker-a", timeoutMs: 5, leaseMs: 30, maxAttempts: 3,
+      });
+      const message = envelope();
+      const pending = worker.handle(message);
+
+      await vi.advanceTimersByTimeAsync(40);
+      const competingClaim = await lifecycle.claim(message, "worker-b", new Date(), 30);
+      settleObservation();
+      await pending;
+
+      expect(competingClaim).toMatchObject({ status: "duplicate" });
+      expect(deps.queue.retry).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("renews the lease below its duration and prevents recovery while observation remains active", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T10:00:00Z"));
+    try {
+      let finishObservation!: () => void;
+      const lifecycle = new InMemoryShadowLifecycleStore();
+      const renew = vi.spyOn(lifecycle, "renew");
+      const deps = dependencies({
+        observe: () => new Promise<void>((resolve) => { finishObservation = resolve; }),
+      });
+      const worker = createShadowWorker({
+        enabled: true, killSwitch: false, lifecycle, ...deps,
+        workerId: "worker-a", timeoutMs: 1_000, leaseMs: 60, maxAttempts: 3,
+      });
+      const message = envelope();
+      const pending = worker.handle(message);
+
+      await vi.advanceTimersByTimeAsync(61);
+      await expect(lifecycle.claim(message, "worker-b", new Date(), 60))
+        .resolves.toMatchObject({ status: "duplicate" });
+      expect(renew.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+      finishObservation();
+      await pending;
+      const renewalsAtCompletion = renew.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120);
+      expect(renew).toHaveBeenCalledTimes(renewalsAtCompletion);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts and awaits observation settlement when lease renewal loses ownership", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      let settleObservation!: () => void;
+      const lifecycle = new InMemoryShadowLifecycleStore();
+      const complete = vi.spyOn(lifecycle, "complete");
+      const fail = vi.spyOn(lifecycle, "fail");
+      vi.spyOn(lifecycle, "renew").mockRejectedValueOnce(new Error("shadow_lease_not_owned"));
+      const deps = dependencies({
+        observe: ({ signal }) => new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            settleObservation = () => reject(new Error("cancelled"));
+          }, { once: true });
+        }),
+      });
+      const worker = createShadowWorker({
+        enabled: true, killSwitch: false, lifecycle, ...deps,
+        workerId: "worker-a", timeoutMs: 1_000, leaseMs: 30, maxAttempts: 3,
+      });
+      const pending = worker.handle(envelope());
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(aborted).toBe(true);
+      expect(deps.queue.retry).not.toHaveBeenCalled();
+      expect(deps.queue.deadLetter).not.toHaveBeenCalled();
+
+      settleObservation();
+      await pending;
+      expect(complete).not.toHaveBeenCalled();
+      expect(fail).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shutdown aborts active observation, awaits termination, and stops renewal", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      let settleObservation!: () => void;
+      const lifecycle = new InMemoryShadowLifecycleStore();
+      const renew = vi.spyOn(lifecycle, "renew");
+      const complete = vi.spyOn(lifecycle, "complete");
+      const fail = vi.spyOn(lifecycle, "fail");
+      const deps = dependencies({
+        observe: ({ signal }) => new Promise<void>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            settleObservation = () => reject(new Error("cancelled"));
+          }, { once: true });
+        }),
+      });
+      const worker = createShadowWorker({
+        enabled: true, killSwitch: false, lifecycle, ...deps,
+        workerId: "worker-a", timeoutMs: 1_000, leaseMs: 60, maxAttempts: 3,
+      });
+      const handling = worker.handle(envelope());
+      await vi.waitFor(() => expect(deps.observe).toHaveBeenCalledOnce());
+
+      const renewalsBeforeShutdown = renew.mock.calls.length;
+      const shutdown = worker.shutdown();
+      expect(aborted).toBe(true);
+      expect(deps.queue.retry).not.toHaveBeenCalled();
+      settleObservation();
+      await Promise.all([handling, shutdown]);
+      await vi.advanceTimersByTimeAsync(120);
+
+      expect(renew).toHaveBeenCalledTimes(renewalsBeforeShutdown);
+      expect(complete).not.toHaveBeenCalled();
+      expect(fail).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
