@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
-import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
-import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
+import { documentNormalizer } from "@/lib/document-normalizer";
+import { type ExtractionMetadata } from "@/lib/extraction-cache";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
-import { formatDocBlock } from "@/lib/extract-format";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
 
 export const maxDuration = 300;
@@ -94,9 +93,9 @@ export async function POST(req: NextRequest) {
         enqueue({ type: "start", name: file.name, category, index: i, total });
 
         try {
-          const currentModifiedAt = await getFileLastModified(file.path);
+          const currentModifiedAt = await documentNormalizer.getFileLastModified(file.path);
 
-          const cached = await readExtractionCache(file.path, currentModifiedAt, category);
+          const cached = await documentNormalizer.readExtractionCache(file.path, currentModifiedAt, category);
           if (cached) {
             console.log(`[add-docs] cache-hit name=${file.name} contentLen=${cached.content.length}`);
             if (isBlank(cached.content)) {
@@ -106,7 +105,7 @@ export async function POST(req: NextRequest) {
               cacheHits++;
               processed++;
               addedChars += cached.content.length;
-              docBlocks[i] = formatDocBlock(cached.metadata, cached.content);
+              docBlocks[i] = documentNormalizer.formatDocBlock(cached.metadata, cached.content);
               newReportFiles[i] = {
                 name: file.name, category, documentType,
                 extractionMode: `${METHOD_LABEL[cached.metadata.extractionMethod] ?? cached.metadata.extractionMethod} [Dari Cache]`,
@@ -118,7 +117,7 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          const { content, extractionMethod, needsOcr } = await extractWithTier(file.path, file.name, category);
+          const { content, extractionMethod, needsOcr } = await documentNormalizer.extractWithTier(file.path, file.name, category);
           console.log(`[add-docs] extract name=${file.name} contentLen=${content.length} method=${extractionMethod} needsOcr=${needsOcr}`);
 
           if (needsOcr) {
@@ -151,8 +150,8 @@ export async function POST(req: NextRequest) {
             sharePointPath: file.path,
             fileModifiedAt: currentModifiedAt ?? "",
           };
-          docBlocks[i] = formatDocBlock(metadata, content);
-          await writeExtractionCache(file.path, { content, metadata });
+          docBlocks[i] = documentNormalizer.formatDocBlock(metadata, content);
+          await documentNormalizer.writeExtractionCache(file.path, { content, metadata });
 
           processed++;
           addedChars += content.length;

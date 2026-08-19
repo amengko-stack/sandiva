@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
-import { charCapFor, extractWithTier, getFileLastModified } from "@/lib/sharepoint";
-import { readExtractionCache, writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
+import { documentNormalizer } from "@/lib/document-normalizer";
+import { type ExtractionMetadata } from "@/lib/extraction-cache";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
-import { formatDocBlock } from "@/lib/extract-format";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { mergeExtractReports } from "@/lib/dd/merge-report";
 import { preCategorize } from "@/lib/dd/pre-categorize";
@@ -94,10 +93,10 @@ export async function POST(req: NextRequest) {
 
         // No size gate — every file is read fully or partially, never skipped for size.
         try {
-          const currentModifiedAt = await getFileLastModified(file.path);
+          const currentModifiedAt = await documentNormalizer.getFileLastModified(file.path);
 
           // Cache: valid when fileModifiedAt matches AND under 7 days old
-          const cached = await readExtractionCache(file.path, currentModifiedAt, category, charCapFor(category));
+          const cached = await documentNormalizer.readExtractionCache(file.path, currentModifiedAt, category, documentNormalizer.charCapFor(category));
           if (cached && isBlank(cached.content)) {
             // Stale empty cache entry — fall through to fresh extraction.
             console.log(`[read-files] cache-hit empty → fall through name=${file.name}`);
@@ -105,7 +104,7 @@ export async function POST(req: NextRequest) {
             cacheHits++;
             processed++;
             totalChars += cached.content.length;
-            docBlocks[i] = formatDocBlock(cached.metadata, cached.content);
+            docBlocks[i] = documentNormalizer.formatDocBlock(cached.metadata, cached.content);
             reportFiles[i] = {
               name: file.name, category, documentType,
               extractionMode: `${METHOD_LABEL[cached.metadata.extractionMethod] ?? cached.metadata.extractionMethod} [Dari Cache]`,
@@ -115,7 +114,7 @@ export async function POST(req: NextRequest) {
             return;
           }
 
-          const { content, extractionMethod, needsOcr } = await extractWithTier(file.path, file.name, category);
+          const { content, extractionMethod, needsOcr } = await documentNormalizer.extractWithTier(file.path, file.name, category);
 
           // Scanned PDF with no text layer — flagged for external OCR. Not cached,
           // not counted as processed/failed; the drafter re-checks after OCR.
@@ -147,10 +146,10 @@ export async function POST(req: NextRequest) {
             extractedAt: new Date().toISOString(),
             sharePointPath: file.path,
             fileModifiedAt: currentModifiedAt ?? "",
-            charCap: charCapFor(category),
+            charCap: documentNormalizer.charCapFor(category),
           };
-          docBlocks[i] = formatDocBlock(metadata, content);
-          await writeExtractionCache(file.path, { content, metadata });
+          docBlocks[i] = documentNormalizer.formatDocBlock(metadata, content);
+          await documentNormalizer.writeExtractionCache(file.path, { content, metadata });
 
           processed++;
           totalChars += content.length;
