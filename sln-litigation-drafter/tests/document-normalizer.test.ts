@@ -16,9 +16,14 @@ const format = vi.hoisted(() => ({
   formatDocBlock: vi.fn(),
 }));
 
+const shadow = vi.hoisted(() => ({
+  observeDocumentShadow: vi.fn(),
+}));
+
 vi.mock("@/lib/sharepoint", () => sharepoint);
 vi.mock("@/lib/extraction-cache", () => cache);
 vi.mock("@/lib/extract-format", () => format);
+vi.mock("@/lib/document-shadow-runtime", () => shadow);
 
 import { documentNormalizer } from "@/lib/document-normalizer";
 
@@ -106,5 +111,25 @@ describe("DocumentNormalizer compatibility facade", () => {
 
     await expect(documentNormalizer.extractWithTier("/file", "file.pdf", "PENDUKUNG"))
       .rejects.toBe(failure);
+  });
+
+  it("exposes shadow measurement without changing production extraction", async () => {
+    const observation = {
+      sourceBytes: Buffer.from("immutable source"),
+      fileName: "agreement.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      sourceRevision: "rev-1",
+      tenantId: "tenant-a",
+      matterId: "matter-a",
+      documentId: "document-a",
+      primaryText: "authoritative primary text",
+    };
+    shadow.observeDocumentShadow.mockResolvedValue(undefined);
+
+    await documentNormalizer.runShadowComparison(observation);
+
+    expect(shadow.observeDocumentShadow).toHaveBeenCalledWith(observation);
+    expect(sharepoint.extractWithTier).not.toHaveBeenCalled();
+    expect(cache.writeExtractionCache).not.toHaveBeenCalled();
   });
 });
