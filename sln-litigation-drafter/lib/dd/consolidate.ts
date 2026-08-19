@@ -15,13 +15,14 @@ export function computeAspectRollup(gapsByEntity: Record<string, DDGapItem[]>): 
     for (const g of gaps) {
       const r = byAspect.get(g.aspectId) ?? {
         aspectId: g.aspectId, totalExpected: 0, present: 0, missing: 0,
-        incomplete: 0, expired: 0, notApplicable: 0,
+        incomplete: 0, expired: 0, unreadable: 0, notApplicable: 0,
       };
       r.totalExpected++;
       if (g.status === "present") r.present++;
       else if (g.status === "missing") r.missing++;
       else if (g.status === "incomplete") r.incomplete++;
       else if (g.status === "expired") r.expired++;
+      else if (g.status === "unreadable") r.unreadable = (r.unreadable ?? 0) + 1;
       else r.notApplicable++;
       byAspect.set(g.aspectId, r);
     }

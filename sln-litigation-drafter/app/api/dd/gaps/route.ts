@@ -6,6 +6,7 @@ import { computeGaps } from "@/lib/dd/gap-engine";
 import { rematchTailored } from "@/lib/dd/tailor";
 import { resolveRegime } from "@/lib/dd/regime";
 import type { DDClassifiedDoc, DDTailorResult, DDTransaction } from "@/types/dd";
+import type { ExtractReport } from "@/types";
 
 export const maxDuration = 60;
 
@@ -29,10 +30,11 @@ export async function POST(req: NextRequest) {
       if (!isValidSessionId(sessionId) || !isValidEntityId(entityId)) {
         return NextResponse.json({ error: "sessionId/entityId tidak valid" }, { status: 400 });
       }
-      const [txnRaw, classifiedRaw, tailoredRaw] = await Promise.all([
+      const [txnRaw, classifiedRaw, tailoredRaw, reportRaw] = await Promise.all([
         readBlobText(ddKeys.transaction(sessionId)),
         readBlobText(ddKeys.classified(sessionId, entityId)),
         readBlobText(ddKeys.tailored(sessionId, entityId)),
+        readBlobText(ddKeys.report(sessionId, entityId)),
       ]);
       if (!txnRaw || !classifiedRaw) {
         return NextResponse.json({ error: "Klasifikasi belum tersedia." }, { status: 400 });
@@ -51,6 +53,13 @@ export async function POST(req: NextRequest) {
 
       const cl = await loadChecklist();
       const resolved = resolveChecklist(cl, txn.type, tailored?.added, resolveRegime(entity));
+      // An image-only scan never reaches the classifier, so without this the item it
+      // covers is reported as absent from the data room when the client did supply it.
+      const extractReport = reportRaw ? (JSON.parse(reportRaw) as ExtractReport) : null;
+      const unreadableFiles = (extractReport?.files ?? [])
+        .filter((f) => f.status === "perlu_ocr")
+        .map((f) => f.name);
+
       const gaps = computeGaps({
         expected: resolved.expected,
         classified,
@@ -58,6 +67,7 @@ export async function POST(req: NextRequest) {
         transactionType: txn.type,
         cutoffDateISO: txn.cutoffDateISO,
         notApplicableIds,
+        unreadableFiles,
       });
       await writeBlobText(ddKeys.gaps(sessionId, entityId), JSON.stringify(gaps));
       return NextResponse.json({ gaps });

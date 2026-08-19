@@ -28,6 +28,28 @@ function isExpired(latestDate: string, years: number, cutoffISO: string): boolea
   return d.getTime() < new Date(cutoffISO + "T00:00:00Z").getTime();
 }
 
+/**
+ * Whether a supplied-but-unreadable file's name suggests it covers this item.
+ *
+ * Word boundaries, not substrings: several checklist keywords are three-letter
+ * acronyms ("nib", "dps", "oss", "pks") that turn up inside unrelated words.
+ */
+function nameSuggests(fileName: string, keywords: string[]): boolean {
+  const norm = fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
+  return keywords.some((k) => {
+    const term = k.trim().toLowerCase();
+    if (term.length < 2) return false;
+    const esc = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    return new RegExp(`(?:^|\\W)${esc}(?:\\W|$)`).test(norm);
+  });
+}
+
+/** Named in full up to this many; beyond that the note gives a count. */
+const MAX_NAMED_CANDIDATES = 3;
+
 export function computeGaps(args: {
   expected: DDExpectedDoc[];
   classified: DDClassifiedDoc[];
@@ -35,9 +57,12 @@ export function computeGaps(args: {
   transactionType: DDTransactionType;
   cutoffDateISO: string;
   notApplicableIds?: string[];
+  /** Names of files that were supplied but could not be read (image-only scans). */
+  unreadableFiles?: string[];
 }): DDGapItem[] {
   const { expected, classified, entityId, transactionType, cutoffDateISO } = args;
   const na = new Set(args.notApplicableIds ?? []);
+  const unreadable = args.unreadableFiles ?? [];
 
   const applicable = expected.filter(
     (e) => !e.appliesTo || e.appliesTo.includes(transactionType)
@@ -52,8 +77,23 @@ export function computeGaps(args: {
       status = "not_applicable";
       note = "Ditandai tidak relevan untuk transaksi/entitas ini — perlu konfirmasi reviewer.";
     } else if (matches.length === 0) {
-      status = "missing";
-      note = "Tidak ditemukan dalam data room.";
+      // Nothing classified matched — but a scan that could not be read was never
+      // offered to the classifier at all, so "not in the data room" may simply be
+      // false. Name the candidates rather than assert an absence.
+      const candidates = unreadable.filter((f) => nameSuggests(f, e.keywords));
+      if (candidates.length > 0) {
+        status = "unreadable";
+        const named = candidates.slice(0, MAX_NAMED_CANDIDATES).join(", ");
+        const rest = candidates.length - MAX_NAMED_CANDIDATES;
+        note =
+          `Tidak ditemukan di antara dokumen yang dapat dibaca. Namun terdapat dokumen yang disediakan namun ` +
+          `tidak dapat dibaca secara otomatis (pindaian tanpa lapisan teks) yang menurut namanya berkemungkinan ` +
+          `memuat butir ini: ${named}${rest > 0 ? `, dan ${rest} dokumen lainnya` : ""}. Butir ini belum dapat ` +
+          `dinyatakan tidak ada.`;
+      } else {
+        status = "missing";
+        note = "Tidak ditemukan dalam data room.";
+      }
     } else if (matches.every((m) => m.confidence === "rendah")) {
       status = "incomplete";
       note = "Hanya ditemukan dokumen dengan keyakinan rendah — kemungkinan tidak lengkap.";
@@ -72,7 +112,7 @@ export function computeGaps(args: {
       }
     }
 
-    return {
+    const item: DDGapItem = {
       entityId,
       aspectId: e.aspectId,
       expectedDocId: e.id,
@@ -82,11 +122,16 @@ export function computeGaps(args: {
       severity: severityFor(e.importance),
       note,
     };
+    if (status === "unreadable") {
+      item.unreadableCandidates = unreadable.filter((f) => nameSuggests(f, e.keywords));
+    }
+    return item;
   });
 }
 
 const STATUS_PROBLEM: Record<Exclude<DDGapStatus, "present">, string> = {
   missing: "Dokumen tidak ditemukan dalam Dokumen Yang Diperiksa",
+  unreadable: "Dokumen disediakan namun tidak dapat dibaca",
   incomplete: "Dokumen kemungkinan tidak lengkap",
   expired: "Dokumen sudah melewati masa berlaku",
   not_applicable: "Item checklist disarankan tidak relevan",
@@ -97,6 +142,11 @@ const STATUS_PROBLEM: Record<Exclude<DDGapStatus, "present">, string> = {
 // a different consequence, and the report should not blur them.
 const STATUS_FRAMING: Record<Exclude<DDGapStatus, "present">, string> = {
   missing: "Dokumen tersebut tidak ditemukan dalam Dokumen Yang Diperiksa.",
+  unreadable:
+    "Terdapat dokumen yang disediakan dalam bentuk pindaian tanpa lapisan teks sehingga tidak dapat dibaca " +
+    "secara otomatis, dan menurut namanya berkemungkinan memuat butir ini. Butir ini karena itu BELUM dapat " +
+    "dinyatakan tidak ada; dokumen tersebut perlu dibaca secara manual atau melalui pengenalan karakter optis " +
+    "(OCR) sebelum kesimpulan atas kelengkapannya diambil.",
   incomplete:
     "Dokumen yang ditemukan belum dapat dipastikan lengkap, sehingga kesimpulan atas butir ini bersifat sementara.",
   expired:

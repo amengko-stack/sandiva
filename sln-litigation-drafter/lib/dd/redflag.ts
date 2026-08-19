@@ -107,6 +107,8 @@ export function buildRedFlagPrompt(args: {
   subsections?: string[];
   /** In the data room for this aspect but not shown to the model. */
   omittedDocs?: string[];
+  /** Supplied as image-only scans, so no text of them exists to show. */
+  unreadableDocs?: string[];
 }): string {
   // The analysis chapters previously rendered as hollow scaffolding: each
   // sub-section repeated one templated sentence and every finding piled into a
@@ -137,12 +139,20 @@ Pada setiap temuan, isi "subsection" dengan judul sub-bagian yang paling tepat d
     args.omittedDocs && args.omittedDocs.length > 0
       ? `\n\nDOKUMEN BERIKUT ADA DALAM RUANG DATA TETAPI TIDAK DISERTAKAN DI ATAS karena batas ukuran, sehingga TIDAK kamu periksa: ${args.omittedDocs.join("; ")}.\nJANGAN menyatakan dokumen tersebut tidak tersedia atau tidak diserahkan — dokumen itu ada. Bila analisismu memerlukannya, nyatakan bahwa dokumen tersebut belum diperiksa dan tandai "[PERLU VERIFIKASI]".`
       : "";
+  // Same class of error, different cause and different remedy. A scan is never
+  // offered to the model at all, so without this the prose asserts that a document
+  // the client did hand over was never supplied — on a live matter, 24 of 83
+  // documents were image-only scans.
+  const unreadableBlock =
+    args.unreadableDocs && args.unreadableDocs.length > 0
+      ? `\n\nDOKUMEN BERIKUT JUGA DISERAHKAN DALAM RUANG DATA, tetapi berupa pindaian tanpa lapisan teks sehingga tidak dapat dibaca dan TIDAK ada teksnya untuk kamu periksa: ${args.unreadableDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, atau tidak ditemukan. Bila analisismu memerlukannya, nyatakan bahwa dokumen tersebut belum dapat dibaca sehingga isinya belum diperiksa, dan tandai "[PERLU VERIFIKASI]".`
+      : "";
   return `Entitas: ${args.entityName}. Aspek: ${args.aspectId.replace(/_/g, " ")}. Transaksi: ${args.transactionType.replace(/_/g, " ")}.
 ${analysisBlock}
 
 === DOKUMEN ASPEK INI ===
 ${args.docsText}
-=== AKHIR DOKUMEN ===${omittedBlock}
+=== AKHIR DOKUMEN ===${omittedBlock}${unreadableBlock}
 
 Identifikasi red flag hukum yang NYATA dari dokumen di atas untuk transaksi ini (mis. izin kedaluwarsa, modal belum disetor penuh, aset dibebani jaminan, perkara berjalan, ketidaksesuaian anggaran dasar).
 
@@ -337,6 +347,8 @@ export async function analyzeAspect(
     subsections?: string[];
     /** In the data room for this aspect but not shown to the model. */
     omittedDocs?: string[];
+    /** Supplied as image-only scans, so no text of them exists to show. */
+    unreadableDocs?: string[];
   }
 ): Promise<DDAspectAnalysisResult> {
   const response = await client.messages.create({

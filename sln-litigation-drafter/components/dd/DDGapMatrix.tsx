@@ -8,6 +8,8 @@ const STATUS_STYLE: Record<DDGapItem["status"], { label: string; bg: string; fg:
   incomplete: { label: "Tidak lengkap", bg: "#fef3c7", fg: "#78350f" },
   expired: { label: "Kedaluwarsa", bg: "#fed7aa", fg: "#9a3412" },
   missing: { label: "TIDAK ADA", bg: "#fee2e2", fg: "#7f1d1d" },
+  // Distinct from missing on purpose: the document was supplied, only unreadable.
+  unreadable: { label: "TIDAK TERBACA", bg: "#e0e7ff", fg: "#3730a3" },
   not_applicable: { label: "N/A?", bg: "#e5e7eb", fg: "#374151" },
 };
 
