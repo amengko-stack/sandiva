@@ -207,3 +207,43 @@ describe("backward compatibility", () => {
     ).rejects.toThrow(/Ruang Lingkup Keterandalan/);
   });
 });
+
+// Lampiran A stated "Jumlah dokumen yang disediakan: 83" above a table with 59 rows,
+// and nothing said which 24 were absent from it or why. A reader cannot check a
+// conclusion against a document they cannot identify.
+describe("documents that could not be read are named in the appendix", () => {
+  const withScans = (): DDEntityResult => ({
+    ...result(),
+    extractReport: {
+      sessionId: "s", folderPath: "/x", docTypeId: "dd", practiceAreaId: null, claimType: null,
+      ref: "r", timestamp: "2026-08-12T00:00:00.000Z", totalChars: 1000, processed: 1, skipped: 0,
+      ocrRequired: 2,
+      files: [
+        { name: "nib.pdf", category: "KRITIS", documentType: "lainnya", extractionMode: "PDF", status: "selesai" },
+        { name: "Akta Pendirian 1998 (pindaian).pdf", category: "KRITIS", documentType: "lainnya", extractionMode: "Perlu OCR", status: "perlu_ocr" },
+        { name: "Sertifikat HGB No. 12.pdf", category: "KRITIS", documentType: "lainnya", extractionMode: "Perlu OCR", status: "perlu_ocr" },
+      ],
+    } as unknown as DDEntityResult["extractReport"],
+  });
+
+  const buildWith = async (r: DDEntityResult) => {
+    const buf = await buildDdReportDocx({ transaction: txn({}), results: [r], consolidated: null });
+    expect(verifyDocx(buf).bad).toBe(0);
+    return docxText(buf);
+  };
+
+  it("names each unreadable document", async () => {
+    const text = await buildWith(withScans());
+    expect(text).toContain("Akta Pendirian 1998 (pindaian).pdf");
+    expect(text).toContain("Sertifikat HGB No. 12.pdf");
+  });
+
+  it("says their absence from the report is not a statement about their contents", async () => {
+    const text = await buildWith(withScans());
+    expect(text).toContain("BUKAN pernyataan mengenai");
+  });
+
+  it("stays silent when every document was read", async () => {
+    expect(await buildWith(result())).not.toContain("tidak dapat dibaca secara otomatis");
+  });
+});

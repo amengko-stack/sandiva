@@ -197,11 +197,11 @@ function renderBlocks(blocks: (DDNarrativeBlock | DDReportBlock)[]): (Paragraph 
 
 const GAP_LABEL: Record<DDGapItem["status"], string> = {
   present: "Ada", incomplete: "Tidak lengkap", expired: "Kedaluwarsa",
-  missing: "TIDAK ADA", not_applicable: "Tidak berlaku",
+  missing: "TIDAK ADA", unreadable: "TIDAK TERBACA", not_applicable: "Tidak berlaku",
 };
 const GAP_FILL: Record<DDGapItem["status"], string> = {
   present: "D1FAE5", incomplete: "FEF3C7", expired: "FED7AA",
-  missing: "FEE2E2", not_applicable: "E5E7EB",
+  missing: "FEE2E2", unreadable: "E0E7FF", not_applicable: "E5E7EB",
 };
 
 const PLACEHOLDER_META: DDReportMeta = {
@@ -1100,12 +1100,13 @@ export async function buildDdReportDocx(args: {
     children.push(h2("Rekapitulasi Kelengkapan per Aspek"));
     children.push(
       simpleTable(
-        ["Aspek", "Total", "Ada", "Tidak Ada", "Tidak Lengkap", "Kedaluwarsa", "Tidak Berlaku"],
+        ["Aspek", "Total", "Ada", "Tidak Ada", "Tidak Terbaca", "Tidak Lengkap", "Kedaluwarsa", "Tidak Berlaku"],
         consolidated.aspectRollup.map((a) => [
           aspectLabel(a.aspectId),
           String(a.totalExpected),
           String(a.present),
           String(a.missing),
+          String(a.unreadable ?? 0),
           String(a.incomplete),
           String(a.expired),
           String(a.notApplicable),
@@ -1130,6 +1131,32 @@ export async function buildDdReportDocx(args: {
             (rep.skipped ? ` Tidak dapat diproses: ${rep.skipped}.` : "")
         )
       );
+    }
+    // Named, not merely counted. The table below lists only documents that could be
+    // read, under a heading stating how many were supplied — on a live matter that was
+    // 59 rows beneath the number 83, with nothing saying which 24 were absent from it
+    // or why. A reader cannot check a conclusion against a document they cannot
+    // identify.
+    const unreadable = (rep?.files ?? []).filter((f) => f.status === "perlu_ocr");
+    if (unreadable.length > 0) {
+      children.push(
+        p(
+          `Dokumen berikut disediakan namun tidak dapat dibaca secara otomatis karena merupakan pindaian ` +
+            `tanpa lapisan teks, sehingga TIDAK termasuk dalam pemeriksaan dan tidak tercantum dalam daftar di ` +
+            `bawah ini. Ketiadaan uraian mengenai dokumen tersebut dalam Laporan ini BUKAN pernyataan mengenai ` +
+            `isinya:`
+        )
+      );
+      for (const f of unreadable) {
+        children.push(
+          new Paragraph({
+            numbering: { reference: "bullets", level: 0 },
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            children: [new TextRun({ text: f.name, font: FONT, size: BODY_SIZE })],
+          })
+        );
+      }
     }
     if (r.classified.length === 0) {
       children.push(p("Tidak terdapat dokumen terklasifikasi untuk entitas ini."));

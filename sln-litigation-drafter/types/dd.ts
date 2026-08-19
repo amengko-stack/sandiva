@@ -52,7 +52,16 @@ export type DDComplianceVerdict =
   | "tidak_memenuhi";
 
 export type DDImportance = "wajib" | "penting" | "opsional";
-export type DDGapStatus = "present" | "incomplete" | "expired" | "missing" | "not_applicable";
+/**
+ * "unreadable" exists because the report was stating something untrue. A document
+ * supplied as an image-only scan never reaches classification — there is no text to
+ * classify — so the checklist item it would have satisfied came out "missing", with
+ * the note "Tidak ditemukan dalam data room." On a live dissolution 24 of 83 supplied
+ * documents were such scans. Telling a client their document is absent when they did
+ * supply it is a different and worse error than saying it could not be read.
+ */
+export type DDGapStatus =
+  | "present" | "incomplete" | "expired" | "missing" | "unreadable" | "not_applicable";
 export type DDSeverity = "kritis" | "material" | "minor";
 export type DDDimension = "kelengkapan" | "currency" | "risiko" | "konsistensi";
 export type DDConfidence = "tinggi" | "sedang" | "rendah";
@@ -485,6 +494,8 @@ export interface DDGapItem {
   expectedLabel: string;
   status: DDGapStatus;
   matchedFiles: string[];
+  /** Supplied but unreadable files whose names suggest they may cover this item. */
+  unreadableCandidates?: string[];
   severity: DDSeverity;
   note: string;
 }
@@ -568,6 +579,13 @@ export interface DDAspectRollup {
   missing: number;
   incomplete: number;
   expired: number;
+  /**
+   * Supplied but unreadable. Optional so a consolidated blob written before this
+   * field still parses; counted separately because the fallback branch it used to
+   * land in was notApplicable, which asserts the opposite — that the item does not
+   * apply, rather than that we cannot yet tell.
+   */
+  unreadable?: number;
   notApplicable: number;
 }
 

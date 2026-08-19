@@ -88,9 +88,20 @@ export function parseAnalysisState(raw: string | null): DDAnalysisState {
  * closes that, and closes it for any future change to the cap or the packing rule
  * without anyone having to remember.
  */
-export function seenDigest(docsText: string, omitted: string[]): string {
+/**
+ * Everything about the documents that reaches the model, including what it is told
+ * it cannot see.
+ *
+ * `unreadable` is part of the key for the same reason `omitted` is: both appear in
+ * the user prompt, so an analysis produced without them was produced under different
+ * instructions. Leaving it out would be the fourth cache in this codebase whose key
+ * described part of the request and missed the part that had just changed — and the
+ * failure mode is always the same, that a fix silently does not exist for work
+ * already done.
+ */
+export function seenDigest(docsText: string, omitted: string[], unreadable: string[] = []): string {
   return createHash("sha256")
-    .update(`${docsText}\u0000${omitted.join("|")}`)
+    .update(`${docsText}\u0000${omitted.join("|")}\u0000${unreadable.join("|")}`)
     .digest("hex")
     .slice(0, 32);
 }

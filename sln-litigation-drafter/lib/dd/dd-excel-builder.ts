@@ -14,11 +14,11 @@ function reportSectionLabel(aspectId: DDEntityResult["findings"][number]["aspect
 
 const GAP_LABEL: Record<DDGapItem["status"], string> = {
   present: "Ada", incomplete: "Tidak lengkap", expired: "Kedaluwarsa",
-  missing: "TIDAK ADA", not_applicable: "N/A",
+  missing: "TIDAK ADA", unreadable: "TIDAK TERBACA", not_applicable: "N/A",
 };
 const GAP_FILL: Record<DDGapItem["status"], string> = {
   present: "FFD1FAE5", incomplete: "FFFEF3C7", expired: "FFFED7AA",
-  missing: "FFFEE2E2", not_applicable: "FFE5E7EB",
+  missing: "FFFEE2E2", unreadable: "FFE0E7FF", not_applicable: "FFE5E7EB",
 };
 
 function headerRow(ws: ExcelJS.Worksheet, values: string[]) {
@@ -114,9 +114,9 @@ export async function buildDdWorkbook(args: {
   sum.addRow([`Uji Tuntas: ${transaction.name}`]).font = { bold: true, size: 14 };
   sum.addRow([`Transaksi: ${transactionLabel(transaction.type)} — per ${transaction.cutoffDateISO}`]);
   sum.addRow([]);
-  headerRow(sum, ["Aspek", "Total", "Ada", "Tidak Ada", "Tidak Lengkap", "Kedaluwarsa", "N/A"]);
+  headerRow(sum, ["Aspek", "Total", "Ada", "Tidak Ada", "Tidak Terbaca", "Tidak Lengkap", "Kedaluwarsa", "N/A"]);
   for (const r of consolidated?.aspectRollup ?? []) {
-    sum.addRow([aspectLabel(r.aspectId), r.totalExpected, r.present, r.missing, r.incomplete, r.expired, r.notApplicable]);
+    sum.addRow([aspectLabel(r.aspectId), r.totalExpected, r.present, r.missing, r.unreadable ?? 0, r.incomplete, r.expired, r.notApplicable]);
   }
   sum.addRow([]);
   const bySev = { kritis: 0, material: 0, minor: 0 };

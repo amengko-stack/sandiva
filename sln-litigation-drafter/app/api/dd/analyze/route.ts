@@ -19,6 +19,7 @@ import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
 import { badCitations, checkUUPTCitations } from "@/lib/dd/statute";
 import { chapterForAspect, planChapters } from "@/config/ddChapters";
+import type { ExtractReport } from "@/types";
 import type {
   DDAspectId, DDClassifiedDoc, DDExtractionRow, DDFinding, DDGapItem, DDSubsectionAnalysis, DDTransaction,
 } from "@/types/dd";
@@ -52,13 +53,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "sessionId/entityId tidak valid" }, { status: 400 });
   }
 
-  const [txnRaw, combined, classifiedRaw, gapsRaw, tablesRaw, stateRaw] = await Promise.all([
+  const [txnRaw, combined, classifiedRaw, gapsRaw, tablesRaw, stateRaw, extractRaw] = await Promise.all([
     readBlobText(ddKeys.transaction(sessionId)),
     readBlobText(ddKeys.extracted(sessionId, entityId)),
     readBlobText(ddKeys.classified(sessionId, entityId)),
     readBlobText(ddKeys.gaps(sessionId, entityId)),
     readBlobText(ddKeys.tables(sessionId, entityId)),
     readBlobText(ddKeys.analysisState(sessionId, entityId)),
+    readBlobText(ddKeys.report(sessionId, entityId)),
   ]);
   if (!txnRaw || !combined || !classifiedRaw || !gapsRaw) {
     return NextResponse.json({ error: "Selesaikan klasifikasi & gap entitas ini dahulu." }, { status: 400 });
@@ -71,6 +73,12 @@ export async function POST(req: NextRequest) {
   const tables = tablesRaw ? (JSON.parse(tablesRaw) as DDExtractionRow[]) : [];
   const regime = resolveRegime(entity);
   const priorState = parseAnalysisState(stateRaw);
+  // Named to the model so it can tell "not supplied" from "supplied but unreadable".
+  const unreadableDocs: string[] = extractRaw
+    ? ((JSON.parse(extractRaw) as ExtractReport).files ?? [])
+        .filter((f) => f.status === "perlu_ocr")
+        .map((f) => f.name)
+    : [];
 
   const blocks = splitDocBlocks(combined);
   const contentByFile = new Map(blocks.map((b) => [b.fileName, b.content]));
@@ -208,7 +216,7 @@ export async function POST(req: NextRequest) {
           .filter((j) => j.docsText.trim().length >= 50)
           // From what the model will actually be shown, not from the whole corpus:
           // a change to the cap or the packing rule must invalidate the cache too.
-          .map((j) => ({ ...j, docsDigest: seenDigest(j.docsText, j.omitted) }));
+          .map((j) => ({ ...j, docsDigest: seenDigest(j.docsText, j.omitted, unreadableDocs) }));
 
         // An aspect whose documents are byte-identical to the last run keeps its
         // findings exactly as they were — ids, review state, grounding verdicts and
@@ -314,6 +322,7 @@ export async function POST(req: NextRequest) {
               aspectId: aspectJobs[i].aspectId,
               docsText: aspectJobs[i].docsText,
               omittedDocs: aspectJobs[i].omitted,
+              unreadableDocs,
               transactionType: txn.type,
               regime,
               subsections: subsectionsFor(aspectJobs[i].aspectId),

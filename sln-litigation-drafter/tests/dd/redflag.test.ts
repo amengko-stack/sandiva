@@ -3,6 +3,7 @@ import {
   buildRedFlagPrompt, parseRedFlagResponse, promoteDealTriggeredCells, selectAspectDocs,
 } from "@/lib/dd/redflag";
 import { extractTableSystem, redflagSystem } from "@/lib/dd/prompts";
+import { seenDigest } from "@/lib/dd/analysis-state";
 import type { DDExtractionRow } from "@/types/dd";
 import { DD_ASPECTS } from "@/config/ddAspects";
 
@@ -370,5 +371,57 @@ describe("what a chapter is about goes in first", () => {
   it("behaves as before when nothing answers a checklist item", () => {
     const { omitted } = selectAspectDocs([doc("a.pdf", 200), doc("b.pdf", 9000)], 1000);
     expect(omitted).toEqual(["b.pdf"]);
+  });
+});
+
+// The table said "supplied but unreadable" while the prose next to it still said the
+// document had never been handed over. A scan is never offered to the model at all,
+// so unless it is told, it reports an absence — and the prose is the half a client
+// actually reads.
+describe("scans the model was never shown", () => {
+  const args = {
+    entityName: "PT Target",
+    aspectId: "pendirian_ad" as const,
+    docsText: "=== a.pdf ===\nisi",
+    transactionType: "likuidasi" as const,
+  };
+
+  it("names them and forbids calling them missing", () => {
+    const p = buildRedFlagPrompt({ ...args, unreadableDocs: ["Akta Pendirian 1998 (pindaian).pdf"] });
+    expect(p).toContain("Akta Pendirian 1998 (pindaian).pdf");
+    expect(p).toContain("DOKUMEN ITU ADA");
+    expect(p).toContain("JANGAN menyatakan dokumen tersebut tidak diserahkan");
+    expect(p).toContain("[PERLU VERIFIKASI]");
+  });
+
+  it("distinguishes the reason from a size-capped omission", () => {
+    const p = buildRedFlagPrompt({
+      ...args,
+      omittedDocs: ["besar.pdf"],
+      unreadableDocs: ["pindaian.pdf"],
+    });
+    expect(p).toContain("karena batas ukuran");
+    expect(p).toContain("pindaian tanpa lapisan teks");
+    // Both blocks survive together; neither replaces the other.
+    expect(p).toContain("besar.pdf");
+    expect(p).toContain("pindaian.pdf");
+  });
+
+  it("says nothing when every document could be read", () => {
+    expect(buildRedFlagPrompt(args)).not.toContain("pindaian tanpa lapisan teks");
+  });
+});
+
+// Fourth cache in this codebase whose key risked describing part of the request and
+// missing the part that had just changed.
+describe("seenDigest covers what the model is told it cannot see", () => {
+  it("changes when the unreadable list changes", () => {
+    const a = seenDigest("teks", [], ["scan.pdf"]);
+    const b = seenDigest("teks", [], []);
+    expect(a).not.toBe(b);
+  });
+
+  it("is unchanged for callers that pass no list", () => {
+    expect(seenDigest("teks", ["x.pdf"])).toBe(seenDigest("teks", ["x.pdf"], []));
   });
 });

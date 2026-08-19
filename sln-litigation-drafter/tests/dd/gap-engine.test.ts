@@ -180,3 +180,81 @@ describe("severityFor / gapToFinding", () => {
     expect(expired.whyItMatters).toContain("Tanggal Akhir Uji Tuntas");
   });
 });
+
+// A document supplied as an image-only scan never reaches the classifier — there is
+// no text to classify — so the checklist item it covers came out "missing" with the
+// note "Tidak ditemukan dalam data room." On a live dissolution 24 of 83 supplied
+// documents were such scans. Telling a client their document is absent when they did
+// supply it is a different and worse error than saying it could not be read.
+describe("documents supplied but unreadable", () => {
+  const unreadableFiles = ["Scan NIB PT Target.pdf", "Polis Asuransi Kebakaran 2024.pdf"];
+
+  it("does not call an item missing when a scan may cover it", () => {
+    const gaps = computeGaps({ ...base, classified: [], unreadableFiles });
+    const nib = gaps.find((g) => g.expectedDocId === "perizinan.nib")!;
+    expect(nib.status).toBe("unreadable");
+    expect(nib.note).not.toContain("Tidak ditemukan dalam data room");
+    expect(nib.note).toContain("belum dapat dinyatakan tidak ada");
+  });
+
+  it("names the scan, so the reader can go and open it", () => {
+    const gaps = computeGaps({ ...base, classified: [], unreadableFiles });
+    const nib = gaps.find((g) => g.expectedDocId === "perizinan.nib")!;
+    expect(nib.note).toContain("Scan NIB PT Target.pdf");
+    expect(nib.unreadableCandidates).toEqual(["Scan NIB PT Target.pdf"]);
+  });
+
+  it("still reports missing where no scan matches", () => {
+    const gaps = computeGaps({ ...base, classified: [], unreadableFiles });
+    const perkara = gaps.find((g) => g.expectedDocId === "perkara.daftar_perkara")!;
+    expect(perkara.status).toBe("missing");
+    expect(perkara.unreadableCandidates).toBeUndefined();
+  });
+
+  // Several checklist keywords are three-letter acronyms. Substring matching would
+  // find "nib" inside "Kombinasi" and quietly downgrade a genuine gap.
+  it("matches on whole words, not substrings", () => {
+    const gaps = computeGaps({
+      ...base,
+      classified: [],
+      unreadableFiles: ["Kombinasi Dokumen Korporasi.pdf", "Monopolis.pdf"],
+    });
+    expect(gaps.find((g) => g.expectedDocId === "perizinan.nib")!.status).toBe("missing");
+    expect(gaps.find((g) => g.expectedDocId === "asuransi.polis")!.status).toBe("missing");
+  });
+
+  it("leaves a matched item alone even when a scan also mentions it", () => {
+    const gaps = computeGaps({
+      ...base,
+      classified: [doc({ expectedDocId: "perizinan.nib" })],
+      unreadableFiles,
+    });
+    expect(gaps.find((g) => g.expectedDocId === "perizinan.nib")!.status).toBe("present");
+  });
+
+  it("counts the rest rather than printing a long list", () => {
+    const many = ["NIB 2020.pdf", "NIB 2021.pdf", "NIB 2022.pdf", "NIB 2023.pdf", "NIB 2024.pdf"];
+    const nib = computeGaps({ ...base, classified: [], unreadableFiles: many }).find(
+      (g) => g.expectedDocId === "perizinan.nib"
+    )!;
+    expect(nib.note).toContain("dan 2 dokumen lainnya");
+    expect(nib.note).not.toContain("NIB 2024.pdf");
+    // The field keeps all of them; only the sentence is abbreviated.
+    expect(nib.unreadableCandidates).toHaveLength(5);
+  });
+
+  it("behaves exactly as before when nothing was unreadable", () => {
+    const withOut = computeGaps({ ...base, classified: [] });
+    const withEmpty = computeGaps({ ...base, classified: [], unreadableFiles: [] });
+    expect(withEmpty).toEqual(withOut);
+  });
+
+  // The finding must not read as an assertion of absence.
+  it("frames the finding as unverified rather than absent", () => {
+    const gaps = computeGaps({ ...base, classified: [], unreadableFiles });
+    const f = gapToFinding(gaps.find((g) => g.expectedDocId === "perizinan.nib")!)!;
+    expect(f.problem).toContain("tidak dapat dibaca");
+    expect(f.whyItMatters).toContain("BELUM dapat");
+    expect(f.whyItMatters).toContain("OCR");
+  });
+});
