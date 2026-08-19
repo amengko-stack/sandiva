@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
-import { charCapFor, extractWithTier, getFileLastModified } from "@/lib/sharepoint";
+import { documentNormalizer } from "@/lib/document-normalizer";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
-import { writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
-import { formatDocBlock } from "@/lib/extract-format";
+import { type ExtractionMetadata } from "@/lib/extraction-cache";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { preCategorize } from "@/lib/dd/pre-categorize";
 import type { DocCategory, ExtractReport } from "@/types";
@@ -109,7 +108,7 @@ export async function POST(req: NextRequest) {
         }
 
         try {
-          const { content, extractionMethod, needsOcr } = await extractWithTier(
+          const { content, extractionMethod, needsOcr } = await documentNormalizer.extractWithTier(
             file.path,
             targetName,
             category
@@ -121,7 +120,7 @@ export async function POST(req: NextRequest) {
             return;
           }
 
-          const currentModifiedAt = await getFileLastModified(file.path);
+          const currentModifiedAt = await documentNormalizer.getFileLastModified(file.path);
           const metadata: ExtractionMetadata = {
             filename: targetName,
             category,
@@ -130,10 +129,10 @@ export async function POST(req: NextRequest) {
             extractedAt: new Date().toISOString(),
             sharePointPath: file.path,
             fileModifiedAt: currentModifiedAt ?? "",
-            charCap: charCapFor(category),
+            charCap: documentNormalizer.charCapFor(category),
           };
-          docBlocks[i] = formatDocBlock(metadata, content);
-          await writeExtractionCache(file.path, { content, metadata });
+          docBlocks[i] = documentNormalizer.formatDocBlock(metadata, content);
+          await documentNormalizer.writeExtractionCache(file.path, { content, metadata });
 
           if (report) {
             const rf = file.replacesName

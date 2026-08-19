@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractWithTier, getFileLastModified } from "@/lib/sharepoint";
+import { documentNormalizer } from "@/lib/document-normalizer";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
-import { writeExtractionCache, type ExtractionMetadata } from "@/lib/extraction-cache";
-import { formatDocBlock } from "@/lib/extract-format";
+import { type ExtractionMetadata } from "@/lib/extraction-cache";
 import type { DocCategory, ExtractReport } from "@/types";
 
 export const maxDuration = 300;
@@ -61,13 +60,13 @@ export async function POST(req: NextRequest) {
     const targetName = file.replacesName ?? file.name;
 
     try {
-      const { content, extractionMethod, needsOcr } = await extractWithTier(file.path, targetName, category);
+      const { content, extractionMethod, needsOcr } = await documentNormalizer.extractWithTier(file.path, targetName, category);
       if (needsOcr) {
         results.push({ name: targetName, replacesName: file.replacesName, status: "ocr_gagal" });
         continue;
       }
 
-      const currentModifiedAt = await getFileLastModified(file.path);
+      const currentModifiedAt = await documentNormalizer.getFileLastModified(file.path);
       const metadata: ExtractionMetadata = {
         filename: targetName,
         category,
@@ -77,8 +76,8 @@ export async function POST(req: NextRequest) {
         sharePointPath: file.path,
         fileModifiedAt: currentModifiedAt ?? "",
       };
-      appended += formatDocBlock(metadata, content);
-      await writeExtractionCache(file.path, { content, metadata });
+      appended += documentNormalizer.formatDocBlock(metadata, content);
+      await documentNormalizer.writeExtractionCache(file.path, { content, metadata });
       addedChars += content.length;
       addedProcessed += 1;
 
