@@ -8,6 +8,8 @@ import {
   writeExtractionCache,
 } from "@/lib/extraction-cache";
 import { formatDocBlock } from "@/lib/extract-format";
+import { observeDocumentShadow } from "@/lib/document-shadow-runtime";
+import type { ShadowObservationInput } from "@/lib/document-shadow";
 
 /**
  * Compatibility seam for the existing document-intelligence pipeline.
@@ -24,6 +26,7 @@ export interface DocumentNormalizer {
   readExtractionCache: typeof readExtractionCache;
   writeExtractionCache: typeof writeExtractionCache;
   formatDocBlock: typeof formatDocBlock;
+  runShadowComparison: (input: ShadowObservationInput) => Promise<void>;
 }
 
 export const documentNormalizer: DocumentNormalizer = Object.freeze({
@@ -33,4 +36,5 @@ export const documentNormalizer: DocumentNormalizer = Object.freeze({
   readExtractionCache,
   writeExtractionCache,
   formatDocBlock,
+  runShadowComparison: observeDocumentShadow,
 });
