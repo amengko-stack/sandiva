@@ -46,12 +46,38 @@ const NO_DEFECT = "Tidak ada cacat formal";
  */
 const UNVERIFIED_PREFIX = "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN] ";
 
+/**
+ * A citation naming an article, paragraph or letter the statute does not contain.
+ * The existence check has been catching these for a while, but only ever said so in
+ * the operator's run log — a line nobody reading the Word file would see. A reader
+ * cannot catch this class of error unaided: "Pasal 93 ayat (1) huruf e" reads exactly
+ * like a real provision, and Pasal 93 ayat (1) stops at huruf c.
+ */
+const CITATION_MARK = "[PASAL TIDAK DITEMUKAN]";
+
+/** Shared wording, so the finding table and the analysis chapters say the same thing. */
+export function citationIssueNote(issues: string[]): string {
+  const list = issues.join("; ");
+  return (
+    `Pemeriksaan otomatis terhadap teks UU No. 40 Tahun 2007 tidak menemukan rujukan berikut ` +
+    `sebagaimana ditulis: ${list}. Rujukan tersebut wajib diperiksa dan diperbaiki terhadap teks ` +
+    `undang-undangnya sebelum bagian ini diandalkan.`
+  );
+}
+
 function problemText(f: DDFinding): string {
   const base = f.editedProblem ?? f.problem;
   if (f.grounding && isUngrounded(f.grounding.verdict)) {
     return UNVERIFIED_PREFIX + base;
   }
   return base;
+}
+
+function refsText(f: DDFinding): string {
+  const refs = f.regulationRefs && f.regulationRefs.length > 0 ? f.regulationRefs.join("; ") : NO_DEFECT;
+  const issues = f.citationIssues ?? [];
+  if (issues.length === 0) return refs;
+  return `${refs} ${CITATION_MARK} ${issues.join("; ")}`;
 }
 
 function sortBySeverity(findings: DDFinding[]): DDFinding[] {
@@ -80,7 +106,7 @@ export function renderFindingsTable(
     const row = [
       String(i + 1),
       problemText(f),
-      f.regulationRefs && f.regulationRefs.length > 0 ? f.regulationRefs.join("; ") : NO_DEFECT,
+      refsText(f),
     ];
     if (showConsequence) row.push(f.legalConsequence || "—");
     row.push(f.suggestedFix);
@@ -106,6 +132,14 @@ export function renderFindingsTable(
         `${ungrounded} butir di atas ditandai "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN]": kutipan yang ` +
         `mendasarinya tidak ditemukan dalam dokumen yang dirujuk pada pemeriksaan otomatis. Butir tersebut ` +
         `belum dapat dinyatakan sebagai fakta dan wajib ditelaah terhadap dokumen aslinya sebelum diandalkan.`,
+    });
+  }
+
+  const citeIssues = Array.from(new Set(ordered.flatMap((f) => f.citationIssues ?? [])));
+  if (citeIssues.length > 0) {
+    out.push({
+      kind: "note",
+      text: `Butir yang ditandai "${CITATION_MARK}": ${citationIssueNote(citeIssues)}`,
     });
   }
   return out;

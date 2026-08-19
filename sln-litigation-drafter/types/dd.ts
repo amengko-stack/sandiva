@@ -457,6 +457,12 @@ export interface DDSubsectionAnalysis {
   verification: string[];
   /** Optional table where a register reads better than prose. */
   table?: { headers: string[]; rows: string[][] };
+  /**
+   * Citations in this analysis that name an article, paragraph or letter the
+   * statute does not have. Carried so the report can mark them where the reader
+   * is, rather than only in the operator's run log.
+   */
+  citationIssues?: string[];
 }
 
 export interface DDClassifiedDoc {
@@ -534,6 +540,8 @@ export interface DDFinding {
    * Absent on findings generated in code, which quote nothing.
    */
   grounding?: { verdict: DDGroundingVerdict; coverage: number; note: string };
+  /** Citations naming an article, paragraph or letter that does not exist. */
+  citationIssues?: string[];
   regulationRefs?: string[];
   currencyStatus?: DDCurrencyStatus;
   currencyNote?: string;

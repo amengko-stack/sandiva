@@ -103,6 +103,21 @@ describe("transaction chapters carry their analysis", () => {
       expect(await build(a)).toContain("Kewajiban yang relevan berdasarkan Undang-Undang");
     }
   });
+
+  // The existence check has been catching invented provisions for a while — on the
+  // live dissolution it caught "Pasal 93 ayat (1) huruf e" and "Pasal 110 ayat (1)
+  // huruf e", both real articles whose letters stop at c — but it only ever said so in
+  // the operator's run log. Whoever opened the Word file saw a citation that reads
+  // exactly like any other.
+  it("carries a citation warning into the chapter that makes the claim", async () => {
+    const text = await build([{ ...analysis, citationIssues: ["Pasal 93 ayat (1) huruf e"] }]);
+    expect(text).toContain("Pasal 93 ayat (1) huruf e");
+    expect(text).toContain("tidak menemukan rujukan berikut");
+  });
+
+  it("says nothing when every citation checks out", async () => {
+    expect(await build([analysis])).not.toContain("tidak menemukan rujukan berikut");
+  });
 });
 
 describe("transactionAnalysisSystem", () => {

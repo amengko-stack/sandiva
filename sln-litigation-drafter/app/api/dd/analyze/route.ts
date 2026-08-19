@@ -467,20 +467,38 @@ export async function POST(req: NextRequest) {
         // confirms a regulation is in force, which UUPT is. Neither reads the
         // article. This catches a citation that cannot be right whatever it claims.
         {
-          const cited = findings
-            .map((f) => [f.problem, f.whyItMatters, f.legalConsequence ?? "", (f.regulationRefs ?? []).join(" ")].join(" "))
-            .concat(aspectAnalyses.flatMap((a) => a.analysis))
-            .join("\n");
-          const bad = badCitations(checkUUPTCitations(cited));
-          if (bad.length > 0) {
+          // Attached to the finding or the analysis that makes the claim, not only
+          // reported to whoever is watching the run. A citation to an article that
+          // does not exist is exactly the kind of thing a reader cannot catch, and
+          // until now the only trace of it was a line in the operator's log.
+          const refsOf = (text: string) => badCitations(checkUUPTCitations(text)).map((b) => b.ref);
+          findings = findings.map((f) => {
+            const issues = refsOf(
+              [f.problem, f.whyItMatters, f.legalConsequence ?? "", (f.regulationRefs ?? []).join(" ")].join(" ")
+            );
+            return issues.length > 0 ? { ...f, citationIssues: issues } : f;
+          });
+          for (let i = 0; i < aspectAnalyses.length; i++) {
+            const issues = refsOf(aspectAnalyses[i].analysis.join(" "));
+            if (issues.length > 0) aspectAnalyses[i] = { ...aspectAnalyses[i], citationIssues: issues };
+          }
+          const all = Array.from(
+            new Set(
+              findings
+                .flatMap((f) => f.citationIssues ?? [])
+                .concat(aspectAnalyses.flatMap((a) => a.citationIssues ?? []))
+            )
+          );
+          if (all.length > 0) {
             emit(controller, {
               type: "step",
               label:
-                `PERIKSA: ${bad.length} rujukan UUPT tidak ada sebagaimana ditulis — ` +
-                bad.map((b) => b.ref).join("; ") +
-                ". Rujukan tersebut wajib diperbaiki sebelum laporan diandalkan.",
+                `PERIKSA: ${all.length} rujukan UUPT tidak ada sebagaimana ditulis — ` +
+                all.join("; ") +
+                ". Ditandai pada laporan dan wajib diperbaiki sebelum diandalkan.",
             });
           }
+          await persist();
         }
 
         emit(controller, { type: "step", label: "Verifikasi adversarial temuan kritis" });
