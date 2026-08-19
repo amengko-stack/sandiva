@@ -13,7 +13,7 @@ import {
 } from "@/lib/dd/report-boilerplate";
 import { obligationsForLayer, resolveRegime, type DDObligation } from "@/lib/dd/regime";
 import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
-import { renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
+import { citationIssueNote, renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
 import { renderSupplementSections } from "@/lib/dd/supplement-render";
 import { chapterDisclaimer, chapterPendahuluan } from "@/lib/dd/report-chapters";
 import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
@@ -344,6 +344,12 @@ function renderTransaksiChapter(
     }
     for (const para of analysis.analysis) out.push(p(para));
     if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+    // Where the reader is, not only in the run log.
+    if (analysis.citationIssues && analysis.citationIssues.length > 0) {
+      for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
+        out.push(el);
+      }
+    }
 
     const subFindings = r.findings.filter(
       (f) => f.status !== "dismissed" && f.subsectionTitle === s.title
@@ -506,6 +512,12 @@ function renderAnalisisAspekChapter(
 
     for (const para of analysis.analysis) out.push(p(para));
     if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+    // Where the reader is, not only in the run log.
+    if (analysis.citationIssues && analysis.citationIssues.length > 0) {
+      for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
+        out.push(el);
+      }
+    }
 
     const subFindings = chapterFindings.filter((f) => f.subsectionTitle === sub.title);
     const findingBlocks = renderFindingsTable(subFindings, opts);
@@ -691,6 +703,12 @@ function renderTransaksiJualChapter(
     }
     for (const para of analysis.analysis) out.push(p(para));
     if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+    // Where the reader is, not only in the run log.
+    if (analysis.citationIssues && analysis.citationIssues.length > 0) {
+      for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
+        out.push(el);
+      }
+    }
 
     const subFindings = r.findings.filter((f) => f.status !== "dismissed" && f.subsectionTitle === sub.title);
     for (const el of renderBlocks(renderFindingsTable(subFindings, opts))) out.push(el);

@@ -14,7 +14,9 @@ vi.mock("@/lib/blob", () => ({
   writeBlobText: vi.fn(),
 }));
 
-const { readExtractionCache } = await import("@/lib/extraction-cache");
+// Static import, not `await import` — vi.mock is hoisted above it either way, and a
+// top-level await here fails `tsc --noEmit` under this tsconfig.
+import { readExtractionCache } from "@/lib/extraction-cache";
 
 const entry = (over: Record<string, unknown> = {}) =>
   JSON.stringify({
