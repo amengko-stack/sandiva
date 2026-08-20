@@ -18,6 +18,25 @@ import { runShadowOutboxOnce } from "@/workers/document-shadow-outbox";
 const bytes = Buffer.from("synthetic immutable document");
 const sha256 = createHash("sha256").update(bytes).digest("hex");
 
+function evaluateBicepInterpolatedVariable(
+  bicep: string,
+  variableName: string,
+  parameters: Record<string, string>,
+): string {
+  const declaration = new RegExp(`^var\\s+${variableName}\\s*=\\s*'([^']*)'\\s*$`, "m").exec(bicep);
+  if (!declaration) throw new Error(`missing Bicep variable: ${variableName}`);
+  return declaration[1]!.replace(/\$\{([A-Za-z][A-Za-z0-9_]*)\}/g, (_match, parameter: string) => {
+    if (!(parameter in parameters)) throw new Error(`missing Bicep parameter value: ${parameter}`);
+    return parameters[parameter]!;
+  });
+}
+
+function bicepParameterMaxLength(bicep: string, parameterName: string): number {
+  const declaration = new RegExp(`@maxLength\\((\\d+)\\)\\s*param\\s+${parameterName}\\s+string`, "m").exec(bicep);
+  if (!declaration) throw new Error(`missing Bicep maxLength constraint: ${parameterName}`);
+  return Number(declaration[1]);
+}
+
 function pointer(overrides: Partial<ShadowSourcePointer> = {}): ShadowSourcePointer {
   return {
     version: 1,
@@ -511,6 +530,23 @@ describe("provider selection, identity and privacy", () => {
 });
 
 describe("disabled Azure deployment", () => {
+  it("derives a deterministic Azure-valid Service Bus namespace from every accepted prefix", () => {
+    const bicep = readFileSync(new URL("../deploy/azure/document-shadow-stage1.disabled.bicep", import.meta.url), "utf8");
+    expect(bicep).toMatch(/resource serviceBus[\s\S]*?name:\s*serviceBusNamespaceName/);
+
+    const maxPrefixLength = bicepParameterMaxLength(bicep, "prefix");
+    const prefixes = ["sandiva-ai02-qual", `a${"1".repeat(maxPrefixLength - 1)}`];
+    for (const prefix of prefixes) {
+      const first = evaluateBicepInterpolatedVariable(bicep, "serviceBusNamespaceName", { prefix });
+      const second = evaluateBicepInterpolatedVariable(bicep, "serviceBusNamespaceName", { prefix });
+      expect(second).toBe(first);
+      expect(first.length).toBeGreaterThanOrEqual(6);
+      expect(first.length).toBeLessThanOrEqual(50);
+      expect(first).toMatch(/^[A-Za-z][A-Za-z0-9-]*[A-Za-z0-9]$/);
+      expect(first.toLowerCase()).not.toMatch(/-(?:sb|mgmt)$/);
+    }
+  });
+
   it("uses zero-to-one replicas with no scaler, zero sampling, and every runtime disabled", () => {
     expect(deployment).toMatchObject({
       activation: "disabled",
