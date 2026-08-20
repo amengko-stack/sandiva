@@ -2,14 +2,18 @@ targetScope = 'resourceGroup'
 
 @description('Non-production Azure region. Production deployment requires a separate approval.')
 param location string = resourceGroup().location
+@minLength(1)
+@maxLength(22)
 param prefix string = 'sandiva-ai02-nonprod'
 @description('Image is supplied only to create an inert Container App definition.')
 param workerImage string
 param containerAppsEnvironmentId string
 param workerManagedIdentityResourceId string
 
+var serviceBusNamespaceName = '${prefix}-servicebus'
+
 resource serviceBus 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
-  name: '${prefix}-sb'
+  name: serviceBusNamespaceName
   location: location
   sku: { name: 'Premium', tier: 'Premium', capacity: 1 }
   properties: {
