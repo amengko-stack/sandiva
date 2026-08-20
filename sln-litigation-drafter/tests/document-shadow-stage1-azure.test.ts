@@ -108,9 +108,49 @@ describe("Azure Service Bus adapter", () => {
 });
 
 describe("Azure Blob exact-version adapter", () => {
+  function immutableBlobHarness() {
+    let stored: { bytes: Buffer; metadata: Record<string, string>; versionId: string } | undefined;
+    let versionSequence = 0;
+    const blobNames: string[] = [];
+    const uploadOptions: unknown[] = [];
+    const requestedVersions: string[] = [];
+    const getBlockBlobClient = vi.fn((name: string) => {
+      blobNames.push(name);
+      return {
+        uploadData: async (value: Buffer, options: unknown) => {
+          await Promise.resolve();
+          if (stored) throw Object.assign(new Error("condition not met"), { statusCode: 412, code: "ConditionNotMet" });
+          versionSequence += 1;
+          const metadata = (options as { metadata: Record<string, string> }).metadata;
+          uploadOptions.push(options);
+          stored = { bytes: Buffer.from(value), metadata: { ...metadata }, versionId: `provider-version-${versionSequence}` };
+          return { versionId: stored.versionId };
+        },
+        getProperties: async () => {
+          if (!stored) throw Object.assign(new Error("not found"), { statusCode: 404, code: "BlobNotFound" });
+          return { versionId: stored.versionId, metadata: { ...stored.metadata }, contentLength: stored.bytes.byteLength };
+        },
+        withVersion: (versionId: string) => ({
+          downloadToBuffer: async () => {
+            requestedVersions.push(versionId);
+            if (!stored || versionId !== stored.versionId) throw new Error("version not found");
+            return Buffer.from(stored.bytes);
+          },
+        }),
+      };
+    });
+    return {
+      containerClient: { getBlockBlobClient },
+      blobNames,
+      uploadOptions,
+      requestedVersions,
+    };
+  }
+
   it("reads the exact version and verifies account, tenant, length and SHA-256", async () => {
     const downloadToBuffer = vi.fn(async () => Buffer.from(bytes));
-    const getBlobClient = vi.fn(() => ({ withVersion: vi.fn(() => ({ downloadToBuffer })) }));
+    const withVersion = vi.fn(() => ({ downloadToBuffer }));
+    const getBlobClient = vi.fn(() => ({ withVersion }));
     const store = new AzureBlobShadowObjectStore({
       accountAlias: "shadow-nonprod",
       containerName: "shadow-input",
@@ -118,6 +158,7 @@ describe("Azure Blob exact-version adapter", () => {
     });
 
     await expect(store.resolveImmutable(pointer())).resolves.toEqual(bytes);
+    expect(withVersion).toHaveBeenCalledWith("2026-08-20T00:00:00.0000000Z");
     expect(downloadToBuffer).toHaveBeenCalledOnce();
   });
 
@@ -127,8 +168,103 @@ describe("Azure Blob exact-version adapter", () => {
       accountAlias: "shadow-nonprod", containerName: "shadow-input",
       containerClient: { getBlockBlobClient: () => ({ uploadData }) } as never,
     });
-    const persisted = await store.putImmutable(pointer({ versionId: undefined }), bytes);
+    const persisted = await store.putImmutable(pointer({ blobName: undefined, versionId: undefined }), bytes);
     expect(persisted).toMatchObject({ storageAccountAlias: "shadow-nonprod", container: "shadow-input", versionId: "provider-version-1" });
+  });
+
+  it("reuses the exact immutable version when identical bytes are published again", async () => {
+    const harness = immutableBlobHarness();
+    const store = new AzureBlobShadowObjectStore({
+      accountAlias: "shadow-nonprod", containerName: "shadow-input", containerClient: harness.containerClient,
+    });
+    const input = pointer({ blobName: undefined, versionId: undefined });
+
+    const first = await store.putImmutable(input, bytes);
+    const duplicate = await store.putImmutable(input, bytes);
+
+    expect(duplicate).toEqual(first);
+    expect(first.blobName).toBe("opaque-tenant-a/opaque-revision-a");
+    expect(first.versionId).toBe("provider-version-1");
+    expect(harness.requestedVersions).toEqual(["provider-version-1"]);
+  });
+
+  it("converges concurrent duplicate publishers on one exact immutable version", async () => {
+    const harness = immutableBlobHarness();
+    const store = new AzureBlobShadowObjectStore({
+      accountAlias: "shadow-nonprod", containerName: "shadow-input", containerClient: harness.containerClient,
+    });
+    const input = pointer({ blobName: undefined, versionId: undefined });
+
+    const [first, duplicate] = await Promise.all([
+      store.putImmutable(input, Buffer.from(bytes)),
+      store.putImmutable(input, Buffer.from(bytes)),
+    ]);
+
+    expect(duplicate).toEqual(first);
+    expect(first.versionId).toBe("provider-version-1");
+  });
+
+  it("fails closed when the same deterministic identity is republished with different content, hash and size", async () => {
+    const harness = immutableBlobHarness();
+    const store = new AzureBlobShadowObjectStore({
+      accountAlias: "shadow-nonprod", containerName: "shadow-input", containerClient: harness.containerClient,
+    });
+    const input = pointer({ blobName: undefined, versionId: undefined });
+    await store.putImmutable(input, bytes);
+    const changedBytes = Buffer.from("different synthetic immutable document");
+    const changedSha256 = createHash("sha256").update(changedBytes).digest("hex");
+    const changedPointer = {
+      ...input,
+      objectKey: `shadow/${input.tenantKey}/sha256/${changedSha256}`,
+      contentSha256: changedSha256,
+      sizeBytes: changedBytes.byteLength,
+    };
+
+    await expect(store.putImmutable(changedPointer, changedBytes)).rejects.toThrow("shadow_blob_existing_integrity_mismatch");
+  });
+
+  it("keeps durable publication and outbox recovery duplicate-safe on the first accepted pointer", async () => {
+    const harness = immutableBlobHarness();
+    let pending: { actionId: string; envelope: ReturnType<typeof envelope>; dueAt: Date; etag: string } | undefined;
+    const lifecycle = {
+      createQueuedWithOutbox: vi.fn(async (accepted: ReturnType<typeof envelope>, now: Date) => {
+        const actionId = `${accepted.idempotencyKey}:publish:0`;
+        if (pending) return { status: "duplicate" as const, actionId };
+        pending = { actionId, envelope: accepted, dueAt: now, etag: "etag-1" };
+        return { status: "created" as const, actionId, etag: "etag-1" };
+      }),
+      listPendingQueueActions: vi.fn(async () => pending ? [pending] : []),
+      markQueueActionSent: vi.fn(async () => { pending = undefined; }),
+    };
+    let tick = 0;
+    const publisher = createDurableShadowPublisher({
+      config: { ...loadStage1Config({}), publisherEnabled: true, sampleRate: 1, killSwitch: false },
+      tenantSalt: "test-salt", random: () => 0,
+      now: () => new Date(Date.UTC(2026, 7, 20, 0, 0, tick++)),
+      store: new AzureBlobShadowObjectStore({
+        accountAlias: "shadow-nonprod", containerName: "shadow-input", containerClient: harness.containerClient,
+      }),
+      lifecycle,
+      queue: { publish: vi.fn() },
+    });
+    const input = { tenantId: "raw-tenant", sourceRevision: "raw-revision", sourceBytes: bytes, fileClass: "txt" as const };
+
+    const first = await publisher.publish(input);
+    const duplicate = await publisher.publish(input);
+
+    expect(first.status).toBe("published");
+    expect(duplicate.status).toBe("published");
+    if (first.status !== "published" || duplicate.status !== "published") throw new Error("test publication disabled");
+    expect(duplicate.envelope.pointer).toEqual(first.envelope.pointer);
+    expect(duplicate.envelope.idempotencyKey).toBe(first.envelope.idempotencyKey);
+    expect(lifecycle.createQueuedWithOutbox).toHaveBeenCalledTimes(2);
+
+    const publishScheduled = vi.fn(async () => undefined);
+    const dispatcher = createOutboxDispatcher({ lifecycle, queue: { publishScheduled } });
+    await expect(dispatcher.runOnce()).resolves.toBe(1);
+    await expect(dispatcher.runOnce()).resolves.toBe(0);
+    expect(publishScheduled).toHaveBeenCalledOnce();
+    expect(lifecycle.markQueueActionSent).toHaveBeenCalledOnce();
   });
 
   it("rejects changed bytes before immutable upload", async () => {
@@ -152,6 +288,42 @@ describe("Azure Blob exact-version adapter", () => {
     });
     await publisher.publish({ tenantId: "raw-tenant", sourceRevision: "raw-revision", sourceBytes: bytes, fileClass: "txt" });
     expect(queue.publish).toHaveBeenCalledWith(expect.objectContaining({ pointer: versioned }));
+  });
+
+  it("keeps raw identity and content out of object names, metadata, envelopes and telemetry", async () => {
+    const harness = immutableBlobHarness();
+    const emitted: unknown[] = [];
+    const telemetry = createPrivacySafeTelemetry((event) => emitted.push(event));
+    const lifecycle = { createQueuedWithOutbox: vi.fn(async () => ({ status: "created" as const })) };
+    const publisher = createDurableShadowPublisher({
+      config: { ...loadStage1Config({}), publisherEnabled: true, sampleRate: 1, killSwitch: false },
+      tenantSalt: "test-salt", random: () => 0, now: () => new Date("2026-08-20T00:00:00Z"),
+      store: new AzureBlobShadowObjectStore({
+        accountAlias: "shadow-nonprod", containerName: "shadow-input", containerClient: harness.containerClient,
+      }),
+      lifecycle,
+      queue: { publish: vi.fn() },
+    });
+    const rawIdentifiers = ["Bank Rahasia", "Matter Merger", "client-secret.docx", "https://sharepoint/raw-revision"];
+    const result = await publisher.publish({
+      tenantId: rawIdentifiers[0]!,
+      sourceRevision: `${rawIdentifiers[1]}:${rawIdentifiers[2]}:${rawIdentifiers[3]}`,
+      sourceBytes: bytes,
+      fileClass: "txt",
+    });
+    telemetry.emit("worker_failed", {
+      traceId: "trace-safe", jobId: "job-safe", tenantHash: "opaque-tenant", attempt: 1, errorCode: "timeout",
+      filename: rawIdentifiers[2], rawTenantId: rawIdentifiers[0], providerPayload: { url: rawIdentifiers[3] },
+    } as never);
+
+    const serialized = JSON.stringify({
+      blobNames: harness.blobNames,
+      uploadOptions: harness.uploadOptions,
+      envelope: result.status === "published" ? result.envelope : undefined,
+      telemetry: emitted,
+    });
+    for (const identifier of rawIdentifiers) expect(serialized).not.toContain(identifier);
+    expect(serialized).not.toContain(bytes.toString("utf8"));
   });
 
   it.each([
