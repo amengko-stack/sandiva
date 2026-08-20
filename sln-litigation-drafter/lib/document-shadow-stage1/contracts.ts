@@ -11,6 +11,10 @@ export interface ShadowSourcePointer {
   sizeBytes: number;
   createdAt: string;
   expiresAt: string;
+  storageAccountAlias?: string;
+  container?: string;
+  blobName?: string;
+  versionId?: string;
 }
 
 export interface ImmutableSourceAcquisition {
@@ -43,7 +47,7 @@ export interface ShadowPublisher {
 }
 
 export interface ShadowObjectStore {
-  putImmutable(pointer: ShadowSourcePointer, bytes: Buffer): Promise<void>;
+  putImmutable(pointer: ShadowSourcePointer, bytes: Buffer): Promise<void | ShadowSourcePointer>;
   resolveImmutable(pointer: ShadowSourcePointer): Promise<Buffer>;
 }
 

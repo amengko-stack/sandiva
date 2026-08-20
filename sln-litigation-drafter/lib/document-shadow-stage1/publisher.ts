@@ -50,12 +50,12 @@ export function createShadowPublisher(options: {
         now: now(),
         retentionMs: options.config.retentionMs,
       });
+      const persistedPointer = await options.store.putImmutable(acquired.pointer, acquired.bytes);
       const envelope = createShadowEnvelope({
-        pointer: acquired.pointer,
+        pointer: persistedPointer ?? acquired.pointer,
         fileClass: input.fileClass,
         converterVersion: options.converterVersion ?? MARKITDOWN_VERSION,
       });
-      await options.store.putImmutable(acquired.pointer, acquired.bytes);
       await options.queue.publish(envelope);
       options.emitMetric?.({
         type: "published",

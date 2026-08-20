@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "activation": "disabled",
+  "publisherEnabled": false,
+  "sampleRate": 0,
+  "killSwitch": true,
+  "productionCredentialBinding": null,
+  "serviceBusSessionsEnabled": false,
+  "containerApps": {
+    "minReplicas": 0,
+    "maxReplicas": 1,
+    "serviceBusScaler": null,
+    "workerEnabled": false,
+    "outboxDispatcherEnabled": false
+  },
+  "serviceBus": {
+    "tier": "Premium",
+    "receiveMode": "peekLock",
+    "duplicateDetection": true,
+    "nativeDeadLetterQueue": true,
+    "productionQueueBinding": null
+  },
+  "cosmos": {
+    "partitionKey": "/tenantKey",
+    "idField": "jobId",
+    "uniqueKeyPolicy": null,
+    "defaultLeaseSeconds": 180,
+    "renewalSeconds": 60
+  },
+  "storage": {
+    "kind": "StorageV2",
+    "blockBlobsOnly": true,
+    "versionLevelImmutabilitySupported": true,
+    "productionWormPolicyLocked": false
+  }
+}
