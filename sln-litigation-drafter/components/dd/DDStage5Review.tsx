@@ -217,6 +217,17 @@ export default function DDStage5Review() {
       }
       dispatch({ type: "MARK_PROGRESS", entityId: eid, patch: { analyzed: true } });
 
+      // BAB II Profil Perseroan is built here, and nothing used to build it: the
+      // endpoint existed, narrative.ts and narrative-render.ts were written and
+      // tested, and no code path called any of it. Every report shipped the chapter
+      // as "tidak dapat disusun karena dokumen korporasi belum diperiksa".
+      // tests/dd/api-wiring.test.ts is what keeps a route from going uncalled again.
+      //
+      // Sequential rather than parallel with the analysis: both routes run to
+      // maxDuration = 300 and fan out model calls, and nothing here caps overall
+      // concurrency yet.
+      await runNarrative(eid);
+
       // Single-entity DD: "cross-entity consolidation" is meaningless, but the
       // aspect rollup it computes still feeds the Word/Excel recap — and for one
       // entity it runs with NO model call at all. Run it silently so the report
@@ -231,6 +242,60 @@ export default function DDStage5Review() {
 
   const onAction = (eid: string) => (id: string, patch: Partial<DDFinding>) =>
     setFindingsByEntity((f) => ({ ...f, [eid]: (f[eid] ?? []).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+
+  /**
+   * Builds BAB II Profil Perseroan for one entity.
+   *
+   * Failure here is deliberately non-fatal but loud. The analysis has already been
+   * persisted by the time this runs, so throwing it away would cost the expensive
+   * work for the sake of the cheap. But a silent failure puts us straight back to
+   * the defect being fixed — a report quietly missing its profile chapter — so the
+   * lawyer is told, in the terms that matter to them: Bab II will be empty.
+   */
+  const runNarrative = async (eid: string) => {
+    setProgress((p) => ({ ...p, [eid]: "Menyusun Profil Perseroan (Bab II)…" }));
+    try {
+      const res = await fetch("/api/dd/narrative", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: state.sessionId, entityId: eid }),
+      });
+      if (!res.ok || !res.body) {
+        throw new Error((await res.json().catch(() => null))?.error ?? "Gagal menyusun Profil Perseroan");
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let sawDone = false;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines.filter(Boolean)) {
+            const msg = JSON.parse(line);
+            // This route names the field "message"; /api/dd/analyze names it "label".
+            if (msg.type === "step") setProgress((p) => ({ ...p, [eid]: msg.message }));
+            if (msg.type === "done") sawDone = true;
+            if (msg.type === "error") throw new Error(msg.message);
+          }
+        }
+      } finally {
+        reader.cancel();
+      }
+      // The route writes the blob before emitting done, so no done means no blob.
+      if (!sawDone) throw new Error("Stream profil terputus sebelum selesai");
+    } catch (err) {
+      dispatch({
+        type: "SET_ERROR",
+        error:
+          `Analisis entitas selesai dan tersimpan, tetapi Profil Perseroan (Bab II) gagal disusun: ` +
+          `${err instanceof Error ? err.message : "Error"}. Bab II akan kosong pada laporan — ` +
+          `jalankan ulang analisis entitas ini sebelum mengekspor.`,
+      });
+    }
+  };
 
   // Explicit flush: bypasses the debounce timer and saves immediately,
   // regardless of the auto-persist effect's schedule.
