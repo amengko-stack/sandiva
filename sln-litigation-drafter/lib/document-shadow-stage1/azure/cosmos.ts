@@ -6,7 +6,7 @@ interface RecordShape {
   envelope: ShadowEnvelope; ownerId?: string; leaseExpiresAt?: string; pendingQueueAction?: PendingAction;
 }
 interface PendingAction { actionId: string; envelope: ShadowEnvelope; dueAt: string; sentAt?: string; }
-interface CosmosResponse { resource?: RecordShape; etag?: string; code?: number; result?: Array<{ etag?: string }>; }
+interface CosmosResponse { resource?: RecordShape; etag?: string; result?: Array<{ eTag?: string; statusCode?: number }>; }
 interface ContainerPort {
   item(id: string, partitionKey: string): {
     read(): Promise<CosmosResponse>;
@@ -78,17 +78,22 @@ export class AzureCosmosLifecycleStore {
     const action: PendingAction = { actionId: `${envelope.idempotencyKey}:retry:${current.record.attempt}`,
       envelope, dueAt: input.dueAt.toISOString() };
     const next = { ...current.record, state: "retry_pending" as const, leaseExpiresAt: undefined, pendingQueueAction: action };
-    const response = await this.options.container.items.batch([{ operationType: "Replace", id: next.id, resource: next,
+    const response = await this.options.container.items.batch([{ operationType: "Replace", id: next.id, resourceBody: next,
       ifMatch: input.etag }], next.tenantKey);
-    if (response.code && response.code >= 300) throw new Error("shadow_cosmos_batch_failed");
-    return { ...action, etag: response.result?.[0]?.etag };
+    const result = response.result?.[0];
+    if (!result || (result.statusCode !== undefined && result.statusCode >= 300)) throw new Error("shadow_cosmos_batch_failed");
+    return { ...action, etag: result.eTag };
   }
 
   async recordDeadLetter(envelope: ShadowEnvelope, input: CosmosLeaseAuthority & { now: Date; errorCode: string }) {
     const current = await this.requireAuthority(envelope, input);
     const action: PendingAction = { actionId: `${envelope.idempotencyKey}:dead-letter:${current.record.attempt}`, envelope, dueAt: input.now.toISOString() };
     const next = { ...current.record, state: "dead_lettered" as const, leaseExpiresAt: undefined, pendingQueueAction: action };
-    await this.options.container.items.batch([{ operationType: "Replace", id: next.id, resource: next, ifMatch: input.etag }], next.tenantKey);
+    const response = await this.options.container.items.batch([
+      { operationType: "Replace", id: next.id, resourceBody: next, ifMatch: input.etag },
+    ], next.tenantKey);
+    const result = response.result?.[0];
+    if (!result || (result.statusCode !== undefined && result.statusCode >= 300)) throw new Error("shadow_cosmos_batch_failed");
     return action;
   }
 
