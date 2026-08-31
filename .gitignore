@@ -1,4 +1,15 @@
 node_modules/
 .next/
 dist/
-.claude/
+
+# Secrets. The root app reads these via dotenv, and nothing here ignored them
+# before — ANTHROPIC_API_KEY, AZURE_CLIENT_SECRET and APP_PASSWORD all live in
+# these files. .env.local.example is the documented template and stays tracked.
+.env
+.env.local
+.env.development
+.env.production
+
+# Shared Claude Code config (CLAUDE.md, hooks, skills, agents) is committed so
+# the whole team gets it. Only personal overrides stay local.
+.claude/settings.local.json
