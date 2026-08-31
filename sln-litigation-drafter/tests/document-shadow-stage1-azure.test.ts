@@ -383,12 +383,12 @@ describe("Cosmos lifecycle fencing and transactional outbox", () => {
         return { resource: record, etag: "etag-1" };
       }),
       batch: vi.fn(async (operations: Array<Record<string, any>>) => {
-        const replacement = operations.find((operation) => operation.operationType === "Replace")?.resource;
+        const replacement = operations.find((operation) => operation.operationType === "Replace")?.resourceBody;
         record = { ...replacement }; etag += 1;
-        return { code: 200, result: [{ etag: `etag-${etag}` }] };
+        return { result: [{ statusCode: 200, eTag: `etag-${etag}` }] };
       }),
     };
-    return { container: { item, items } as never, get: () => record };
+    return { container: { item, items } as never, batch: items.batch, get: () => record };
   }
 
   it("allows one lease owner and rejects every stale fencing token mutation", async () => {
@@ -418,6 +418,14 @@ describe("Cosmos lifecycle fencing and transactional outbox", () => {
     });
 
     expect(action.actionId).toBe(`${envelope().idempotencyKey}:retry:1`);
+    expect(harness.batch).toHaveBeenCalledWith([
+      expect.objectContaining({
+        operationType: "Replace",
+        id: envelope().idempotencyKey,
+        resourceBody: expect.objectContaining({ state: "retry_pending" }),
+        ifMatch: claim.etag,
+      }),
+    ], envelope().pointer.tenantKey);
     expect(harness.get()).toMatchObject({ state: "retry_pending", pendingQueueAction: { actionId: action.actionId } });
     expect(harness.get()?.pendingQueueAction).not.toHaveProperty("sentAt");
   });
