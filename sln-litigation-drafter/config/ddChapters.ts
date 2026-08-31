@@ -700,9 +700,41 @@ export function subNumber(chapterIndex: number, subIndex: number): string {
 }
 
 /** Which analysis chapter a finding belongs to, by aspect. */
+/**
+ * The chapter kinds that carry an aspect's analytical prose.
+ *
+ * "kategori" belongs here and was missing. exec_summary_led fuses description and
+ * analysis into one chapter per document category and plans them as "kategori", so
+ * matching on "analisis_aspek" alone returned null for every aspect: the analyze
+ * route asked for no sub-sections, the model was never called, and every chapter
+ * printed "Sub-bagian ... belum dapat dianalisis". A structurally complete report
+ * with no analysis in it.
+ *
+ * "temuan" is deliberately absent. findings_only plans bare findings chapters whose
+ * sub-sections are all findings, and subsectionsFor filters those out — it has no
+ * analytical sub-sections to place, so an aspect resolving to nothing there is
+ * correct rather than a defect.
+ */
+const ANALYSIS_BEARING_KINDS: DDChapterKind[] = ["analisis_aspek", "kategori"];
+
 export function chapterForAspect(
   plan: DDChapterPlan[],
   aspectId: DDAspectId
 ): DDChapterPlan | null {
-  return plan.find((c) => c.kind === "analisis_aspek" && c.aspectIds.indexOf(aspectId) !== -1) ?? null;
+  return (
+    plan.find(
+      (c) => ANALYSIS_BEARING_KINDS.indexOf(c.kind) !== -1 && c.aspectIds.indexOf(aspectId) !== -1
+    ) ?? null
+  );
 }
+
+/**
+ * Whether a chapter is the transaction block, on either side of the deal.
+ *
+ * Shared so the analyze route and the builder cannot drift apart on it. The route
+ * used to test `kind !== "transaksi"` inline, which silently skipped every
+ * "transaksi_jual" chapter — so a sell-side matter had its transaction
+ * sub-sections planned, never analysed, and rendered as boilerplate.
+ */
+export const isTransactionChapter = (c: DDChapterPlan): boolean =>
+  c.kind === "transaksi" || c.kind === "transaksi_jual";

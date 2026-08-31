@@ -18,7 +18,7 @@ import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
 import { badCitations, checkUUPTCitations } from "@/lib/dd/statute";
-import { chapterForAspect, planChapters } from "@/config/ddChapters";
+import { chapterForAspect, isTransactionChapter, planChapters } from "@/config/ddChapters";
 import type { ExtractReport } from "@/types";
 import type {
   DDAspectId, DDClassifiedDoc, DDExtractionRow, DDFinding, DDGapItem, DDSubsectionAnalysis, DDTransaction,
@@ -389,7 +389,13 @@ export async function POST(req: NextRequest) {
         const txnGroups: string[][] = [];
         const txnSubs: string[] = [];
         for (const ch of chapterPlan) {
-          if (ch.kind !== "transaksi") continue;
+          // Both sides of the deal. This used to read `ch.kind !== "transaksi"`,
+          // which skipped every sell-side chapter: planChapters emits
+          // "transaksi_jual" when the client is the seller, so the loop collected
+          // nothing, no transaction sub-section was analysed, and the report fell
+          // back to the "Penjual wajib mengonfirmasi hal ini" boilerplate for all
+          // of them.
+          if (!isTransactionChapter(ch)) continue;
           const titles = ch.subs.map((sub) => sub.title);
           if (titles.length === 0) continue;
           txnGroups.push(titles);
