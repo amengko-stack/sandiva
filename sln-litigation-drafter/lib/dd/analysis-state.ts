@@ -92,16 +92,24 @@ export function parseAnalysisState(raw: string | null): DDAnalysisState {
  * Everything about the documents that reaches the model, including what it is told
  * it cannot see.
  *
- * `unreadable` is part of the key for the same reason `omitted` is: both appear in
- * the user prompt, so an analysis produced without them was produced under different
- * instructions. Leaving it out would be the fourth cache in this codebase whose key
- * described part of the request and missed the part that had just changed — and the
- * failure mode is always the same, that a fix silently does not exist for work
- * already done.
+ * `unreadable` and `failed` are part of the key for the same reason `omitted` is:
+ * they appear in the user prompt, so an analysis produced without them was produced
+ * under different instructions. Leaving either out would make the cache describe
+ * only part of the request and silently preserve an outdated analysis.
  */
-export function seenDigest(docsText: string, omitted: string[], unreadable: string[] = []): string {
+export function seenDigest(
+  docsText: string,
+  omitted: string[],
+  unreadable: string[] = [],
+  failed: string[] = []
+): string {
+  // Preserve the exact pre-H-2 digest whenever there are no failed documents, so
+  // OCR-only and fully-readable matters do not re-analyse merely because this
+  // optional context was added.
+  const priorMaterial = `${docsText}\u0000${omitted.join("|")}\u0000${unreadable.join("|")}`;
+  const material = failed.length > 0 ? `${priorMaterial}\u0000${failed.join("|")}` : priorMaterial;
   return createHash("sha256")
-    .update(`${docsText}\u0000${omitted.join("|")}\u0000${unreadable.join("|")}`)
+    .update(material)
     .digest("hex")
     .slice(0, 32);
 }

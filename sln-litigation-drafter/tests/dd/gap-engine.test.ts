@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeGaps, gapToFinding, severityFor } from "@/lib/dd/gap-engine";
+import { computeAspectRollup } from "@/lib/dd/consolidate";
 import type { DDExpectedDoc, DDClassifiedDoc } from "@/types/dd";
 
 const expected: DDExpectedDoc[] = [
@@ -256,5 +257,60 @@ describe("documents supplied but unreadable", () => {
     expect(f.problem).toContain("tidak dapat dibaca");
     expect(f.whyItMatters).toContain("BELUM dapat");
     expect(f.whyItMatters).toContain("OCR");
+  });
+});
+
+describe("documents supplied but extraction failed", () => {
+  it("treats a matching failed file as supplied-but-unreadable and names it", () => {
+    const gaps = computeGaps({
+      ...base,
+      classified: [],
+      failedFiles: ["NIB PT Target.pdf"],
+    });
+    const nib = gaps.find((g) => g.expectedDocId === "perizinan.nib")!;
+
+    expect(nib.status).toBe("unreadable");
+    expect(nib.note).toContain("NIB PT Target.pdf");
+    expect(nib.note).not.toContain("Tidak ditemukan dalam data room");
+    expect(nib.unreadableCandidates).toEqual(["NIB PT Target.pdf"]);
+  });
+
+  it("uses conservative uncertainty when a generic failed scan cannot be ruled out", () => {
+    const gaps = computeGaps({
+      ...base,
+      classified: [],
+      failedFiles: ["Scan_001.pdf"],
+    });
+    const nib = gaps.find((g) => g.expectedDocId === "perizinan.nib")!;
+
+    expect(nib.status).toBe("unreadable");
+    expect(nib.note).toContain("Scan_001.pdf");
+    expect(nib.note).toContain("belum dapat dipastikan");
+    expect(nib.note).not.toContain("Tidak ditemukan dalam data room");
+  });
+
+  it("still reports a truly missing item when no unreadable uncertainty exists", () => {
+    const nib = computeGaps({ ...base, classified: [], failedFiles: [] }).find(
+      (g) => g.expectedDocId === "perizinan.nib"
+    )!;
+
+    expect(nib.status).toBe("missing");
+    expect(nib.note).toBe("Tidak ditemukan dalam data room.");
+  });
+
+  it("counts a failed candidate once as unreadable and never as missing", () => {
+    const nib = computeGaps({
+      ...base,
+      classified: [],
+      failedFiles: ["NIB PT Target.pdf"],
+    }).find((g) => g.expectedDocId === "perizinan.nib")!;
+    const rollup = computeAspectRollup({ e1: [nib] })[0];
+    const total =
+      rollup.present + rollup.missing + (rollup.unreadable ?? 0) + rollup.incomplete +
+      rollup.expired + rollup.notApplicable;
+
+    expect(rollup.missing).toBe(0);
+    expect(rollup.unreadable).toBe(1);
+    expect(total).toBe(rollup.totalExpected);
   });
 });

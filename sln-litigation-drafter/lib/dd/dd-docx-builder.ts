@@ -204,6 +204,32 @@ const GAP_FILL: Record<DDGapItem["status"], string> = {
   missing: "FEE2E2", unreadable: "E0E7FF", not_applicable: "E5E7EB",
 };
 
+function extractionCounts(rep: NonNullable<DDEntityResult["extractReport"]>) {
+  return {
+    processed: rep.files.filter((f) => f.status === "selesai").length,
+    ocrRequired: rep.files.filter((f) => f.status === "perlu_ocr").length,
+    failed: rep.files.filter((f) => f.status === "gagal").length,
+  };
+}
+
+/** Client-safe categories only; the report retains the original reason internally. */
+function boundedFailureReason(reason?: string): string {
+  const value = reason?.toLowerCase() ?? "";
+  if (value.includes("tidak ada teks") || value.includes("empty") || value.includes("kosong")) {
+    return "tidak ada teks yang dapat diekstrak";
+  }
+  if (value.includes("password") || value.includes("encrypted") || value.includes("terenkripsi")) {
+    return "dokumen terenkripsi atau dilindungi kata sandi";
+  }
+  if (value.includes("unsupported") || value.includes("tidak didukung")) {
+    return "format dokumen tidak didukung untuk ekstraksi otomatis";
+  }
+  if (value.includes("timeout") || value.includes("batas waktu")) {
+    return "batas waktu ekstraksi otomatis terlampaui";
+  }
+  return "gagal diekstrak secara otomatis";
+}
+
 const PLACEHOLDER_META: DDReportMeta = {
   matterRef: "[NOMOR REFERENSI]",
   clientName: "[NAMA KLIEN]",
@@ -638,12 +664,13 @@ function renderRingkasanChapter(
 
   const rep = r.extractReport;
   if (rep) {
+    const counts = extractionCounts(rep);
     out.push(
       p(
-        `Cakupan ekstraksi dokumen: dari ${rep.files.length} dokumen yang disediakan, ${rep.processed} berhasil ` +
+        `Cakupan ekstraksi dokumen: dari ${rep.files.length} dokumen yang disediakan, ${counts.processed} berhasil ` +
           `diekstrak dan diperiksa` +
-          (rep.ocrRequired ? `, ${rep.ocrRequired} memerlukan pengenalan karakter optis (OCR)` : "") +
-          (rep.skipped ? `, ${rep.skipped} tidak dapat diproses` : "") +
+          (counts.ocrRequired ? `, ${counts.ocrRequired} memerlukan pengenalan karakter optis (OCR)` : "") +
+          (counts.failed ? `, ${counts.failed} gagal diekstrak` : "") +
           "."
       )
     );
@@ -1123,12 +1150,13 @@ export async function buildDdReportDocx(args: {
     children.push(h3(r.entity.name));
     const rep = r.extractReport;
     if (rep) {
+      const counts = extractionCounts(rep);
       children.push(
         p(
           `Jumlah dokumen yang disediakan: ${rep.files.length}. Berhasil diekstrak dan diperiksa: ` +
-            `${rep.processed}.` +
-            (rep.ocrRequired ? ` Memerlukan pengenalan karakter optis (OCR): ${rep.ocrRequired}.` : "") +
-            (rep.skipped ? ` Tidak dapat diproses: ${rep.skipped}.` : "")
+            `${counts.processed}.` +
+            (counts.ocrRequired ? ` Memerlukan pengenalan karakter optis (OCR): ${counts.ocrRequired}.` : "") +
+            (counts.failed ? ` Gagal diekstrak: ${counts.failed}.` : "")
         )
       );
     }
@@ -1154,6 +1182,32 @@ export async function buildDdReportDocx(args: {
             alignment: AlignmentType.JUSTIFIED,
             spacing: { after: 80 },
             children: [new TextRun({ text: f.name, font: FONT, size: BODY_SIZE })],
+          })
+        );
+      }
+    }
+    const failedDocuments = (rep?.files ?? []).filter((f) => f.status === "gagal");
+    if (failedDocuments.length > 0) {
+      children.push(
+        p(
+          `Dokumen berikut disediakan namun gagal diekstrak secara otomatis, sehingga TIDAK termasuk dalam ` +
+            `pemeriksaan dan tidak tercantum dalam daftar di bawah ini. Ketiadaan uraian mengenai dokumen ` +
+            `tersebut dalam Laporan ini BUKAN pernyataan mengenai isinya:`
+        )
+      );
+      for (const f of failedDocuments) {
+        children.push(
+          new Paragraph({
+            numbering: { reference: "bullets", level: 0 },
+            alignment: AlignmentType.JUSTIFIED,
+            spacing: { after: 80 },
+            children: [
+              new TextRun({
+                text: `${f.name} — ${boundedFailureReason(f.reason)}`,
+                font: FONT,
+                size: BODY_SIZE,
+              }),
+            ],
           })
         );
       }

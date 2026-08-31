@@ -79,6 +79,14 @@ export async function POST(req: NextRequest) {
         .filter((f) => f.status === "perlu_ocr")
         .map((f) => f.name)
     : [];
+  // Kept separate from OCR-required files: both are supplied-but-unreadable, but
+  // the operational remedy differs. Only filenames, never raw exception payloads,
+  // are sent to the model.
+  const failedDocs: string[] = extractRaw
+    ? ((JSON.parse(extractRaw) as ExtractReport).files ?? [])
+        .filter((f) => f.status === "gagal")
+        .map((f) => f.name)
+    : [];
 
   const blocks = splitDocBlocks(combined);
   const contentByFile = new Map(blocks.map((b) => [b.fileName, b.content]));
@@ -216,7 +224,10 @@ export async function POST(req: NextRequest) {
           .filter((j) => j.docsText.trim().length >= 50)
           // From what the model will actually be shown, not from the whole corpus:
           // a change to the cap or the packing rule must invalidate the cache too.
-          .map((j) => ({ ...j, docsDigest: seenDigest(j.docsText, j.omitted, unreadableDocs) }));
+          .map((j) => ({
+            ...j,
+            docsDigest: seenDigest(j.docsText, j.omitted, unreadableDocs, failedDocs),
+          }));
 
         // An aspect whose documents are byte-identical to the last run keeps its
         // findings exactly as they were — ids, review state, grounding verdicts and
@@ -323,6 +334,7 @@ export async function POST(req: NextRequest) {
               docsText: aspectJobs[i].docsText,
               omittedDocs: aspectJobs[i].omitted,
               unreadableDocs,
+              failedDocs,
               transactionType: txn.type,
               regime,
               subsections: subsectionsFor(aspectJobs[i].aspectId),

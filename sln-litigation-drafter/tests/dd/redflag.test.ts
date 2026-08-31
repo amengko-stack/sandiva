@@ -410,6 +410,14 @@ describe("scans the model was never shown", () => {
   it("says nothing when every document could be read", () => {
     expect(buildRedFlagPrompt(args)).not.toContain("pindaian tanpa lapisan teks");
   });
+
+  it("names failed extractions and forbids treating them as not supplied", () => {
+    const p = buildRedFlagPrompt({ ...args, failedDocs: ["Akta Pendirian gagal.pdf"] });
+    expect(p).toContain("Akta Pendirian gagal.pdf");
+    expect(p).toContain("gagal diekstrak");
+    expect(p).toContain("DOKUMEN ITU ADA");
+    expect(p).toContain("JANGAN menyatakan dokumen tersebut tidak diserahkan");
+  });
 });
 
 // Fourth cache in this codebase whose key risked describing part of the request and
@@ -423,5 +431,10 @@ describe("seenDigest covers what the model is told it cannot see", () => {
 
   it("is unchanged for callers that pass no list", () => {
     expect(seenDigest("teks", ["x.pdf"])).toBe(seenDigest("teks", ["x.pdf"], []));
+  });
+
+  it("changes when a failed-document list changes", () => {
+    expect(seenDigest("teks", [], [], ["gagal.pdf"]))
+      .not.toBe(seenDigest("teks", [], [], []));
   });
 });

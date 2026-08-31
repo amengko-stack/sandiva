@@ -109,6 +109,8 @@ export function buildRedFlagPrompt(args: {
   omittedDocs?: string[];
   /** Supplied as image-only scans, so no text of them exists to show. */
   unreadableDocs?: string[];
+  /** Supplied, but automatic extraction failed; raw extraction errors stay outside the prompt. */
+  failedDocs?: string[];
 }): string {
   // The analysis chapters previously rendered as hollow scaffolding: each
   // sub-section repeated one templated sentence and every finding piled into a
@@ -147,12 +149,16 @@ Pada setiap temuan, isi "subsection" dengan judul sub-bagian yang paling tepat d
     args.unreadableDocs && args.unreadableDocs.length > 0
       ? `\n\nDOKUMEN BERIKUT JUGA DISERAHKAN DALAM RUANG DATA, tetapi berupa pindaian tanpa lapisan teks sehingga tidak dapat dibaca dan TIDAK ada teksnya untuk kamu periksa: ${args.unreadableDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, atau tidak ditemukan. Bila analisismu memerlukannya, nyatakan bahwa dokumen tersebut belum dapat dibaca sehingga isinya belum diperiksa, dan tandai "[PERLU VERIFIKASI]".`
       : "";
+  const failedBlock =
+    args.failedDocs && args.failedDocs.length > 0
+      ? `\n\nDOKUMEN BERIKUT JUGA DISERAHKAN DALAM RUANG DATA, tetapi gagal diekstrak secara otomatis sehingga TIDAK ada teksnya untuk kamu periksa: ${args.failedDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, atau tidak ditemukan. Bila analisismu memerlukannya, nyatakan bahwa dokumen tersebut belum dapat diekstrak sehingga isinya belum diperiksa, dan tandai "[PERLU VERIFIKASI]".`
+      : "";
   return `Entitas: ${args.entityName}. Aspek: ${args.aspectId.replace(/_/g, " ")}. Transaksi: ${args.transactionType.replace(/_/g, " ")}.
 ${analysisBlock}
 
 === DOKUMEN ASPEK INI ===
 ${args.docsText}
-=== AKHIR DOKUMEN ===${omittedBlock}${unreadableBlock}
+=== AKHIR DOKUMEN ===${omittedBlock}${unreadableBlock}${failedBlock}
 
 Identifikasi red flag hukum yang NYATA dari dokumen di atas untuk transaksi ini (mis. izin kedaluwarsa, modal belum disetor penuh, aset dibebani jaminan, perkara berjalan, ketidaksesuaian anggaran dasar).
 
@@ -349,6 +355,8 @@ export async function analyzeAspect(
     omittedDocs?: string[];
     /** Supplied as image-only scans, so no text of them exists to show. */
     unreadableDocs?: string[];
+    /** Supplied, but automatic extraction failed. */
+    failedDocs?: string[];
   }
 ): Promise<DDAspectAnalysisResult> {
   const response = await client.messages.create({
