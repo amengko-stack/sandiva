@@ -98,8 +98,34 @@ describe("money in a legal report", () => {
     const n = solvencyUndeterminedNote();
     expect(n).toContain("tidak memuat data yang cukup");
     expect(n).toContain("kepailitan");
-    expect(n).toContain("Pasal 150");
     expect(n).toContain("[PERLU VERIFIKASI]");
+  });
+
+  // This note used to end "...dan urutan pembayaran menurut UUPT Pasal 150".
+  // Pasal 150 is about claims the liquidator rejected, claims filed late, and
+  // clawback of distributed residue from shareholders. It contains no order of
+  // payment, and neither does any other article — the header comment of this
+  // file has said so since the chapter reasoning was corrected, but the
+  // boilerplate kept shipping the claim and this test kept pinning it.
+  it("attributes no payment order to UUPT", () => {
+    const n = solvencyUndeterminedNote();
+    expect(n).not.toContain("Pasal 150");
+    expect(n).not.toMatch(/urutan pembayaran/i);
+  });
+
+  // UUPT is a company-law statute. Creditor ranking is not its subject, so the
+  // instruction states the silence and stops. It used to continue "...sebutkan
+  // dasar yang sebenarnya berlaku (mis. hak jaminan kebendaan, hak istimewa
+  // menurut KUHPerdata, hak pekerja...)", which invites the model to answer a
+  // UUPT question out of a different body of law. Scoped to the one line so the
+  // assertion does not trip over the other traps, which mention insolvency for
+  // their own reasons.
+  it("tells the model UUPT is silent on payment ranking, and routes nowhere else", () => {
+    const line = redflagSystem()
+      .split("\n")
+      .find((l) => l.includes("urutan prioritas pembayaran")) ?? "";
+    expect(line).toContain("UUPT TIDAK memuat urutan prioritas pembayaran");
+    expect(line).not.toMatch(/jaminan kebendaan|KUHPerdata|ketenagakerjaan|Kepailitan/i);
   });
 
   it("forbids the model from computing or estimating any figure", () => {

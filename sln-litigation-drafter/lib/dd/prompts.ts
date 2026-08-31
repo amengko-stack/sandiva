@@ -183,6 +183,12 @@ ${guardBlock}${DD_DATA_FRAMING}`;
  * the enacting text. Asked for something the statute does not provide, the model
  * manufactured an article to provide it. A heading that presumes a rule will get one.
  *
+ * The heading stays, because it is a question a lawyer asks. Item (5) is what answers
+ * it: name the silence and stop. It deliberately does not send the model on to
+ * security rights, KUHPerdata privileges or labour law — UUPT governs the company,
+ * creditor ranking is not its subject, and a UUPT chapter that answered out of
+ * another statute would be a second kind of wrong rather than a fix for the first.
+ *
  * The director/commissioner ones are a different shape and the reason the existence
  * check earns its keep: the article is real, the paragraph is real, and only the
  * letter is invented. Both articles allow further requirements to be set by the
@@ -195,7 +201,7 @@ const DD_UUPT_TRAPS = `KETENTUAN UUPT YANG SERING SALAH DIKUTIP — gunakan buny
 (2) Pasal 142 ayat (2) hanya memiliki huruf a dan b (wajib diikuti likuidasi; Perseroan tidak dapat melakukan perbuatan hukum kecuali untuk pemberesan). TIDAK ada huruf c.
 (3) Kewajiban mengajukan pailit bila utang melebihi harta ada pada Pasal 149 ayat (2), dan WAJIB disebut pengecualiannya: kecuali peraturan perundang-undangan menentukan lain DAN semua kreditor yang diketahui identitas dan alamatnya menyetujui pemberesan di luar kepailitan.
 (4) Pasal 147 ayat (1) mewajibkan likuidator memberitahukan pembubaran dalam 30 hari kepada kreditor dengan cara MENGUMUMKAN dalam Surat Kabar DAN Berita Negara Republik Indonesia, serta memberitahukan kepada Menteri. TIDAK ada kewajiban "surat tercatat" dalam pasal ini.
-(5) UUPT TIDAK memuat urutan prioritas pembayaran kreditor dalam likuidasi. Pasal 149 ayat (1) memuat kewajiban likuidator, bukan urutan pembayaran. Bila menganalisis urutan pembayaran, nyatakan bahwa UUPT tidak mengaturnya dan sebutkan dasar yang sebenarnya berlaku (mis. hak jaminan kebendaan, hak istimewa menurut KUHPerdata, hak pekerja menurut peraturan ketenagakerjaan, atau UU Kepailitan bila harta tidak mencukupi) — dan tandai [PERLU VERIFIKASI] bila tidak dapat dipastikan dari dokumen.
+(5) UUPT TIDAK memuat urutan prioritas pembayaran kreditor dalam likuidasi. Pasal 149 ayat (1) memuat kewajiban likuidator, bukan urutan pembayaran. Bila menganalisis urutan pembayaran, nyatakan bahwa UUPT tidak mengaturnya lalu HENTIKAN analisis pada titik itu, dan tandai [PERLU VERIFIKASI]. JANGAN mengambil dasar dari peraturan lain: Laporan ini memeriksa Perseroan menurut UUPT, dan peringkat pembayaran kreditor bukan materi undang-undang tersebut.
 (6) Pasal 93 ayat (1) (syarat anggota Direksi) hanya memiliki huruf a, b dan c: pernah dinyatakan pailit; pernah menjadi anggota Direksi atau Dewan Komisaris yang dinyatakan bersalah menyebabkan suatu Perseroan dinyatakan pailit; atau pernah dihukum karena tindak pidana yang merugikan keuangan negara dan/atau berkaitan dengan sektor keuangan. TIDAK ada huruf d maupun huruf e. Kemungkinan instansi teknis menetapkan persyaratan TAMBAHAN diatur pada Pasal 93 ayat (2), bukan sebagai huruf lanjutan pada ayat (1).
 (7) Pasal 110 ayat (1) (syarat anggota Dewan Komisaris) berbunyi sama dan juga hanya memiliki huruf a, b dan c, dengan persyaratan tambahan pada Pasal 110 ayat (2). TIDAK ada huruf d maupun huruf e.
 (8) Bila suatu aturan yang kamu perlukan tidak ada dalam huruf atau ayat mana pun dari pasal yang kamu rujuk, JANGAN menambah huruf atau ayat baru. Nyatakan bahwa pasal tersebut tidak mengaturnya.

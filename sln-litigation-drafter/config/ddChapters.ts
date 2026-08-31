@@ -171,6 +171,16 @@ function transactionChapters(type: DDTransactionType): { title: string; subs: st
           title: "DASAR DAN ALASAN PEMBUBARAN",
           subs: ["Dasar Hukum Pembubaran", "Alasan Pembubaran", "Keabsahan Keputusan RUPS Pembubaran"],
         },
+        // "Urutan Pembayaran dalam Likuidasi" stays deliberately, and it is the one
+        // sub-section here that the statute cannot answer. A lawyer reading a
+        // dissolution report will ask the question, so the report addresses it — by
+        // stating that UUPT does not regulate creditor ranking, and stopping there.
+        // It does not reach for security rights, KUHPerdata privileges or labour law:
+        // those are a different body of law, and this chapter answers to UUPT.
+        //
+        // prompts.ts DD_UUPT_TRAPS item (5) is what holds the model to that. Removing
+        // it would put the heading back to presuming a rule, which is how the model
+        // came to manufacture one — see the note at prompts.ts above DD_UUPT_TRAPS.
         {
           title: "ANALISIS LIKUIDATOR",
           subs: ["Pengangkatan Likuidator", "Kewajiban dan Wewenang Likuidator", "Urutan Pembayaran dalam Likuidasi"],
@@ -188,12 +198,18 @@ function transactionChapters(type: DDTransactionType): { title: string; subs: st
         // Required by UUPT itself, and it was missing entirely.
         //
         // Pasal 149 ayat (1) makes the inventory of assets and liabilities the
-        // liquidator's first duty; Pasal 150 fixes the order in which claims are
-        // paid. Neither means anything without knowing what there is to pay with,
-        // and if the estate does not cover the claims the matter is not a
-        // liquidation under Pasal 142 at all — it belongs in insolvency, and the
-        // payment order stops being a sequence and becomes a question of which
-        // creditors go unpaid.
+        // liquidator's first duty, and it means nothing without knowing what there
+        // is to pay with. If the estate does not cover the claims, the matter is not
+        // a liquidation to be carried through under Pasal 142 and following at all:
+        // Pasal 149 ayat (2) obliges the liquidator to file for bankruptcy, unless
+        // the law provides otherwise and every creditor whose identity and address
+        // are known consents to settlement outside it.
+        //
+        // An earlier version of this comment added that Pasal 150 fixes the order in
+        // which claims are paid. It does not. Pasal 150 governs claims the liquidator
+        // rejected, claims filed after the window, and clawback of distributed residue
+        // from shareholders. UUPT sets no ranking of creditors anywhere — it regulates
+        // the company, not the priority of its debts.
         //
         // A note on how this was found, because the reasoning was wrong the first
         // time: a dissolution instruction file in the client's folders lists this

@@ -128,10 +128,16 @@ export const DD_GAP_RATIONALE: Record<string, DDGapRationale> = {
       "Tanpa risalah RUPS yang menyetujui rencana Penggabungan, keabsahan keputusan korporasi yang menjadi dasar pelaksanaan Penggabungan tidak dapat dipastikan, sehingga pemenuhan kuorum dan persyaratan persetujuan yang disyaratkan Undang-Undang tidak dapat diverifikasi.",
   },
 
+  // Pasal 142 ayat (3) does not require the RUPS to appoint a liquidator in the
+  // dissolution resolution; it supplies the fallback for when it does not — "dan
+  // RUPS tidak menunjuk likuidator, Direksi bertindak selaku likuidator". Stating
+  // it as a duty is the misreading lib/dd/statute.ts was written to document, and
+  // it had come back here. A resolution that "sekaligus" appoints a liquidator is
+  // Pasal 146 ayat (2), which is a court-ordered dissolution, not a RUPS one.
   "pengurus.rups_pembubaran": {
     legalBasis:
-      "Pembubaran Perseroan ditetapkan dengan keputusan RUPS yang sekaligus menunjuk likuidator untuk melaksanakan pemberesan harta kekayaan Perseroan.",
-    legalRefs: ["UUPT Pasal 142", "UUPT Pasal 147"],
+      "Pembubaran Perseroan ditetapkan dengan keputusan RUPS. Apabila RUPS tidak menunjuk likuidator, Direksi bertindak selaku likuidator untuk melaksanakan pemberesan harta kekayaan Perseroan.",
+    legalRefs: ["UUPT Pasal 142 ayat (3)", "UUPT Pasal 147"],
     absenceImpact:
       "Tanpa risalah RUPS pembubaran dan penunjukan likuidator, kewenangan pihak yang melaksanakan pemberesan harta kekayaan tidak dapat dipastikan, sehingga keabsahan tindakan likuidator dalam proses pembubaran tidak dapat diverifikasi.",
   },
