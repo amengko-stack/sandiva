@@ -31,10 +31,14 @@
  */
 
 import { UUPT_STRUCTURE } from "@/config/uuptStructure";
+import {
+  MANPOWER_AMENDED, MANPOWER_INSERTED, MANPOWER_REPEALED, MANPOWER_STRUCTURE,
+} from "@/config/manpowerStructure";
 
 export type DDCitationVerdict =
   | "exists"
   | "article_missing"
+  | "article_repealed"
   | "ayat_missing"
   | "huruf_missing"
   | "unknown_statute";
@@ -123,7 +127,22 @@ const CITE =
 export function checkCitations(
   text: string,
   articles: Map<string, string>,
-  opts: { statuteHints?: RegExp; foreignHints?: RegExp } = {}
+  opts: {
+    statuteHints?: RegExp;
+    foreignHints?: RegExp;
+    /** Articles a later statute deleted. Citing one cites a provision that is gone. */
+    repealed?: ReadonlySet<string>;
+    /**
+     * Articles a later statute rewrote. They still exist, so the citation is not
+     * wrong — but the paragraph structure on record is the superseded one, and
+     * judging "ayat (4)" against text that no longer governs would manufacture
+     * exactly the false accusation this checker exists to avoid. Article existence
+     * is checked; ayat and huruf are not.
+     */
+    amended?: ReadonlySet<string>;
+    /** Named in the note, so the reader knows which statute repealed the article. */
+    amendedBy?: string;
+  } = {}
 ): DDCitationCheck[] {
   const own = opts.statuteHints ?? /UUPT|UU\s*(No\.?\s*)?40[\s/]*(Tahun\s*)?2007|Undang-Undang Perseroan Terbatas/i;
   const foreign =
@@ -150,6 +169,20 @@ export function checkCitations(
       const body = articles.get(no);
       if (body === undefined) {
         out.push({ ref, verdict: "article_missing", note: `${ref} tidak terdapat dalam undang-undang yang dirujuk.` });
+        continue;
+      }
+      if (opts.repealed?.has(no)) {
+        const by = opts.amendedBy ? ` oleh ${opts.amendedBy}` : "";
+        out.push({
+          ref,
+          verdict: "article_repealed",
+          note: `Pasal ${no} telah DIHAPUS${by} dan tidak lagi berlaku. Rujukan ini perlu diganti dengan ketentuan yang menggantikannya.`,
+        });
+        continue;
+      }
+      // Exists, but the structure on record is superseded — go no deeper.
+      if (opts.amended?.has(no)) {
+        out.push({ ref, verdict: "exists", note: "" });
         continue;
       }
       let scope = body;
@@ -181,17 +214,10 @@ export function badCitations(checks: DDCitationCheck[]): DDCitationCheck[] {
 }
 
 
-/**
- * The same check against UUPT, using the committed structure map.
- *
- * This is what runs in production. parseStatute() above stays for regenerating that
- * map and for the tests that assert it against the statute text itself, so the map
- * can never drift from the law without a test noticing.
- */
-export function checkUUPTCitations(text: string): DDCitationCheck[] {
+/** Rebuild just enough shape for the same code path: each ayat as "(n) a. b. ...". */
+function articlesFrom(structure: Record<string, Record<string, string>>): Map<string, string> {
   const articles = new Map<string, string>();
-  for (const [no, ayats] of Object.entries(UUPT_STRUCTURE)) {
-    // Rebuild just enough shape for the same code path: each ayat as "(n) a. b. ..."
+  for (const [no, ayats] of Object.entries(structure)) {
     const parts: string[] = [];
     const keys = Object.keys(ayats).sort((a, b) => Number(a) - Number(b));
     for (const k of keys) {
@@ -203,5 +229,49 @@ export function checkUUPTCitations(text: string): DDCitationCheck[] {
     }
     articles.set(no, parts.join(" "));
   }
-  return checkCitations(text, articles);
+  return articles;
+}
+
+/**
+ * The same check against UUPT, using the committed structure map.
+ *
+ * This is what runs in production. parseStatute() above stays for regenerating that
+ * map and for the tests that assert it against the statute text itself, so the map
+ * can never drift from the law without a test noticing.
+ */
+export function checkUUPTCitations(text: string): DDCitationCheck[] {
+  return checkCitations(text, articlesFrom(UUPT_STRUCTURE));
+}
+
+const MANPOWER_HINTS =
+  /UU\s*(No\.?\s*)?13[\s/]*(Tahun\s*)?2003|Undang-Undang Ketenagakerjaan|\bUUK\b|Ketenagakerjaan/i;
+const MANPOWER_FOREIGN =
+  /UUPT|UU\s*(No\.?\s*)?(40[\s/]*(Tahun\s*)?2007|30|2|8|19|37|11|42|4|28|7|5|3)[\s/]|Anggaran Dasar|KUHPerdata|Kitab Undang-Undang|Perseroan Terbatas|POJK|KUP|Minerba|Kepailitan|\bPP\b|Permenaker|Peraturan Menteri/i;
+
+/**
+ * The same check against the manpower law, which needs one thing UUPT did not.
+ *
+ * UUPT is in force as enacted. UU 13/2003 is not: Cipta Kerja deleted 28 of its
+ * articles and rewrote 34 more, so "the article exists in the 2003 text" is not the
+ * same question as "the article exists". A live report cited Pasal 91 for a
+ * severance-waiver clause — wrong article (severance is Pasal 156) and a deleted one.
+ * Checking against the 2003 text alone would have confirmed it.
+ */
+export function checkManpowerCitations(text: string): DDCitationCheck[] {
+  // Inserted articles join the amended ones: both exist, and for both the paragraph
+  // structure on record is either superseded or absent, so neither is judged below
+  // article level.
+  const unstructured = new Set(Array.from(MANPOWER_AMENDED).concat(Array.from(MANPOWER_INSERTED)));
+  return checkCitations(text, articlesFrom(MANPOWER_STRUCTURE), {
+    statuteHints: MANPOWER_HINTS,
+    foreignHints: MANPOWER_FOREIGN,
+    repealed: MANPOWER_REPEALED,
+    amended: unstructured,
+    amendedBy: "UU 6/2023 (Cipta Kerja)",
+  });
+}
+
+/** Every statute this pipeline can check a citation against. */
+export function checkAllCitations(text: string): DDCitationCheck[] {
+  return [...checkUUPTCitations(text), ...checkManpowerCitations(text)];
 }

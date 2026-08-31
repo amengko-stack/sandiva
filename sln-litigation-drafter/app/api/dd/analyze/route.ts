@@ -17,7 +17,7 @@ import { redflagSystem, transactionAnalysisSystem } from "@/lib/dd/prompts";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
-import { badCitations, checkUUPTCitations } from "@/lib/dd/statute";
+import { badCitations, checkAllCitations } from "@/lib/dd/statute";
 import { chapterForAspect, isTransactionChapter, planChapters } from "@/config/ddChapters";
 import type { ExtractReport } from "@/types";
 import type {
@@ -486,7 +486,7 @@ export async function POST(req: NextRequest) {
           // reported to whoever is watching the run. A citation to an article that
           // does not exist is exactly the kind of thing a reader cannot catch, and
           // until now the only trace of it was a line in the operator's log.
-          const refsOf = (text: string) => badCitations(checkUUPTCitations(text)).map((b) => b.ref);
+          const refsOf = (text: string) => badCitations(checkAllCitations(text)).map((b) => b.ref);
           findings = findings.map((f) => {
             const issues = refsOf(
               [f.problem, f.whyItMatters, f.legalConsequence ?? "", (f.regulationRefs ?? []).join(" ")].join(" ")
@@ -508,7 +508,7 @@ export async function POST(req: NextRequest) {
             emit(controller, {
               type: "step",
               label:
-                `PERIKSA: ${all.length} rujukan UUPT tidak ada sebagaimana ditulis — ` +
+                `PERIKSA: ${all.length} rujukan tidak ada sebagaimana ditulis atau telah dihapus — ` +
                 all.join("; ") +
                 ". Ditandai pada laporan dan wajib diperbaiki sebelum diandalkan.",
             });
