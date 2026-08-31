@@ -5,7 +5,9 @@ import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { mergeExtractReports } from "@/lib/dd/merge-report";
 import { preCategorize } from "@/lib/dd/pre-categorize";
+import { refuseIfOutsideMatter } from "@/lib/matter-scope";
 import type { FileEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
+import type { DDTransaction } from "@/types/dd";
 
 export const maxDuration = 300;
 
@@ -40,6 +42,31 @@ export async function POST(req: NextRequest) {
       JSON.stringify({ error: "sessionId, entityId, dan files wajib diisi" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
+  }
+
+  // Every path below is client-supplied and goes to Graph with the app's
+  // tenant-wide credentials, which read the document's full text. Bound them to
+  // the folders this matter registered, or a request naming another matter's site
+  // extracts that matter's documents — the ethical-wall problem.
+  //
+  // Checked before any work starts: a partial extraction that stopped halfway
+  // would already have read what it should not have.
+  const txnRaw = await readBlobText(ddKeys.transaction(sessionId));
+  if (!txnRaw) {
+    return new Response(
+      JSON.stringify({ error: "Matter ini belum tersimpan — selesaikan Tahap 1 terlebih dahulu." }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const txn = JSON.parse(txnRaw) as DDTransaction;
+  for (const f of files) {
+    const refusal = refuseIfOutsideMatter(f.path, txn);
+    if (refusal) {
+      return new Response(
+        JSON.stringify({ error: `${refusal} (${f.name})` }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
   }
 
   // Sort: KRITIS → PENDUKUNG (DD reads everything, but material docs surface first)

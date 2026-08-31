@@ -3,6 +3,7 @@ import { isValidSessionId } from "@/lib/blob";
 import { writeMatterFile } from "@/lib/graph-client";
 import { verifyDocx } from "@/lib/docx-verify";
 import { loadEntityResults } from "@/lib/dd/load-results";
+import { refuseIfOutsideMatter } from "@/lib/matter-scope";
 import { buildDdReportDocx } from "@/lib/dd/dd-docx-builder";
 import { buildDdWorkbook } from "@/lib/dd/dd-excel-builder";
 
@@ -18,6 +19,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "sessionId/folderPath tidak valid" }, { status: 400 });
     }
     const data = await loadEntityResults(sessionId);
+
+    // The report is written into a SharePoint folder with the app's tenant-wide
+    // credentials, and Stage 6 lets the lawyer edit the target freely. Bound it to
+    // the folders this matter registered at Stage 1, or this route writes files
+    // into any site in the tenant on request.
+    const refusal = refuseIfOutsideMatter(folderPath, data.transaction);
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 403 });
+
     const slug = data.transaction.name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 60);
     const date = new Date().toISOString().slice(0, 10);
 
