@@ -4,7 +4,9 @@ import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { type ExtractionMetadata } from "@/lib/extraction-cache";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { preCategorize } from "@/lib/dd/pre-categorize";
+import { refuseIfOutsideMatter } from "@/lib/matter-scope";
 import type { DocCategory, ExtractReport } from "@/types";
+import type { DDTransaction } from "@/types/dd";
 
 export const maxDuration = 300;
 
@@ -52,6 +54,24 @@ export async function POST(req: NextRequest) {
       JSON.stringify({ error: "sessionId, entityId, dan files wajib diisi" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
+  }
+
+  const txnRaw = await readBlobText(ddKeys.transaction(sessionId));
+  if (!txnRaw) {
+    return new Response(
+      JSON.stringify({ error: "Matter ini belum tersimpan — selesaikan Tahap 1 terlebih dahulu." }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  const txn = JSON.parse(txnRaw) as DDTransaction;
+  for (const file of files) {
+    const refusal = refuseIfOutsideMatter(file.path, txn);
+    if (refusal) {
+      return new Response(
+        JSON.stringify({ error: `${refusal} (${file.name})` }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
   }
 
   const total = files.length;
