@@ -384,10 +384,10 @@ export function interimLegend(): string {
  * The sentence that must accompany any money figure in the report.
  *
  * A dissolution LDD cannot avoid figures: whether the estate covers the claims
- * decides the legal route, and UUPT Pasal 150's payment order is meaningless
- * without knowing what there is to pay with. But the report states in its own
- * qualifications that the examination does not cover the truth of financial data,
- * and a lawyer opining on valuation is outside their competence.
+ * decides the legal route, because UUPT Pasal 149 ayat (2) turns on it. But the
+ * report states in its own qualifications that the examination does not cover the
+ * truth of financial data, and a lawyer opining on valuation is outside their
+ * competence.
  *
  * The rule the user chose: a figure may be REPEATED from a document that states
  * it, with the source named, and the legal consequence may be reasoned from it. A
@@ -413,14 +413,21 @@ export function financialFigureQualification(): string {
  * Silence would be the wrong answer: a dissolution report that says nothing about
  * solvency reads as though the estate is adequate. The absence has to be stated as
  * an absence.
+ *
+ * This note used to close on "urutan pembayaran menurut UUPT Pasal 150". Pasal 150
+ * governs claims the liquidator rejected, claims filed after the window, and
+ * clawback of distributed residue from shareholders. It sets no order of payment,
+ * and no article of UUPT does — the statute regulates the company, not the ranking
+ * of its creditors. What actually turns on solvency is Pasal 149 ayat (2), so that
+ * is what the note now states, with the exception the article carries.
  */
 export function solvencyUndeterminedNote(): string {
   return (
     "Dokumen Yang Diperiksa tidak memuat data yang cukup untuk menyatakan apakah harta Perseroan " +
     "mencukupi seluruh kewajibannya. Hal ini WAJIB dipastikan sebelum pembubaran dilaksanakan: apabila " +
-    "harta tidak mencukupi, penyelesaian tidak dapat ditempuh melalui likuidasi berdasarkan UUPT " +
-    "Pasal 142 dan seterusnya, melainkan melalui kepailitan, dan urutan pembayaran menurut UUPT " +
-    "Pasal 150 menjadi persoalan mengenai kreditor mana yang tidak terbayar. [PERLU VERIFIKASI]"
+    "utang Perseroan melebihi hartanya, UUPT Pasal 149 ayat (2) mewajibkan likuidator mengajukan " +
+    "permohonan pailit, kecuali peraturan perundang-undangan menentukan lain dan semua kreditor yang " +
+    "diketahui identitas dan alamatnya menyetujui pemberesan di luar kepailitan. [PERLU VERIFIKASI]"
   );
 }
 
