@@ -23,7 +23,15 @@ const sourceRevision = "rev-2026-08-19T10:00:00Z";
 const sourceBytes = Buffer.from("immutable source bytes");
 const digest = createHash("sha256").update(sourceBytes).digest("hex");
 
+// Relative to the run, not to the day this was written. The worker rejects an
+// expired pointer as a pointer_mismatch — correctly — so a hardcoded expiresAt of
+// 2026-08-20T10:00:00Z made four of these tests pass until that moment and fail on
+// every run afterwards, with Stage 0 never invoked and nothing pointing at the clock
+// as the cause. A test whose subject is not time should not depend on the date.
+const POINTER_TTL_MS = 86_400_000;
+
 function pointer(overrides = {}) {
+  const createdAt = new Date();
   return {
     version: 1 as const,
     tenantKey: "tenant-key-a",
@@ -31,8 +39,8 @@ function pointer(overrides = {}) {
     sourceRevisionKey: "revision-key-a",
     contentSha256: digest,
     sizeBytes: sourceBytes.byteLength,
-    createdAt: "2026-08-19T10:00:00.000Z",
-    expiresAt: "2026-08-20T10:00:00.000Z",
+    createdAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + POINTER_TTL_MS).toISOString(),
     ...overrides,
   };
 }
@@ -242,13 +250,17 @@ describe("Stage 1 worker containment", () => {
 
   it("rejects an expired pointer before resolving document bytes", async () => {
     const deps = dependencies();
+    // Both halves stated here rather than inherited: the shared fixture's expiry is
+    // now relative to the run, and a test about expiry must own the clock it is
+    // testing against, not depend on where some other default happens to fall.
+    const expiresAt = "2026-08-20T10:00:00.000Z";
     const worker = createShadowWorker({
       enabled: true, killSwitch: false, lifecycle: new InMemoryShadowLifecycleStore(),
       ...deps, workerId: "worker-a", timeoutMs: 1_000, leaseMs: 60_000, maxAttempts: 3,
-      now: () => new Date("2026-08-20T10:00:00.001Z"),
+      now: () => new Date(Date.parse(expiresAt) + 1),
     });
 
-    await worker.handle(envelope());
+    await worker.handle(envelope({ pointer: pointer({ expiresAt }) }));
 
     expect(deps.store.resolveImmutable).not.toHaveBeenCalled();
     expect(deps.queue.retry).toHaveBeenCalledOnce();
