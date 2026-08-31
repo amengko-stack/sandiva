@@ -1,0 +1,50 @@
+name: CI
+
+# The 523 tests in sln-litigation-drafter/tests/dd only ever ran when someone
+# remembered to run them. Several defects that reached client-facing reports
+# would not have been caught by these tests anyway — but the ones that would,
+# shipped, because nothing ran the suite on the way to main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A force-push or a second push supersedes the run in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drafter:
+    name: sln-litigation-drafter
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Every command in this repo runs from here. The root package.json has no
+        # test script at all, and the root app is legacy — it is not built or
+        # tested by this workflow.
+        working-directory: sln-litigation-drafter
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches "engines": { "node": "24.x" } in package.json.
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: sln-litigation-drafter/package-lock.json
+
+      # --legacy-peer-deps is not optional here: a plain install fails on this
+      # dependency set, which is why vercel.json pins the same flag.
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      # tsc is the only static gate this project has. `npm run lint` is currently
+      # a no-op — there is no ESLint config and eslint is not a dependency — so it
+      # is deliberately not run here rather than run and always passing.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
