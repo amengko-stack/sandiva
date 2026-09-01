@@ -114,6 +114,25 @@ export function seenDigest(
     .slice(0, 32);
 }
 
+/**
+ * Digest of the readable corpus and failed-document context shown to the
+ * transaction-chapter analyzer.
+ *
+ * Keep the historical digest material when no failed documents exist so this
+ * H-2 fix does not invalidate unaffected transaction analysis. Once failed
+ * filenames are present they are part of the request and therefore part of the
+ * reuse key.
+ */
+export function transactionSeenDigest(
+  subsections: string[],
+  docsText: string,
+  failed: string[]
+): string {
+  const priorMaterial = `${subsections.join("|")}::${docsText}`;
+  const material = failed.length > 0 ? `${priorMaterial}\u0000${failed.join("|")}` : priorMaterial;
+  return createHash("sha256").update(material).digest("hex").slice(0, 32);
+}
+
 export function aspectDocsDigest(
   aspectId: DDAspectId,
   classified: DDClassifiedDoc[],

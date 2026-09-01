@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { createHash } from "crypto";
 import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
 import { splitDocBlocks } from "@/lib/extract-format";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
@@ -11,7 +10,8 @@ import {
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
 import {
-  canReuseAspect, parseAnalysisState, promptDigest, seenDigest, type DDAnalysisState,
+  canReuseAspect, parseAnalysisState, promptDigest, seenDigest, transactionSeenDigest,
+  type DDAnalysisState,
 } from "@/lib/dd/analysis-state";
 import { redflagSystem, transactionAnalysisSystem } from "@/lib/dd/prompts";
 import { verifyFindings } from "@/lib/dd/verify";
@@ -414,10 +414,7 @@ export async function POST(req: NextRequest) {
           for (const t of titles) txnSubs.push(t);
         }
         if (txnSubs.length > 0) {
-          const txnDigest = createHash("sha256")
-            .update(txnSubs.join("|") + "::" + combined)
-            .digest("hex")
-            .slice(0, 32);
+          const txnDigest = transactionSeenDigest(txnSubs, combined, failedDocs);
           const priorTxn = priorAnalyses.filter((a) => a.aspectId === "transaksi");
           // Reuse only a COMPLETE previous result. A truncated response once left six
           // of seventeen sub-sections unanalysed, and reusing on "some exist" would
@@ -447,6 +444,7 @@ export async function POST(req: NextRequest) {
                     entityId,
                     entityName: entity.name,
                     docsText: combined,
+                    failedDocs,
                     transactionType: txn.type,
                     regime,
                     subsections,

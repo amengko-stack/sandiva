@@ -287,9 +287,15 @@ export async function analyzeTransactionChapters(
   args: {
     entityId: string; entityName: string; docsText: string;
     transactionType: DDTransactionType; regime: DDRegime; subsections: string[];
+    /** Supplied, but automatic extraction failed; filenames only. */
+    failedDocs: string[];
   }
 ): Promise<DDSubsectionAnalysis[]> {
   if (args.subsections.length === 0) return [];
+  const failedBlock =
+    args.failedDocs.length > 0
+      ? `\n\nDOKUMEN BERIKUT DISEDIAKAN DALAM RUANG DATA, tetapi gagal diekstrak secara otomatis sehingga isinya TIDAK termasuk dalam dokumen yang dapat kamu periksa: ${args.failedDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, tidak ada, atau tidak ditemukan. Jika analisis bergantung pada isinya, nyatakan bahwa isinya belum dapat diperiksa dan kesimpulan terkait tetap "[PERLU VERIFIKASI]". Bila nama file generik, jangan menebak jenis atau isinya dan jangan gunakan ketidakjelasan tersebut sebagai bukti bahwa dokumen tertentu tidak ada. Larangan ini khusus untuk dokumen gagal yang disebutkan; kamu tetap harus mengidentifikasi dokumen lain yang benar-benar belum tersedia berdasarkan dokumen yang dapat diperiksa.`
+      : "";
   const prompt = `PERSEROAN: ${args.entityName}
 RENCANA TRANSAKSI: ${transactionLabel(args.transactionType)}
 
@@ -298,7 +304,7 @@ ${args.subsections.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 
 === DOKUMEN ===
 ${args.docsText.slice(0, 220_000)}
-=== AKHIR DOKUMEN ===
+=== AKHIR DOKUMEN ===${failedBlock}
 
 Kembalikan HANYA JSON:
 {"analyses":[{"subsectionTitle":"judul persis","analysis":["paragraf 1","paragraf 2"],"verification":["hal yang belum dapat dipastikan"],"table":{"headers":["..."],"rows":[["..."]]}}]}
