@@ -4,6 +4,8 @@ import type { DocCategory } from "@/types";
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+export type ExtractionRepresentation = "source" | "derived";
+
 export interface ExtractionMetadata {
   filename: string;
   category: DocCategory;
@@ -24,6 +26,11 @@ export interface ExtractionMetadata {
    * the key does not exist for work already done.
    */
   charCap?: number;
+  /**
+   * Whether content is source-derived document text or model-derived output.
+   * Missing means `derived` for compatibility with legacy structured caches.
+   */
+  representation?: ExtractionRepresentation;
 }
 
 export interface CachedExtraction {
@@ -31,9 +38,14 @@ export interface CachedExtraction {
   metadata: ExtractionMetadata;
 }
 
-export function cacheKey(sharePointFileUrl: string): string {
+export function cacheKey(
+  sharePointFileUrl: string,
+  representation: ExtractionRepresentation = "derived",
+): string {
   const hash = createHash("sha256").update(sharePointFileUrl).digest("hex");
-  return `cache/${hash}.json`;
+  return representation === "source"
+    ? `cache/source/${hash}.json`
+    : `cache/${hash}.json`;
 }
 
 // Valid only when the SharePoint file hasn't changed since extraction, the entry is
@@ -43,9 +55,10 @@ export async function readExtractionCache(
   sharePointFileUrl: string,
   currentModifiedAt: string | null,
   category: DocCategory,
-  charCap?: number
+  charCap?: number,
+  representation: ExtractionRepresentation = "derived",
 ): Promise<CachedExtraction | null> {
-  const raw = await readBlobText(cacheKey(sharePointFileUrl));
+  const raw = await readBlobText(cacheKey(sharePointFileUrl, representation));
   if (!raw) return null;
   try {
     const cached = JSON.parse(raw) as CachedExtraction;
@@ -53,6 +66,11 @@ export async function readExtractionCache(
     if (!currentModifiedAt || cached.metadata.fileModifiedAt !== currentModifiedAt) return null;
     if (Date.now() - new Date(cached.metadata.extractedAt).getTime() > CACHE_TTL_MS) return null;
     if (cached.metadata.category !== category) return null;
+    // Legacy entries predate representation metadata and may contain a structured
+    // model summary. They remain valid only for the legacy/derived namespace;
+    // authoritative-source callers must re-extract from the source document.
+    const cachedRepresentation = cached.metadata.representation ?? "derived";
+    if (cachedRepresentation !== representation) return null;
     // Read less deeply than this run would. Re-extract rather than serve a document
     // that was cut at a limit no longer in force.
     if (charCap !== undefined && (cached.metadata.charCap ?? 0) < charCap) return null;
@@ -68,7 +86,8 @@ export async function writeExtractionCache(
   entry: CachedExtraction
 ): Promise<void> {
   try {
-    await writeBlobText(cacheKey(sharePointFileUrl), JSON.stringify(entry));
+    const representation = entry.metadata.representation ?? "derived";
+    await writeBlobText(cacheKey(sharePointFileUrl, representation), JSON.stringify(entry));
   } catch (e) {
     // cache write failures must never break extraction
     console.error("[cache] cache write failed (extraction continues):", e instanceof Error ? e.message : e);

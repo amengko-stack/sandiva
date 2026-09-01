@@ -123,7 +123,13 @@ export async function POST(req: NextRequest) {
           const currentModifiedAt = await documentNormalizer.getFileLastModified(file.path);
 
           // Cache: valid when fileModifiedAt matches AND under 7 days old
-          const cached = await documentNormalizer.readExtractionCache(file.path, currentModifiedAt, category, documentNormalizer.charCapFor(category));
+          const cached = await documentNormalizer.readExtractionCache(
+            file.path,
+            currentModifiedAt,
+            category,
+            documentNormalizer.charCapFor(category),
+            "source",
+          );
           if (cached && isBlank(cached.content)) {
             // Stale empty cache entry — fall through to fresh extraction.
             console.log(`[read-files] cache-hit empty → fall through name=${file.name}`);
@@ -141,7 +147,12 @@ export async function POST(req: NextRequest) {
             return;
           }
 
-          const { content, extractionMethod, needsOcr } = await documentNormalizer.extractWithTier(file.path, file.name, category);
+          const { content, extractionMethod, needsOcr } = await documentNormalizer.extractWithTier(
+            file.path,
+            file.name,
+            category,
+            "source",
+          );
 
           // Scanned PDF with no text layer — flagged for external OCR. Not cached,
           // not counted as processed/failed; the drafter re-checks after OCR.
@@ -174,6 +185,7 @@ export async function POST(req: NextRequest) {
             sharePointPath: file.path,
             fileModifiedAt: currentModifiedAt ?? "",
             charCap: documentNormalizer.charCapFor(category),
+            representation: "source",
           };
           docBlocks[i] = documentNormalizer.formatDocBlock(metadata, content);
           await documentNormalizer.writeExtractionCache(file.path, { content, metadata });

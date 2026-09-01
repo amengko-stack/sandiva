@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import mammoth from "mammoth";
 import type { FileEntry, DocDocumentType, DocCategory } from "@/types";
 import { MODELS } from "@/config/models";
+import type { ExtractionRepresentation } from "@/lib/extraction-cache";
 
 // ---------------------------------------------------------------------------
 // Token — plain fetch, no Azure SDK
@@ -634,7 +635,8 @@ ${rawText}`,
 export async function extractWithTier(
   filePath: string,
   fileName: string,
-  category: DocCategory
+  category: DocCategory,
+  representation: ExtractionRepresentation = "derived",
 ): Promise<{ content: string; extractionMethod: string; needsOcr?: boolean }> {
   const { bytes, ext } = await downloadBytes(filePath);
 
@@ -664,7 +666,7 @@ export async function extractWithTier(
 
     if (category === "KRITIS") {
       // Contracts: structured extraction over text PDFs.
-      if (CONTRACT_FILENAME_RE.test(fileName)) {
+      if (representation === "derived" && CONTRACT_FILENAME_RE.test(fileName)) {
         const structured = await structuredContractExtract(raw);
         return { content: `[Ekstraksi Terstruktur]\n${structured}`, extractionMethod: "structured" };
       }
@@ -684,7 +686,7 @@ export async function extractWithTier(
   const raw = await extractText(bytes, ext);
 
   if (category === "KRITIS") {
-    if (CONTRACT_FILENAME_RE.test(fileName)) {
+    if (representation === "derived" && CONTRACT_FILENAME_RE.test(fileName)) {
       const structured = await structuredContractExtract(raw);
       return { content: `[Ekstraksi Terstruktur]\n${structured}`, extractionMethod: "structured" };
     }
