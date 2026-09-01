@@ -47,6 +47,20 @@ function nameSuggests(fileName: string, keywords: string[]): boolean {
   });
 }
 
+/**
+ * A filename with no subject-matter signal cannot safely disprove that the file
+ * corresponds to a checklist item. Keep this deliberately narrow: descriptive
+ * filenames remain eligible for the ordinary whole-word matching above.
+ */
+function isGenericUnreadableName(fileName: string): boolean {
+  const stem = fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
+  return /^(?:scan|scanned|document|dokumen|file|image|img|untitled)(?:\s+\d+)?$/.test(stem);
+}
+
 /** Named in full up to this many; beyond that the note gives a count. */
 const MAX_NAMED_CANDIDATES = 3;
 
@@ -59,10 +73,17 @@ export function computeGaps(args: {
   notApplicableIds?: string[];
   /** Names of files that were supplied but could not be read (image-only scans). */
   unreadableFiles?: string[];
+  /** Names of supplied files whose extraction failed for a reason other than OCR. */
+  failedFiles?: string[];
 }): DDGapItem[] {
   const { expected, classified, entityId, transactionType, cutoffDateISO } = args;
   const na = new Set(args.notApplicableIds ?? []);
   const unreadable = args.unreadableFiles ?? [];
+  const failed = args.failedFiles ?? [];
+  const suppliedUnreadable = [
+    ...unreadable.map((name) => ({ name, extractionStatus: "perlu_ocr" as const })),
+    ...failed.map((name) => ({ name, extractionStatus: "gagal" as const })),
+  ];
 
   const applicable = expected.filter(
     (e) => !e.appliesTo || e.appliesTo.includes(transactionType)
@@ -72,6 +93,7 @@ export function computeGaps(args: {
     const matches = classified.filter((c) => c.expectedDocId === e.id);
     let status: DDGapStatus;
     let note = "";
+    let unreadableCandidates: string[] | undefined;
 
     if (na.has(e.id)) {
       status = "not_applicable";
@@ -80,16 +102,31 @@ export function computeGaps(args: {
       // Nothing classified matched — but a scan that could not be read was never
       // offered to the classifier at all, so "not in the data room" may simply be
       // false. Name the candidates rather than assert an absence.
-      const candidates = unreadable.filter((f) => nameSuggests(f, e.keywords));
+      const matchedCandidates = suppliedUnreadable.filter((f) => nameSuggests(f.name, e.keywords));
+      const candidates = matchedCandidates.length > 0
+        ? matchedCandidates
+        : suppliedUnreadable.filter((f) => isGenericUnreadableName(f.name));
       if (candidates.length > 0) {
         status = "unreadable";
-        const named = candidates.slice(0, MAX_NAMED_CANDIDATES).join(", ");
+        unreadableCandidates = candidates.map((f) => f.name);
+        const named = unreadableCandidates.slice(0, MAX_NAMED_CANDIDATES).join(", ");
         const rest = candidates.length - MAX_NAMED_CANDIDATES;
-        note =
-          `Tidak ditemukan di antara dokumen yang dapat dibaca. Namun terdapat dokumen yang disediakan namun ` +
-          `tidak dapat dibaca secara otomatis (pindaian tanpa lapisan teks) yang menurut namanya berkemungkinan ` +
-          `memuat butir ini: ${named}${rest > 0 ? `, dan ${rest} dokumen lainnya` : ""}. Butir ini belum dapat ` +
-          `dinyatakan tidak ada.`;
+        if (
+          matchedCandidates.length > 0 &&
+          candidates.every((f) => f.extractionStatus === "perlu_ocr")
+        ) {
+          // Preserve PR #63's OCR-required wording for descriptive filename matches.
+          note =
+            `Tidak ditemukan di antara dokumen yang dapat dibaca. Namun terdapat dokumen yang disediakan namun ` +
+            `tidak dapat dibaca secara otomatis (pindaian tanpa lapisan teks) yang menurut namanya berkemungkinan ` +
+            `memuat butir ini: ${named}${rest > 0 ? `, dan ${rest} dokumen lainnya` : ""}. Butir ini belum dapat ` +
+            `dinyatakan tidak ada.`;
+        } else {
+          note =
+            `Tidak ditemukan di antara dokumen yang dapat dibaca; terdapat dokumen yang disediakan tetapi tidak ` +
+            `dapat diperiksa: ${named}${rest > 0 ? `, dan ${rest} dokumen lainnya` : ""}. Oleh karena itu, ` +
+            `keberadaan dokumen ini belum dapat dipastikan dan isinya belum dapat dinilai.`;
+        }
       } else {
         status = "missing";
         note = "Tidak ditemukan dalam data room.";
@@ -122,9 +159,7 @@ export function computeGaps(args: {
       severity: severityFor(e.importance),
       note,
     };
-    if (status === "unreadable") {
-      item.unreadableCandidates = unreadable.filter((f) => nameSuggests(f, e.keywords));
-    }
+    if (status === "unreadable") item.unreadableCandidates = unreadableCandidates;
     return item;
   });
 }
@@ -143,10 +178,10 @@ const STATUS_PROBLEM: Record<Exclude<DDGapStatus, "present">, string> = {
 const STATUS_FRAMING: Record<Exclude<DDGapStatus, "present">, string> = {
   missing: "Dokumen tersebut tidak ditemukan dalam Dokumen Yang Diperiksa.",
   unreadable:
-    "Terdapat dokumen yang disediakan dalam bentuk pindaian tanpa lapisan teks sehingga tidak dapat dibaca " +
-    "secara otomatis, dan menurut namanya berkemungkinan memuat butir ini. Butir ini karena itu BELUM dapat " +
-    "dinyatakan tidak ada; dokumen tersebut perlu dibaca secara manual atau melalui pengenalan karakter optis " +
-    "(OCR) sebelum kesimpulan atas kelengkapannya diambil.",
+    "Terdapat dokumen yang disediakan tetapi tidak dapat dibaca atau diekstrak secara otomatis dan mungkin " +
+    "memuat butir ini. Butir ini karena itu BELUM dapat dinyatakan tidak ada; dokumen tersebut perlu dibaca " +
+    "secara manual, diproses melalui pengenalan karakter optis (OCR), atau disediakan ulang dalam format yang " +
+    "dapat dibaca sebelum kesimpulan atas kelengkapannya diambil.",
   incomplete:
     "Dokumen yang ditemukan belum dapat dipastikan lengkap, sehingga kesimpulan atas butir ini bersifat sementara.",
   expired:

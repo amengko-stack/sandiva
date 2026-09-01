@@ -216,12 +216,13 @@ describe("documents that could not be read are named in the appendix", () => {
     ...result(),
     extractReport: {
       sessionId: "s", folderPath: "/x", docTypeId: "dd", practiceAreaId: null, claimType: null,
-      ref: "r", timestamp: "2026-08-12T00:00:00.000Z", totalChars: 1000, processed: 1, skipped: 0,
+      ref: "r", timestamp: "2026-08-12T00:00:00.000Z", totalChars: 1000, processed: 1, skipped: 1,
       ocrRequired: 2,
       files: [
         { name: "nib.pdf", category: "KRITIS", documentType: "lainnya", extractionMode: "PDF", status: "selesai" },
         { name: "Akta Pendirian 1998 (pindaian).pdf", category: "KRITIS", documentType: "lainnya", extractionMode: "Perlu OCR", status: "perlu_ocr" },
         { name: "Sertifikat HGB No. 12.pdf", category: "KRITIS", documentType: "lainnya", extractionMode: "Perlu OCR", status: "perlu_ocr" },
+        { name: "Scan_001.pdf", category: "KRITIS", documentType: "lainnya", extractionMode: "—", status: "gagal", reason: "GraphError tenant=secret-internal-detail" },
       ],
     } as unknown as DDEntityResult["extractReport"],
   });
@@ -241,6 +242,21 @@ describe("documents that could not be read are named in the appendix", () => {
   it("says their absence from the report is not a statement about their contents", async () => {
     const text = await buildWith(withScans());
     expect(text).toContain("BUKAN pernyataan mengenai");
+  });
+
+  it("names a failed file with a bounded reason and no raw exception payload", async () => {
+    const text = await buildWith(withScans());
+    expect(text).toContain("Scan_001.pdf");
+    expect(text).toContain("gagal diekstrak");
+    expect(text).not.toContain("secret-internal-detail");
+  });
+
+  it("reconciles supplied, extracted, OCR-required, and failed counts", async () => {
+    const text = await buildWith(withScans());
+    expect(text).toContain("Jumlah dokumen yang disediakan: 4");
+    expect(text).toContain("Berhasil diekstrak dan diperiksa: 1");
+    expect(text).toContain("Memerlukan pengenalan karakter optis (OCR): 2");
+    expect(text).toContain("Gagal diekstrak: 1");
   });
 
   it("stays silent when every document was read", async () => {

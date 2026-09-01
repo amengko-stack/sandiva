@@ -109,6 +109,8 @@ export function buildRedFlagPrompt(args: {
   omittedDocs?: string[];
   /** Supplied as image-only scans, so no text of them exists to show. */
   unreadableDocs?: string[];
+  /** Supplied, but automatic extraction failed; raw extraction errors stay outside the prompt. */
+  failedDocs?: string[];
 }): string {
   // The analysis chapters previously rendered as hollow scaffolding: each
   // sub-section repeated one templated sentence and every finding piled into a
@@ -147,12 +149,16 @@ Pada setiap temuan, isi "subsection" dengan judul sub-bagian yang paling tepat d
     args.unreadableDocs && args.unreadableDocs.length > 0
       ? `\n\nDOKUMEN BERIKUT JUGA DISERAHKAN DALAM RUANG DATA, tetapi berupa pindaian tanpa lapisan teks sehingga tidak dapat dibaca dan TIDAK ada teksnya untuk kamu periksa: ${args.unreadableDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, atau tidak ditemukan. Bila analisismu memerlukannya, nyatakan bahwa dokumen tersebut belum dapat dibaca sehingga isinya belum diperiksa, dan tandai "[PERLU VERIFIKASI]".`
       : "";
+  const failedBlock =
+    args.failedDocs && args.failedDocs.length > 0
+      ? `\n\nDOKUMEN BERIKUT JUGA DISERAHKAN DALAM RUANG DATA, tetapi gagal diekstrak secara otomatis sehingga TIDAK ada teksnya untuk kamu periksa: ${args.failedDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, atau tidak ditemukan. Bila analisismu memerlukannya, nyatakan bahwa dokumen tersebut belum dapat diekstrak sehingga isinya belum diperiksa, dan tandai "[PERLU VERIFIKASI]".`
+      : "";
   return `Entitas: ${args.entityName}. Aspek: ${args.aspectId.replace(/_/g, " ")}. Transaksi: ${args.transactionType.replace(/_/g, " ")}.
 ${analysisBlock}
 
 === DOKUMEN ASPEK INI ===
 ${args.docsText}
-=== AKHIR DOKUMEN ===${omittedBlock}${unreadableBlock}
+=== AKHIR DOKUMEN ===${omittedBlock}${unreadableBlock}${failedBlock}
 
 Identifikasi red flag hukum yang NYATA dari dokumen di atas untuk transaksi ini (mis. izin kedaluwarsa, modal belum disetor penuh, aset dibebani jaminan, perkara berjalan, ketidaksesuaian anggaran dasar).
 
@@ -281,9 +287,25 @@ export async function analyzeTransactionChapters(
   args: {
     entityId: string; entityName: string; docsText: string;
     transactionType: DDTransactionType; regime: DDRegime; subsections: string[];
+    /** Supplied as image-only scans; filenames only. */
+    unreadableDocs: string[];
+    /** Supplied, but automatic extraction failed; filenames only. */
+    failedDocs: string[];
   }
 ): Promise<DDSubsectionAnalysis[]> {
   if (args.subsections.length === 0) return [];
+  const unreadableBlock =
+    args.unreadableDocs.length > 0
+      ? `\n\nDOKUMEN BERIKUT DISEDIAKAN DALAM RUANG DATA, tetapi teksnya tidak dapat dibaca secara otomatis karena memerlukan OCR: ${args.unreadableDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, tidak ada, atau tidak ditemukan. Jika analisis bergantung pada isinya, nyatakan bahwa isinya belum diperiksa dan memerlukan OCR atau verifikasi manual; kesimpulan terkait tetap "[PERLU VERIFIKASI]".`
+      : "";
+  const failedBlock =
+    args.failedDocs.length > 0
+      ? `\n\nDOKUMEN BERIKUT DISEDIAKAN DALAM RUANG DATA, tetapi gagal diekstrak secara otomatis sehingga isinya TIDAK termasuk dalam dokumen yang dapat kamu periksa: ${args.failedDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, tidak ada, atau tidak ditemukan. Jika analisis bergantung pada isinya, nyatakan bahwa isinya belum dapat diperiksa dan kesimpulan terkait tetap "[PERLU VERIFIKASI]".`
+      : "";
+  const suppliedUnreadableRule =
+    args.unreadableDocs.length > 0 || args.failedDocs.length > 0
+      ? `\nBila nama file generik, jangan menebak jenis atau isinya dan jangan gunakan ketidakjelasan tersebut sebagai bukti bahwa dokumen tertentu tidak ada. Larangan ini khusus untuk dokumen yang disebutkan sebagai telah disediakan tetapi tidak dapat dibaca; kamu tetap harus mengidentifikasi dokumen lain yang benar-benar belum tersedia berdasarkan dokumen yang dapat diperiksa.`
+      : "";
   const prompt = `PERSEROAN: ${args.entityName}
 RENCANA TRANSAKSI: ${transactionLabel(args.transactionType)}
 
@@ -292,7 +314,7 @@ ${args.subsections.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 
 === DOKUMEN ===
 ${args.docsText.slice(0, 220_000)}
-=== AKHIR DOKUMEN ===
+=== AKHIR DOKUMEN ===${unreadableBlock}${failedBlock}${suppliedUnreadableRule}
 
 Kembalikan HANYA JSON:
 {"analyses":[{"subsectionTitle":"judul persis","analysis":["paragraf 1","paragraf 2"],"verification":["hal yang belum dapat dipastikan"],"table":{"headers":["..."],"rows":[["..."]]}}]}
@@ -349,6 +371,8 @@ export async function analyzeAspect(
     omittedDocs?: string[];
     /** Supplied as image-only scans, so no text of them exists to show. */
     unreadableDocs?: string[];
+    /** Supplied, but automatic extraction failed. */
+    failedDocs?: string[];
   }
 ): Promise<DDAspectAnalysisResult> {
   const response = await client.messages.create({

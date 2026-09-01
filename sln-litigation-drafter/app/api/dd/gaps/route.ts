@@ -59,6 +59,9 @@ export async function POST(req: NextRequest) {
       const unreadableFiles = (extractReport?.files ?? [])
         .filter((f) => f.status === "perlu_ocr")
         .map((f) => f.name);
+      const failedFiles = (extractReport?.files ?? [])
+        .filter((f) => f.status === "gagal")
+        .map((f) => f.name);
 
       const gaps = computeGaps({
         expected: resolved.expected,
@@ -68,6 +71,7 @@ export async function POST(req: NextRequest) {
         cutoffDateISO: txn.cutoffDateISO,
         notApplicableIds,
         unreadableFiles,
+        failedFiles,
       });
       await writeBlobText(ddKeys.gaps(sessionId, entityId), JSON.stringify(gaps));
       return NextResponse.json({ gaps });
