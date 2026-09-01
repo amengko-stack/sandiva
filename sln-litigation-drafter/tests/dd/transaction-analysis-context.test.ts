@@ -5,10 +5,14 @@ import * as analysisState from "@/lib/dd/analysis-state";
 type TransactionDigest = (
   subsections: string[],
   docsText: string,
+  unreadableDocs: string[],
   failedDocs: string[]
 ) => string;
 
-function captureTransactionRequest(failedDocs?: string[]) {
+function captureTransactionRequest(args: {
+  unreadableDocs?: string[];
+  failedDocs?: string[];
+} = {}) {
   let request: { system: string; messages: { content: string }[] } | undefined;
   const client = {
     messages: {
@@ -40,7 +44,8 @@ function captureTransactionRequest(failedDocs?: string[]) {
       transactionType: "akuisisi_saham",
       regime: { layers: ["uupt"], capitalMarkets: false, parentTbkName: null },
       subsections: ["Persetujuan Transaksi"],
-      failedDocs: failedDocs ?? [],
+      unreadableDocs: args.unreadableDocs ?? [],
+      failedDocs: args.failedDocs ?? [],
     }
   ).then(() => {
     if (!request) throw new Error("Transaction request was not captured");
@@ -48,9 +53,24 @@ function captureTransactionRequest(failedDocs?: string[]) {
   });
 }
 
-describe("transaction chapters know which supplied documents failed extraction", () => {
+describe("transaction chapters know which supplied documents could not be read", () => {
+  it("names OCR-required documents and forbids treating those documents as absent", async () => {
+    const request = await captureTransactionRequest({
+      unreadableDocs: ["Akta Pendirian Scan.pdf"],
+    });
+    const prompt = request.messages[0].content;
+
+    expect(prompt).toContain("Akta Pendirian Scan.pdf");
+    expect(prompt).toContain("DOKUMEN ITU ADA");
+    expect(prompt).toContain("memerlukan OCR");
+    expect(prompt).toContain("verifikasi manual");
+    expect(prompt).toContain("JANGAN menyatakan dokumen tersebut tidak diserahkan");
+  });
+
   it("names failed documents and forbids treating those documents as absent", async () => {
-    const request = await captureTransactionRequest(["Akta Perubahan.pdf", "Scan_001.pdf"]);
+    const request = await captureTransactionRequest({
+      failedDocs: ["Akta Perubahan.pdf", "Scan_001.pdf"],
+    });
     const prompt = request.messages[0].content;
 
     expect(prompt).toContain("Akta Perubahan.pdf");
@@ -61,8 +81,31 @@ describe("transaction chapters know which supplied documents failed extraction",
     expect(prompt).toContain("[PERLU VERIFIKASI]");
   });
 
+  it("keeps OCR-required and failed-extraction documents operationally distinct", async () => {
+    const request = await captureTransactionRequest({
+      unreadableDocs: ["Akta Pendirian Scan.pdf"],
+      failedDocs: ["Akta Perubahan.pdf"],
+    });
+    const prompt = request.messages[0].content;
+
+    expect(prompt).toContain("Akta Pendirian Scan.pdf");
+    expect(prompt).toContain("memerlukan OCR");
+    expect(prompt).toContain("Akta Perubahan.pdf");
+    expect(prompt).toContain("gagal diekstrak");
+  });
+
+  it("does not use a generic OCR filename as proof that a specific document is absent", async () => {
+    const request = await captureTransactionRequest({ unreadableDocs: ["Scan_001.pdf"] });
+    const prompt = request.messages[0].content;
+
+    expect(prompt).toContain("Scan_001.pdf");
+    expect(prompt).toContain("nama file generik");
+    expect(prompt).toContain("jangan menebak jenis atau isinya");
+    expect(prompt).toContain("jangan gunakan ketidakjelasan tersebut sebagai bukti");
+  });
+
   it("keeps genuine-absence analysis available and adds no raw extraction error", async () => {
-    const request = await captureTransactionRequest(["Akta Perubahan.pdf"]);
+    const request = await captureTransactionRequest({ failedDocs: ["Akta Perubahan.pdf"] });
     const prompt = request.messages[0].content;
 
     expect(request.system).toContain("Nyatakan secara tegas apa yang BELUM ada");
@@ -70,10 +113,10 @@ describe("transaction chapters know which supplied documents failed extraction",
     expect(prompt).not.toContain("GraphError tenant=secret-internal-detail");
   });
 
-  it("preserves the prior prompt when there are no failed documents", async () => {
+  it("preserves the prior prompt when no supplied document is unreadable", async () => {
     const [omitted, empty] = await Promise.all([
       captureTransactionRequest(),
-      captureTransactionRequest([]),
+      captureTransactionRequest({ unreadableDocs: [], failedDocs: [] }),
     ]);
 
     expect(empty.messages[0].content).toBe(omitted.messages[0].content);
@@ -82,7 +125,7 @@ describe("transaction chapters know which supplied documents failed extraction",
 });
 
 describe("transaction analysis cache context", () => {
-  it("changes when failed documents are added, removed, or renamed", () => {
+  it("changes for each supplied-unreadable category and filename", () => {
     const transactionSeenDigest = (
       analysisState as typeof analysisState & { transactionSeenDigest?: TransactionDigest }
     ).transactionSeenDigest;
@@ -90,17 +133,25 @@ describe("transaction analysis cache context", () => {
     expect(typeof transactionSeenDigest).toBe("function");
     if (!transactionSeenDigest) return;
 
-    const none = transactionSeenDigest(["Sub A", "Sub B"], "isi readable", []);
-    const aktaA = transactionSeenDigest(["Sub A", "Sub B"], "isi readable", ["Akta A.pdf"]);
-    const aktaB = transactionSeenDigest(["Sub A", "Sub B"], "isi readable", ["Akta B.pdf"]);
+    const none = transactionSeenDigest(["Sub A", "Sub B"], "isi readable", [], []);
+    const scanA = transactionSeenDigest(
+      ["Sub A", "Sub B"], "isi readable", ["Scan A.pdf"], []
+    );
+    const scanB = transactionSeenDigest(
+      ["Sub A", "Sub B"], "isi readable", ["Scan B.pdf"], []
+    );
+    const failedA = transactionSeenDigest(
+      ["Sub A", "Sub B"], "isi readable", [], ["Failed A.pdf"]
+    );
+    const both = transactionSeenDigest(
+      ["Sub A", "Sub B"], "isi readable", ["Scan A.pdf"], ["Failed A.pdf"]
+    );
 
     expect(none).toBe("680ce8d209264bac89bde874148d2368");
-    expect(aktaA).not.toBe(none);
-    expect(aktaB).not.toBe(none);
-    expect(aktaA).not.toBe(aktaB);
+    expect(new Set([none, scanA, scanB, failedA, both])).toHaveLength(5);
   });
 
-  it("preserves the historical digest when the failed list is empty", () => {
+  it("preserves the historical digest when both unreadable lists are empty", () => {
     const transactionSeenDigest = (
       analysisState as typeof analysisState & { transactionSeenDigest?: TransactionDigest }
     ).transactionSeenDigest;
@@ -108,7 +159,7 @@ describe("transaction analysis cache context", () => {
     expect(typeof transactionSeenDigest).toBe("function");
     if (!transactionSeenDigest) return;
 
-    expect(transactionSeenDigest(["Sub A", "Sub B"], "isi readable", []))
+    expect(transactionSeenDigest(["Sub A", "Sub B"], "isi readable", [], []))
       .toBe("680ce8d209264bac89bde874148d2368");
   });
 });

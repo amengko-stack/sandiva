@@ -414,7 +414,7 @@ export async function POST(req: NextRequest) {
           for (const t of titles) txnSubs.push(t);
         }
         if (txnSubs.length > 0) {
-          const txnDigest = transactionSeenDigest(txnSubs, combined, failedDocs);
+          const txnDigest = transactionSeenDigest(txnSubs, combined, unreadableDocs, failedDocs);
           const priorTxn = priorAnalyses.filter((a) => a.aspectId === "transaksi");
           // Reuse only a COMPLETE previous result. A truncated response once left six
           // of seventeen sub-sections unanalysed, and reusing on "some exist" would
@@ -444,6 +444,7 @@ export async function POST(req: NextRequest) {
                     entityId,
                     entityName: entity.name,
                     docsText: combined,
+                    unreadableDocs,
                     failedDocs,
                     transactionType: txn.type,
                     regime,
