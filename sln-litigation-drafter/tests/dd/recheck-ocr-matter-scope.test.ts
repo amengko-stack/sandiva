@@ -21,7 +21,7 @@ vi.mock("@/lib/document-normalizer", () => ({
     getFileLastModified: mocks.getFileLastModified,
     writeExtractionCache: mocks.writeExtractionCache,
     charCapFor: () => 30_000,
-    formatDocBlock: () => "\nDOCUMENT\n",
+    formatDocBlock: (_metadata: unknown, content: string) => `\n${content}\n`,
   },
 }));
 
@@ -58,11 +58,13 @@ function loadPersistedTransaction(roots: string[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.extractWithTier.mockResolvedValue({
-    content: "isi dokumen",
-    extractionMethod: "pdf_text",
-    needsOcr: false,
-  });
+  mocks.extractWithTier.mockImplementation(
+    async (_path: string, _name: string, _category: string, representation?: string) => ({
+      content: representation === "source" ? "KALIMAT SUMBER UNIK C2" : "KALIMAT PARAFRASE MODEL C2",
+      extractionMethod: representation === "source" ? "pdf_text" : "structured",
+      needsOcr: false,
+    })
+  );
   mocks.getFileLastModified.mockResolvedValue("2026-08-31T00:00:00.000Z");
 });
 
@@ -75,6 +77,20 @@ describe("DD OCR recheck matter scope", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.extractWithTier).toHaveBeenCalledOnce();
+  });
+
+  it("persists source-derived text when an OCR replacement is rechecked", async () => {
+    loadPersistedTransaction([ALPHA]);
+
+    const response = await POST(request([{ name: "Akta.pdf", path: `${ALPHA}/Korporasi/Akta.pdf` }]));
+    await response.text();
+
+    const extractedWrite = mocks.writeBlobText.mock.calls.find(
+      ([key]) => key === ddKeys.extracted(SESSION_ID, ENTITY_ID)
+    );
+    expect(extractedWrite?.[1]).toContain("KALIMAT SUMBER UNIK C2");
+    expect(extractedWrite?.[1]).not.toContain("KALIMAT PARAFRASE MODEL C2");
+    expect(mocks.writeExtractionCache.mock.calls[0]?.[1]?.metadata.representation).toBe("source");
   });
 
   it("rejects a path from another matter before document access", async () => {

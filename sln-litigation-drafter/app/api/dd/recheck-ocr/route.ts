@@ -131,7 +131,8 @@ export async function POST(req: NextRequest) {
           const { content, extractionMethod, needsOcr } = await documentNormalizer.extractWithTier(
             file.path,
             targetName,
-            category
+            category,
+            "source",
           );
 
           if (needsOcr) {
@@ -150,6 +151,7 @@ export async function POST(req: NextRequest) {
             sharePointPath: file.path,
             fileModifiedAt: currentModifiedAt ?? "",
             charCap: documentNormalizer.charCapFor(category),
+            representation: "source",
           };
           docBlocks[i] = documentNormalizer.formatDocBlock(metadata, content);
           await documentNormalizer.writeExtractionCache(file.path, { content, metadata });
