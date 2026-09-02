@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type Anthropic from "@anthropic-ai/sdk";
+import { formatDocBlock } from "@/lib/extract-format";
 import { verifyFindings } from "@/lib/dd/verify";
 import type { DDFinding } from "@/types/dd";
 
@@ -19,6 +20,19 @@ function finding(over: Partial<DDFinding> = {}): DDFinding {
     status: "open",
     ...over,
   };
+}
+
+function source(fileName: string, content = "kutipan verbatim"): string {
+  return formatDocBlock({
+    filename: fileName,
+    category: "KRITIS",
+    extractionMethod: "synthetic-test",
+    characterCount: content.length,
+    extractedAt: "2026-09-01T00:00:00.000Z",
+    sharePointPath: `/Matter/${fileName}`,
+    fileModifiedAt: "2026-09-01T00:00:00.000Z",
+    representation: "source",
+  }, content);
 }
 
 function fakeClient(payloadFn: (args: any) => object): Anthropic {
@@ -50,23 +64,23 @@ describe("verifyFindings", () => {
     expect(out).toEqual(findings);
   });
 
-  it("drops refuted targets, verifies upheld targets, and leaves non-targets untouched", async () => {
-    const a = finding({ id: "A", severity: "kritis" });
-    const b = finding({ id: "B", severity: "kritis" });
+  it("retains refuted targets with a disposition, verifies upheld targets, and leaves non-targets untouched", async () => {
+    const a = finding({ id: "A", severity: "kritis", sourceFile: "A.pdf" });
+    const b = finding({ id: "B", severity: "kritis", sourceFile: "B.pdf" });
     const c = finding({ id: "C", severity: "minor" });
     const client = fakeClient(() => ({
       verdicts: [
-        { id: "A", upheld: true },
-        { id: "B", upheld: false },
+        { id: "A", upheld: true, reason: "supported" },
+        { id: "B", upheld: false, reason: "refuted" },
       ],
     }));
 
-    const out = await verifyFindings(client, [a, b, c], "konteks dokumen");
+    const out = await verifyFindings(client, [a, b, c], source("A.pdf") + source("B.pdf"));
 
-    expect(out).toHaveLength(2);
+    expect(out).toHaveLength(3);
     const keptA = out.find((f) => f.id === "A");
     expect(keptA?.verified).toBe(true);
-    expect(out.find((f) => f.id === "B")).toBeUndefined();
+    expect(out.find((f) => f.id === "B")?.verification).toEqual({ status: "refuted", reason: "refuted" });
     const untouchedC = out.find((f) => f.id === "C");
     expect(untouchedC).toEqual(c);
   });
@@ -75,30 +89,31 @@ describe("verifyFindings", () => {
     const s = finding({ id: "S", severity: "material", currencyStatus: "superseded" });
     const client = fakeClient(() => ({ verdicts: [{ id: "S", upheld: true }] }));
 
-    const out = await verifyFindings(client, [s], "konteks dokumen");
+    const out = await verifyFindings(client, [s], source("izin.pdf"));
 
     expect(out).toHaveLength(1);
     expect(out[0].verified).toBe(true);
   });
 
-  it("passes a target through UNVERIFIED (never dropped) when it gets no verdict back", async () => {
+  it("retains a target with an explicit failure disposition when it gets no verdict back", async () => {
     // A partial verdict list is not a batch failure — the batch succeeded, one
     // finding just has no verdict. That finding must survive, unverified, rather
     // than aborting the run (old behavior) or being dropped.
-    const a = finding({ id: "A", severity: "kritis" });
-    const b = finding({ id: "B", severity: "kritis" });
+    const a = finding({ id: "A", severity: "kritis", sourceFile: "A.pdf" });
+    const b = finding({ id: "B", severity: "kritis", sourceFile: "B.pdf" });
     const client = fakeClient(() => ({ verdicts: [{ id: "A", upheld: true }] }));
 
-    const out = await verifyFindings(client, [a, b], "konteks dokumen");
+    const out = await verifyFindings(client, [a, b], source("A.pdf") + source("B.pdf"));
 
     expect(out).toHaveLength(2);
     expect(out.find((f) => f.id === "A")?.verified).toBe(true);
     const keptB = out.find((f) => f.id === "B");
     expect(keptB).toBeDefined();
     expect(keptB?.verified).toBe(false);
+    expect(keptB?.verification?.status).toBe("verification_failed");
   });
 
-  it("soft-fails a non-JSON batch: its findings pass through unverified instead of throwing", async () => {
+  it("soft-fails a non-JSON response with an explicit failure disposition instead of throwing", async () => {
     const a = finding({ id: "A", severity: "kritis" });
     const client = {
       messages: {
@@ -109,17 +124,18 @@ describe("verifyFindings", () => {
       },
     } as unknown as Anthropic;
 
-    const out = await verifyFindings(client, [a], "konteks dokumen");
+    const out = await verifyFindings(client, [a], source("izin.pdf"));
 
     expect(out).toHaveLength(1);
     expect(out[0].id).toBe("A");
     expect(out[0].verified).toBe(false);
+    expect(out[0].verification?.status).toBe("verification_failed");
   });
 
-  it("batches targets in groups of 10 and verifies survivors across every batch", async () => {
+  it("isolates each target in its own verifier call across concurrency waves", async () => {
     const findings: DDFinding[] = [];
     for (let i = 0; i < 12; i++) {
-      findings.push(finding({ id: `f${i}`, severity: "kritis" }));
+      findings.push(finding({ id: `f${i}`, severity: "kritis", sourceFile: `f${i}.pdf` }));
     }
     let callCount = 0;
     const client = fakeClient((args) => {
@@ -129,9 +145,10 @@ describe("verifyFindings", () => {
       return { verdicts: ids.map((id) => ({ id, upheld: true })) };
     });
 
-    const out = await verifyFindings(client, findings, "konteks dokumen");
+    const context = findings.map((item) => source(item.sourceFile!)).join("");
+    const out = await verifyFindings(client, findings, context);
 
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(12);
     expect(out).toHaveLength(12);
     expect(out.every((f) => f.verified)).toBe(true);
   });
@@ -176,8 +193,9 @@ describe("does not re-verify what already survived", () => {
         },
       },
     } as unknown as Anthropic;
-    const out = await verifyFindings(client, [f({ verified: false })], "konteks");
+    const out = await verifyFindings(client, [f({ verified: false })], source("nib.pdf", "a"));
     expect(called).toBe(1);
-    expect(out).toEqual([]); // refuted, so dropped
+    expect(out).toHaveLength(1);
+    expect(out[0].verification?.status).toBe("refuted");
   });
 });

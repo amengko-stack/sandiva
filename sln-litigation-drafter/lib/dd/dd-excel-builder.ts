@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { aspectLabel } from "@/config/ddAspects";
 import { transactionLabel } from "@/config/ddTransactionTypes";
 import { sectionForAspect } from "@/config/ddReportSections";
+import { hasEstablishedVerification } from "@/lib/dd/findings-render";
 import type { DDConsolidated, DDEntityResult, DDGapItem, DDTransaction } from "@/types/dd";
 
 const REPORT_SECTION_LABEL_CROSS_ENTITY = "— (temuan konsolidasi/lintas entitas)";
@@ -97,8 +98,8 @@ export async function buildDdWorkbook(args: {
   const temuan = wb.addWorksheet("Temuan");
   headerRow(temuan, ["Entitas", "Aspek", "Bagian Laporan", "Dimensi", "Severitas", "Status Review", "Temuan", "Dampak", "Konsekuensi Hukum", "Tindak Lanjut", "Sumber", "Kutipan", "Keberlakuan"]);
   const allFindings = [
-    ...results.flatMap((r) => r.findings.map((f) => ({ f, entityName: r.entity.name }))),
-    ...(consolidated?.crossEntityFindings ?? []).map((f) => ({ f, entityName: "KONSOLIDASI" })),
+    ...results.flatMap((r) => r.findings.filter(hasEstablishedVerification).map((f) => ({ f, entityName: r.entity.name }))),
+    ...(consolidated?.crossEntityFindings ?? []).filter(hasEstablishedVerification).map((f) => ({ f, entityName: "KONSOLIDASI" })),
   ];
   for (const { f, entityName } of allFindings) {
     temuan.addRow([

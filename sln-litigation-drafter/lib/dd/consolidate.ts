@@ -3,6 +3,7 @@ import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
 import { DD_ASPECTS } from "@/config/ddAspects";
 import { consolidateSystem } from "@/lib/dd/prompts";
+import { hasEstablishedVerification } from "@/lib/dd/findings-render";
 import type {
   DDAspectRollup, DDClassifiedDoc, DDConsolidated, DDFinding, DDGapItem, DDTransaction,
 } from "@/types/dd";
@@ -50,7 +51,7 @@ export async function consolidate(
         .map((c) => `- ${c.docLabel} (${c.aspectId}): ${c.summary} [pihak: ${c.parties.join(", ")}]`)
         .join("\n");
       const findings = (args.findingsByEntity[e.id] ?? [])
-        .filter((f) => f.severity !== "minor")
+        .filter((f) => f.severity !== "minor" && hasEstablishedVerification(f))
         .map((f) => `- [${f.severity}] ${f.problem}`)
         .join("\n");
       return `=== ${e.name} (${e.id}) ===\nDOKUMEN:\n${docs}\nTEMUAN:\n${findings}`;
