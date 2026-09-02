@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   EMPTY_ANALYSIS_STATE, aspectDocsDigest, canReuseAspect, parseAnalysisState, promptDigest,
-  seenDigest,
+  modelFingerprint, seenDigest,
 } from "@/lib/dd/analysis-state";
 import type { DDAnalysisState } from "@/lib/dd/analysis-state";
 import type { DDClassifiedDoc } from "@/types/dd";
@@ -74,28 +74,29 @@ describe("aspectDocsDigest", () => {
 describe("canReuseAspect", () => {
   const digest = aspectDocsDigest("pendirian_ad", CLASSIFIED, TEXT);
   const PROMPT = promptDigest("instruksi versi A");
+  const MODEL = modelFingerprint("claude-sonnet-4-6");
   const prior: DDAnalysisState = {
     aspects: {
-      pendirian_ad: { docsDigest: digest, promptDigest: PROMPT, analysedAtISO: "2026-08-01T00:00:00.000Z" },
+      pendirian_ad: { docsDigest: digest, promptDigest: PROMPT, modelFingerprint: MODEL, analysedAtISO: "2026-08-01T00:00:00.000Z" },
     },
   };
 
   it("reuses an aspect whose documents and findings are both intact", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: PROMPT, prior, priorFindingCount: 8 })).toBe(true);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: PROMPT, modelFingerprint: MODEL, prior, priorFindingCount: 8 })).toBe(true);
   });
 
   it("re-analyses when the documents have changed", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: "lain", promptDigest: PROMPT, prior, priorFindingCount: 8 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: "lain", promptDigest: PROMPT, modelFingerprint: MODEL, prior, priorFindingCount: 8 })).toBe(false);
   });
 
   it("re-analyses an aspect that was never analysed before", () => {
-    expect(canReuseAspect({ aspectId: "perizinan", docsDigest: digest, promptDigest: PROMPT, prior, priorFindingCount: 8 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "perizinan", docsDigest: digest, promptDigest: PROMPT, modelFingerprint: MODEL, prior, priorFindingCount: 8 })).toBe(false);
   });
 
   // Skipping an aspect with nothing to carry would drop it from the report
   // silently, which is worse than paying for the analysis again.
   it("re-analyses when there are no prior findings to carry", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: PROMPT, prior, priorFindingCount: 0 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: PROMPT, modelFingerprint: MODEL, prior, priorFindingCount: 0 })).toBe(false);
   });
 });
 
@@ -125,18 +126,19 @@ describe("a change of instructions invalidates the analysis", () => {
   const digest = aspectDocsDigest("pendirian_ad", CLASSIFIED, TEXT);
   const before = promptDigest("instruksi versi A");
   const after = promptDigest("instruksi versi A, ditambah koreksi Pasal 142");
+  const model = modelFingerprint("claude-sonnet-4-6");
   const prior: DDAnalysisState = {
     aspects: {
-      pendirian_ad: { docsDigest: digest, promptDigest: before, analysedAtISO: "2026-08-01T00:00:00.000Z" },
+      pendirian_ad: { docsDigest: digest, promptDigest: before, modelFingerprint: model, analysedAtISO: "2026-08-01T00:00:00.000Z" },
     },
   };
 
   it("re-analyses when the prompt changed, even though the documents did not", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: after, prior, priorFindingCount: 8 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: after, modelFingerprint: model, prior, priorFindingCount: 8 })).toBe(false);
   });
 
   it("still reuses when neither changed", () => {
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: before, prior, priorFindingCount: 8 })).toBe(true);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: before, modelFingerprint: model, prior, priorFindingCount: 8 })).toBe(true);
   });
 
   // A hand-maintained version number is forgotten exactly when it matters: the run
@@ -152,7 +154,7 @@ describe("a change of instructions invalidates the analysis", () => {
     const old: DDAnalysisState = {
       aspects: { pendirian_ad: { docsDigest: digest, analysedAtISO: "2026-08-01T00:00:00.000Z" } },
     };
-    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: after, prior: old, priorFindingCount: 8 })).toBe(false);
+    expect(canReuseAspect({ aspectId: "pendirian_ad", docsDigest: digest, promptDigest: after, modelFingerprint: model, prior: old, priorFindingCount: 8 })).toBe(false);
   });
 });
 

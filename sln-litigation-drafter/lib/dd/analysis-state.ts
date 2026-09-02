@@ -40,19 +40,70 @@ export interface DDAnalysisState {
    * Optional so a state written before this field simply re-analyses once, which is
    * the safe direction.
    */
-  aspects: Record<string, { docsDigest: string; promptDigest?: string; analysedAtISO: string }>;
+  aspects: Record<string, {
+    docsDigest: string;
+    promptDigest?: string;
+    /** Optional only so pre-H-3 state parses and then fails the reuse check safely. */
+    modelFingerprint?: string;
+    analysedAtISO: string;
+  }>;
+}
+
+export interface DDReuseIdentity {
+  docsDigest: string;
+  promptDigest: string;
+  modelFingerprint: string;
+}
+
+export function analysisStateEntry(identity: DDReuseIdentity, analysedAtISO: string) {
+  return {
+    docsDigest: identity.docsDigest,
+    promptDigest: identity.promptDigest,
+    modelFingerprint: identity.modelFingerprint,
+    analysedAtISO,
+  };
 }
 
 /**
- * Digest of the instructions an analysis was produced under.
+ * Deterministic digest primitive for the instructions an analysis was produced under.
  *
- * The system prompt carries everything that shapes the answer — the quote rule, the
- * money rule, the analysis devices, the statutory corrections — so hashing it makes
- * any change to those invalidate the cache automatically. A hand-maintained version
+ * H-3 passes the constructed system text, document-redacted user-prompt text and
+ * material request configuration through this primitive. A hand-maintained version
  * number would be forgotten exactly when it mattered most: the run after a fix.
  */
 export function promptDigest(systemPrompt: string): string {
   return createHash("sha256").update(systemPrompt).digest("hex").slice(0, 16);
+}
+
+/** Configured model identity, kept separate so a model-only cache miss is auditable. */
+export function modelFingerprint(modelId: string): string {
+  return createHash("sha256").update(modelId).digest("hex").slice(0, 16);
+}
+
+/**
+ * Identity for one reusable analysis stage.
+ *
+ * The prompt material is produced by the same deterministic builders as the live
+ * model request, with document values represented by stable markers. Documents are
+ * therefore hashed exactly once by docsDigest while every material instruction and
+ * transaction-context or request-configuration change still invalidates promptDigest.
+ */
+export function reuseIdentity(args: {
+  docsDigest: string;
+  systemPrompt: string;
+  promptFingerprintText: string;
+  requestConfigFingerprintText: string;
+  modelId: string;
+}): DDReuseIdentity {
+  return {
+    docsDigest: args.docsDigest,
+    promptDigest: promptDigest(JSON.stringify([
+      args.systemPrompt,
+      args.promptFingerprintText,
+      args.requestConfigFingerprintText,
+    ])),
+    modelFingerprint: modelFingerprint(args.modelId),
+  };
 }
 
 export const EMPTY_ANALYSIS_STATE: DDAnalysisState = { aspects: {} };
@@ -115,26 +166,17 @@ export function seenDigest(
 }
 
 /**
- * Digest of the readable corpus and supplied-but-unreadable context shown to
- * the transaction-chapter analyzer.
- *
- * Keep the historical digest material when neither OCR-required nor failed
- * documents exist so this H-2 fix does not invalidate unaffected transaction
- * analysis. Once either filename list is present it is part of the request and
- * therefore part of the reuse key.
+ * Digest of the effective readable corpus and supplied-but-unreadable context
+ * shown to the transaction-chapter analyzer. The caller must pass the capped
+ * text returned by transactionEffectiveDocsText, never the larger source corpus.
+ * Chapter/subsection context belongs to the separately auditable prompt digest.
  */
 export function transactionSeenDigest(
-  subsections: string[],
   docsText: string,
   unreadable: string[],
   failed: string[]
 ): string {
-  const priorMaterial = `${subsections.join("|")}::${docsText}`;
-  const hasUnreadable = unreadable.length > 0 || failed.length > 0;
-  const material = hasUnreadable
-    ? `${priorMaterial}\u0000perlu_ocr:${unreadable.join("|")}\u0000gagal:${failed.join("|")}`
-    : priorMaterial;
-  return createHash("sha256").update(material).digest("hex").slice(0, 32);
+  return seenDigest(docsText, [], unreadable, failed);
 }
 
 export function aspectDocsDigest(
@@ -163,6 +205,8 @@ export function canReuseAspect(args: {
   docsDigest: string;
   /** Digest of the instructions this run would use. */
   promptDigest: string;
+  /** Fingerprint of the configured model this run would use. */
+  modelFingerprint: string;
   prior: DDAnalysisState;
   priorFindingCount: number;
 }): boolean {
@@ -172,5 +216,20 @@ export function canReuseAspect(args: {
   // Instructions changed since this was analysed, so the answer would differ. A
   // record written before promptDigest existed re-analyses once, which is safe.
   if (rec.promptDigest !== args.promptDigest) return false;
+  // Missing means the record predates H-3. It re-analyses once rather than silently
+  // interpreting today's configured model as the model that produced old output.
+  if (!args.modelFingerprint || rec.modelFingerprint !== args.modelFingerprint) return false;
   return args.priorFindingCount > 0;
+}
+
+/** Transaction chapters use the same semantic identity but do not require findings. */
+export function canReuseTransaction(args: DDReuseIdentity & {
+  prior: DDAnalysisState;
+  priorCovers: boolean;
+}): boolean {
+  const rec = args.prior.aspects.transaksi;
+  if (!rec || !args.priorCovers) return false;
+  return rec.docsDigest === args.docsDigest &&
+    rec.promptDigest === args.promptDigest &&
+    rec.modelFingerprint === args.modelFingerprint;
 }

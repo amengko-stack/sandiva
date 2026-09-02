@@ -5,15 +5,16 @@ import { splitDocBlocks } from "@/lib/extract-format";
 import { ddKeys, isValidEntityId } from "@/lib/dd/blob-keys";
 import { gapToFinding } from "@/lib/dd/gap-engine";
 import {
-  analyzeAspect, analyzeTransactionChapters, promoteDealTriggeredCells, selectAspectDocs,
+  analyzeAspect, analyzeTransactionChapters, aspectModelInput, promoteDealTriggeredCells,
+  selectAspectDocs, transactionEffectiveDocsText, transactionModelInput,
 } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
 import {
-  canReuseAspect, parseAnalysisState, promptDigest, seenDigest, transactionSeenDigest,
+  analysisStateEntry, canReuseAspect, canReuseTransaction, parseAnalysisState, reuseIdentity,
+  seenDigest, transactionSeenDigest,
   type DDAnalysisState,
 } from "@/lib/dd/analysis-state";
-import { redflagSystem, transactionAnalysisSystem } from "@/lib/dd/prompts";
 import { verifyFindings } from "@/lib/dd/verify";
 import { resolveRegime } from "@/lib/dd/regime";
 import { checkQuote, isUngrounded } from "@/lib/dd/grounding";
@@ -95,13 +96,6 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       try {
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        // The instructions this run would use. Hashing the system prompts makes any
-        // change to the quote rule, the money rule, the analysis devices or the
-        // statutory corrections invalidate the cache on its own — five UUPT
-        // corrections would otherwise never have reached an existing matter, because
-        // reuse turned only on the documents and those had not changed.
-        const aspectPromptDigest = promptDigest(redflagSystem(regime, entity.name));
-        const txnPromptDigest = promptDigest(transactionAnalysisSystem(regime, entity.name));
         let findings: DDFinding[] = [];
         // Declared before persist(), which closes over it and runs before the
         // aspect loop — referencing it later would hit the temporal dead zone.
@@ -205,6 +199,23 @@ export async function POST(req: NextRequest) {
           (a) => a !== "perjanjian_penting"
         ) as DDAspectId[];
 
+        // These planned titles are model input, not presentation-only metadata. The
+        // report format, client role and transaction-implication option can all alter
+        // them, so the exact resulting titles participate in each prompt fingerprint.
+        const chapterPlan = planChapters({
+          transactionType: txn.type,
+          regime,
+          presentAspects: Array.from(new Set(classified.map((c) => c.aspectId))) as DDAspectId[],
+          format: txn.reportFormat,
+          clientRole: txn.clientRole,
+          transactionImplications: txn.reportOptions?.transactionImplications,
+        });
+        const subsectionsFor = (aspectId: DDAspectId): string[] => {
+          const ch = chapterForAspect(chapterPlan, aspectId);
+          if (!ch) return [];
+          return ch.subs.filter((sub) => !sub.findings).map((sub) => sub.title);
+        };
+
         // Build the per-aspect jobs up front (applying the same <50-char skip
         // gate as before) so we can run them in concurrent waves.
         const allJobs = aspects
@@ -219,15 +230,32 @@ export async function POST(req: NextRequest) {
                   answersChecklistItem: c.expectedDocId !== null,
                 }))
             ),
-            docsDigest: "",
           }))
           .filter((j) => j.docsText.trim().length >= 50)
-          // From what the model will actually be shown, not from the whole corpus:
-          // a change to the cap or the packing rule must invalidate the cache too.
-          .map((j) => ({
-            ...j,
-            docsDigest: seenDigest(j.docsText, j.omitted, unreadableDocs, failedDocs),
-          }));
+          .map((j) => {
+            const subsections = subsectionsFor(j.aspectId);
+            const modelInput = aspectModelInput({
+              entityId,
+              entityName: entity.name,
+              aspectId: j.aspectId,
+              docsText: j.docsText,
+              omittedDocs: j.omitted,
+              unreadableDocs,
+              failedDocs,
+              transactionType: txn.type,
+              regime,
+              subsections,
+            });
+            const identity = reuseIdentity({
+              // From what the model will actually be shown, not the full corpus.
+              docsDigest: seenDigest(j.docsText, j.omitted, unreadableDocs, failedDocs),
+              systemPrompt: modelInput.system,
+              promptFingerprintText: modelInput.promptFingerprintText,
+              requestConfigFingerprintText: modelInput.requestConfigFingerprintText,
+              modelId: modelInput.model,
+            });
+            return { ...j, subsections, ...identity };
+          });
 
         // An aspect whose documents are byte-identical to the last run keeps its
         // findings exactly as they were — ids, review state, grounding verdicts and
@@ -243,7 +271,8 @@ export async function POST(req: NextRequest) {
               canReuseAspect({
                 aspectId: j.aspectId,
                 docsDigest: j.docsDigest,
-                promptDigest: aspectPromptDigest,
+                promptDigest: j.promptDigest,
+                modelFingerprint: j.modelFingerprint,
                 prior: priorState,
                 priorFindingCount: priorCount(j.aspectId),
               })
@@ -275,28 +304,6 @@ export async function POST(req: NextRequest) {
             label: "Tidak ada aspek yang perlu dianalisis ulang; seluruh temuan dipertahankan.",
           });
         }
-
-        // The chapter plan tells each aspect which sub-sections it must fill.
-        // Without this the analysis chapters render as hollow scaffolding.
-        // The format and client role MUST match what the builder will use: the
-        // sub-section titles differ per format, and analyses are placed by title.
-        // Planning with the default here while the builder plans with the chosen
-        // format means nothing matches, and every sub-section falls back to
-        // "belum dapat dianalisis" — the empty-chapters defect, reintroduced for
-        // any non-default format.
-        const chapterPlan = planChapters({
-          transactionType: txn.type,
-          regime,
-          presentAspects: Array.from(new Set(classified.map((c) => c.aspectId))) as DDAspectId[],
-          format: txn.reportFormat,
-          clientRole: txn.clientRole,
-          transactionImplications: txn.reportOptions?.transactionImplications,
-        });
-        const subsectionsFor = (aspectId: DDAspectId): string[] => {
-          const ch = chapterForAspect(chapterPlan, aspectId);
-          if (!ch) return [];
-          return ch.subs.filter((sub) => !sub.findings).map((sub) => sub.title);
-        };
 
         // An aspect the previous run covered but this one does not examine at all —
         // its documents are gone from the classification — is not "unrefreshed", it
@@ -337,7 +344,7 @@ export async function POST(req: NextRequest) {
               failedDocs,
               transactionType: txn.type,
               regime,
-              subsections: subsectionsFor(aspectJobs[i].aspectId),
+              subsections: aspectJobs[i].subsections,
             });
             // Verify each quote against the document it names, before the finding
             // can reach the report as fact. Costs nothing: the text is already here.
@@ -350,11 +357,10 @@ export async function POST(req: NextRequest) {
             // Only now may this aspect's previous findings be replaced — and only
             // now is it recorded as analysed against these documents.
             unrefreshedAspects.delete(aspectJobs[i].aspectId);
-            nextState.aspects[aspectJobs[i].aspectId] = {
-              docsDigest: aspectJobs[i].docsDigest,
-              promptDigest: aspectPromptDigest,
-              analysedAtISO: new Date().toISOString(),
-            };
+            nextState.aspects[aspectJobs[i].aspectId] = analysisStateEntry(
+              aspectJobs[i],
+              new Date().toISOString()
+            );
           } catch (e) {
             // Per-aspect soft-fail: one malformed aspect response must not abort
             // the whole run (mirrors extract/recheck-ocr per-item catch).
@@ -414,7 +420,31 @@ export async function POST(req: NextRequest) {
           for (const t of titles) txnSubs.push(t);
         }
         if (txnSubs.length > 0) {
-          const txnDigest = transactionSeenDigest(txnSubs, combined, unreadableDocs, failedDocs);
+          // One transaction state covers every chapter-group call. Build the same
+          // deterministic inputs those calls use, then aggregate their exact prompt
+          // structure in group order. The document digest receives only the capped
+          // text the model sees; changing an unseen tail therefore does not churn it.
+          const txnInputs = txnGroups.map((subsections) => transactionModelInput({
+            entityId,
+            entityName: entity.name,
+            docsText: combined,
+            unreadableDocs,
+            failedDocs,
+            transactionType: txn.type,
+            regime,
+            subsections,
+          }));
+          const txnIdentity = reuseIdentity({
+            docsDigest: transactionSeenDigest(
+              transactionEffectiveDocsText(combined),
+              unreadableDocs,
+              failedDocs
+            ),
+            systemPrompt: txnInputs[0].system,
+            promptFingerprintText: JSON.stringify(txnInputs.map((input) => input.promptFingerprintText)),
+            requestConfigFingerprintText: txnInputs[0].requestConfigFingerprintText,
+            modelId: txnInputs[0].model,
+          });
           const priorTxn = priorAnalyses.filter((a) => a.aspectId === "transaksi");
           // Reuse only a COMPLETE previous result. A truncated response once left six
           // of seventeen sub-sections unanalysed, and reusing on "some exist" would
@@ -423,12 +453,11 @@ export async function POST(req: NextRequest) {
           // report would print "[BELUM DIANALISIS]" for the rest of the matter.
           const priorTitles = new Set(priorTxn.map((a) => a.subsectionTitle));
           const priorCovers = txnSubs.every((t) => priorTitles.has(t));
-          const reuseTxn =
-            !force &&
-            priorState.aspects[TXN_KEY] !== undefined &&
-            priorState.aspects[TXN_KEY].docsDigest === txnDigest &&
-            priorState.aspects[TXN_KEY].promptDigest === txnPromptDigest &&
-            priorCovers;
+          const reuseTxn = !force && canReuseTransaction({
+            ...txnIdentity,
+            prior: priorState,
+            priorCovers,
+          });
           if (reuseTxn) {
             for (const a of priorTxn) aspectAnalyses.push(a);
             emit(controller, {
@@ -454,11 +483,10 @@ export async function POST(req: NextRequest) {
               );
               const txnAnalyses = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
               for (const a of txnAnalyses) aspectAnalyses.push(a);
-              nextState.aspects[TXN_KEY] = {
-                docsDigest: txnDigest,
-                promptDigest: txnPromptDigest,
-                analysedAtISO: new Date().toISOString(),
-              };
+              nextState.aspects[TXN_KEY] = analysisStateEntry(
+                txnIdentity,
+                new Date().toISOString()
+              );
               const missing = txnSubs.length - txnAnalyses.length;
               if (missing > 0) {
                 emit(controller, {

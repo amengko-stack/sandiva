@@ -29,6 +29,20 @@ import type {
  * answer a checklist item now go in first, and size only orders what is left.
  */
 export const ASPECT_CHAR_CAP = 200_000;
+export const TRANSACTION_CHAR_CAP = 220_000;
+const ANALYSIS_MAX_TOKENS = 8000;
+const ANALYSIS_REQUEST_CONFIG_FINGERPRINT = JSON.stringify({
+  max_tokens: ANALYSIS_MAX_TOKENS,
+  messages: [{ role: "user" }],
+});
+
+const DOCS_FINGERPRINT_MARKER = "[H-3 EFFECTIVE DOCUMENT TEXT]";
+const OMITTED_FINGERPRINT_MARKER = "[H-3 OMITTED DOCUMENTS]";
+const UNREADABLE_FINGERPRINT_MARKER = "[H-3 UNREADABLE DOCUMENTS]";
+const FAILED_FINGERPRINT_MARKER = "[H-3 FAILED DOCUMENTS]";
+
+const markerIfPresent = (values: string[] | undefined, marker: string): string[] =>
+  values && values.length > 0 ? [marker] : [];
 
 /**
  * Whole documents up to the cap, plus the names of those left out.
@@ -176,6 +190,43 @@ export interface DDAspectAnalysisResult {
   analyses: DDSubsectionAnalysis[];
 }
 
+export interface DDAnalysisModelInput {
+  model: string;
+  system: string;
+  prompt: string;
+  /** Same constructed instructions/context, with document values replaced by markers. */
+  promptFingerprintText: string;
+  /** Material non-content request settings used by the live model call. */
+  requestConfigFingerprintText: string;
+  maxTokens: number;
+}
+
+type DDAspectModelArgs = {
+  entityId: string; entityName: string; aspectId: DDAspectId;
+  docsText: string; transactionType: DDTransactionType; regime: DDRegime;
+  subsections?: string[];
+  omittedDocs?: string[];
+  unreadableDocs?: string[];
+  failedDocs?: string[];
+};
+
+export function aspectModelInput(args: DDAspectModelArgs): DDAnalysisModelInput {
+  return {
+    model: MODELS.ddRedFlag,
+    system: redflagSystem(args.regime, args.entityName),
+    prompt: buildRedFlagPrompt(args),
+    promptFingerprintText: buildRedFlagPrompt({
+      ...args,
+      docsText: DOCS_FINGERPRINT_MARKER,
+      omittedDocs: markerIfPresent(args.omittedDocs, OMITTED_FINGERPRINT_MARKER),
+      unreadableDocs: markerIfPresent(args.unreadableDocs, UNREADABLE_FINGERPRINT_MARKER),
+      failedDocs: markerIfPresent(args.failedDocs, FAILED_FINGERPRINT_MARKER),
+    }),
+    requestConfigFingerprintText: ANALYSIS_REQUEST_CONFIG_FINGERPRINT,
+    maxTokens: ANALYSIS_MAX_TOKENS,
+  };
+}
+
 /** Parse the sub-section analyses. Unknown sub-section titles are dropped rather
  *  than guessed into a section they may not belong to. */
 function parseAnalyses(
@@ -282,18 +333,20 @@ export function parseRedFlagResponse(
  * A chapter is the right unit anyway. Its sub-sections share a subject, so they are
  * cheaper to answer together, and no chapter is long enough to run out of room.
  */
-export async function analyzeTransactionChapters(
-  client: Anthropic,
-  args: {
-    entityId: string; entityName: string; docsText: string;
-    transactionType: DDTransactionType; regime: DDRegime; subsections: string[];
-    /** Supplied as image-only scans; filenames only. */
-    unreadableDocs: string[];
-    /** Supplied, but automatic extraction failed; filenames only. */
-    failedDocs: string[];
-  }
-): Promise<DDSubsectionAnalysis[]> {
-  if (args.subsections.length === 0) return [];
+type DDTransactionModelArgs = {
+  entityId: string; entityName: string; docsText: string;
+  transactionType: DDTransactionType; regime: DDRegime; subsections: string[];
+  /** Supplied as image-only scans; filenames only. */
+  unreadableDocs: string[];
+  /** Supplied, but automatic extraction failed; filenames only. */
+  failedDocs: string[];
+};
+
+export function transactionEffectiveDocsText(docsText: string): string {
+  return docsText.slice(0, TRANSACTION_CHAR_CAP);
+}
+
+function buildTransactionAnalysisPrompt(args: DDTransactionModelArgs): string {
   const unreadableBlock =
     args.unreadableDocs.length > 0
       ? `\n\nDOKUMEN BERIKUT DISEDIAKAN DALAM RUANG DATA, tetapi teksnya tidak dapat dibaca secara otomatis karena memerlukan OCR: ${args.unreadableDocs.join("; ")}.\nDOKUMEN ITU ADA. JANGAN menyatakan dokumen tersebut tidak diserahkan, tidak tersedia, tidak ada, atau tidak ditemukan. Jika analisis bergantung pada isinya, nyatakan bahwa isinya belum diperiksa dan memerlukan OCR atau verifikasi manual; kesimpulan terkait tetap "[PERLU VERIFIKASI]".`
@@ -306,25 +359,50 @@ export async function analyzeTransactionChapters(
     args.unreadableDocs.length > 0 || args.failedDocs.length > 0
       ? `\nBila nama file generik, jangan menebak jenis atau isinya dan jangan gunakan ketidakjelasan tersebut sebagai bukti bahwa dokumen tertentu tidak ada. Larangan ini khusus untuk dokumen yang disebutkan sebagai telah disediakan tetapi tidak dapat dibaca; kamu tetap harus mengidentifikasi dokumen lain yang benar-benar belum tersedia berdasarkan dokumen yang dapat diperiksa.`
       : "";
-  const prompt = `PERSEROAN: ${args.entityName}
+  return `PERSEROAN: ${args.entityName}
 RENCANA TRANSAKSI: ${transactionLabel(args.transactionType)}
 
 SUB-BAGIAN YANG HARUS DIISI (gunakan judul persis seperti tertulis):
 ${args.subsections.map((t, i) => `${i + 1}. ${t}`).join("\n")}
 
 === DOKUMEN ===
-${args.docsText.slice(0, 220_000)}
+${args.docsText}
 === AKHIR DOKUMEN ===${unreadableBlock}${failedBlock}${suppliedUnreadableRule}
 
 Kembalikan HANYA JSON:
 {"analyses":[{"subsectionTitle":"judul persis","analysis":["paragraf 1","paragraf 2"],"verification":["hal yang belum dapat dipastikan"],"table":{"headers":["..."],"rows":[["..."]]}}]}
 "table" bersifat opsional; sertakan hanya bila daftar lebih terbaca daripada prosa.`;
+}
+
+export function transactionModelInput(args: DDTransactionModelArgs): DDAnalysisModelInput {
+  const effectiveArgs = { ...args, docsText: transactionEffectiveDocsText(args.docsText) };
+  return {
+    model: MODELS.ddRedFlag,
+    system: transactionAnalysisSystem(args.regime, args.entityName),
+    prompt: buildTransactionAnalysisPrompt(effectiveArgs),
+    promptFingerprintText: buildTransactionAnalysisPrompt({
+      ...effectiveArgs,
+      docsText: DOCS_FINGERPRINT_MARKER,
+      unreadableDocs: markerIfPresent(args.unreadableDocs, UNREADABLE_FINGERPRINT_MARKER),
+      failedDocs: markerIfPresent(args.failedDocs, FAILED_FINGERPRINT_MARKER),
+    }),
+    requestConfigFingerprintText: ANALYSIS_REQUEST_CONFIG_FINGERPRINT,
+    maxTokens: ANALYSIS_MAX_TOKENS,
+  };
+}
+
+export async function analyzeTransactionChapters(
+  client: Anthropic,
+  args: DDTransactionModelArgs
+): Promise<DDSubsectionAnalysis[]> {
+  if (args.subsections.length === 0) return [];
+  const input = transactionModelInput(args);
 
   const response = await client.messages.create({
-    model: MODELS.ddRedFlag,
-    max_tokens: 8000,
-    system: transactionAnalysisSystem(args.regime, args.entityName),
-    messages: [{ role: "user", content: prompt }],
+    model: input.model,
+    max_tokens: input.maxTokens,
+    system: input.system,
+    messages: [{ role: "user", content: input.prompt }],
   });
   const raw = response.content.find((b) => b.type === "text")?.text ?? "";
   const match = raw.match(/\{[\s\S]*\}/);
@@ -363,25 +441,16 @@ Kembalikan HANYA JSON:
 
 export async function analyzeAspect(
   client: Anthropic,
-  args: {
-    entityId: string; entityName: string; aspectId: DDAspectId;
-    docsText: string; transactionType: DDTransactionType; regime: DDRegime;
-    subsections?: string[];
-    /** In the data room for this aspect but not shown to the model. */
-    omittedDocs?: string[];
-    /** Supplied as image-only scans, so no text of them exists to show. */
-    unreadableDocs?: string[];
-    /** Supplied, but automatic extraction failed. */
-    failedDocs?: string[];
-  }
+  args: DDAspectModelArgs
 ): Promise<DDAspectAnalysisResult> {
+  const input = aspectModelInput(args);
   const response = await client.messages.create({
-    model: MODELS.ddRedFlag,
+    model: input.model,
     // Higher than before: the same call now returns per-sub-section analysis
     // alongside the findings, which is most of the report body.
-    max_tokens: 8000,
-    system: redflagSystem(args.regime, args.entityName),
-    messages: [{ role: "user", content: buildRedFlagPrompt(args) }],
+    max_tokens: input.maxTokens,
+    system: input.system,
+    messages: [{ role: "user", content: input.prompt }],
   });
   const raw = response.content.find((b) => b.type === "text")?.text ?? "";
   return parseRedFlagResponse(raw, response.stop_reason, args);
