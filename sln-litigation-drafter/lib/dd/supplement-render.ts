@@ -171,13 +171,14 @@ export function renderSupplementSections(
   if (diff.findingsNoLongerRaised.length > 0) {
     accounted.push({
       kind: "para",
-      // Stated as a fact about the examination, not as a conclusion about the issue.
-      // Only the lawyer can conclude that an earlier finding no longer stands.
+      // This covers both an absent finding and one retained internally with a
+      // non-established verifier disposition. Only the lawyer can conclude that
+      // the underlying issue has been cured or otherwise no longer stands.
       text:
-        `Temuan berikut diangkat dalam Laporan Sebelumnya namun TIDAK dihasilkan oleh pemeriksaan atas ` +
-        `dokumen sebagaimana tersedia pada Tanggal Akhir Uji Tuntas Laporan Tambahan ini. Hal ini BUKAN ` +
-        `pernyataan bahwa temuan tersebut telah teratasi; penilaian atas hal itu memerlukan telaah advokat ` +
-        `penanggung jawab:`,
+        `Temuan berikut diangkat dalam Laporan Sebelumnya namun tidak lagi diangkat atau tidak lagi ` +
+        `diperlakukan sebagai temuan yang terverifikasi dalam hasil pemeriksaan atas dokumen sebagaimana ` +
+        `tersedia pada Tanggal Akhir Uji Tuntas Laporan Tambahan ini. Hal ini BUKAN pernyataan bahwa ` +
+        `temuan tersebut telah teratasi; penilaian atas hal itu memerlukan telaah advokat penanggung jawab:`,
     });
     accounted.push({
       kind: "list",

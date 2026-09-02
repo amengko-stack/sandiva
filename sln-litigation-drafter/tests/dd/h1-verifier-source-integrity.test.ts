@@ -248,6 +248,114 @@ describe("H-1 adversarial verifier source integrity", () => {
     });
   });
 
+  it("migrates a legacy verified finding through the exact cited source into a supported disposition", async () => {
+    const prompts: string[] = [];
+    const client = fakeClient(
+      () => ({ id: "LEGACY", upheld: true, reason: "The exact cited source supports the legacy finding." }),
+      prompts,
+    );
+    const combined =
+      sourceBlock("Document A.pdf", "LEGACY_EXACT_SOURCE_MARKER") +
+      sourceBlock("Document B.pdf", "UNRELATED_LEGACY_MARKER");
+
+    const [out] = await verifyFindings(
+      client,
+      [finding({ id: "LEGACY", verified: true, verification: undefined })],
+      combined,
+    );
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Filename: Document A.pdf");
+    expect(prompts[0]).toContain("LEGACY_EXACT_SOURCE_MARKER");
+    expect(prompts[0]).not.toContain("UNRELATED_LEGACY_MARKER");
+    expect(out.verified).toBe(true);
+    expect(out.verification).toEqual({
+      status: "supported",
+      reason: "The exact cited source supports the legacy finding.",
+    });
+  });
+
+  it("does not call the verifier again for an existing supported disposition", async () => {
+    let calls = 0;
+    const client = {
+      messages: {
+        create: async () => {
+          calls++;
+          throw new Error("A structured supported disposition must not be re-verified.");
+        },
+      },
+    } as unknown as Anthropic;
+    const carried = finding({
+      id: "ALREADY-SUPPORTED",
+      verified: true,
+      verification: { status: "supported", reason: "Previously supported." },
+    });
+
+    const [out] = await verifyFindings(
+      client,
+      [carried],
+      sourceBlock("Document A.pdf", "SOURCE_PRESENT"),
+    );
+
+    expect(calls).toBe(0);
+    expect(out).toBe(carried);
+  });
+
+  it.each(["refuted", "source_unresolved", "verification_failed"] as const)(
+    "does not call the verifier again for an existing %s disposition",
+    async (status) => {
+      let calls = 0;
+      const client = {
+        messages: {
+          create: async () => {
+            calls++;
+            throw new Error("An existing structured disposition must not be re-verified.");
+          },
+        },
+      } as unknown as Anthropic;
+      const carried = finding({
+        id: `ALREADY-${status}`,
+        verified: true,
+        verification: { status, reason: "Previously resolved by H-1." },
+      });
+
+      const [out] = await verifyFindings(
+        client,
+        [carried],
+        sourceBlock("Document A.pdf", "SOURCE_PRESENT"),
+      );
+
+      expect(calls).toBe(0);
+      expect(out).toBe(carried);
+    },
+  );
+
+  it("migrates a legacy verified finding with no resolvable source to non-reportable source_unresolved", async () => {
+    let calls = 0;
+    const client = {
+      messages: {
+        create: async () => {
+          calls++;
+          throw new Error("An unresolved source must not reach the model.");
+        },
+      },
+    } as unknown as Anthropic;
+
+    const [out] = await verifyFindings(
+      client,
+      [finding({ id: "LEGACY-UNRESOLVED", verified: true, verification: undefined })],
+      sourceBlock("Document B.pdf", "UNRELATED_SOURCE"),
+    );
+
+    expect(calls).toBe(0);
+    expect(out.verified).toBe(false);
+    expect(out.verification).toEqual({
+      status: "source_unresolved",
+      reason: "Cited source document could not be resolved.",
+    });
+    expect(renderFindingsTable([out])).toEqual([]);
+  });
+
   it("preserves the C-2 invariant by excluding a model-derived summary from authoritative evidence", async () => {
     const prompts: string[] = [];
     const client = fakeClient(

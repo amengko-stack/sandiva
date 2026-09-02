@@ -46,7 +46,10 @@ export async function verifyFindings(
   findings: DDFinding[],
   contextText: string
 ): Promise<DDFinding[]> {
-  // A finding with an existing verifier disposition is not put through it again.
+  // A finding with an existing structured verifier disposition is not put through
+  // it again. The legacy `verified` boolean is not authoritative: old persisted
+  // findings can carry `verified: true` without ever having been checked against
+  // the exact source required by H-1, so those findings must be migrated here.
   //
   // Live, a second Stage 5 run reused every aspect and re-derived nothing, yet three
   // findings still disappeared: this step re-ran over the carried findings and the
@@ -59,7 +62,6 @@ export async function verifyFindings(
   // A lawyer who wants the whole examination redone has "force".
   const targets = findings.filter(
     (f) =>
-      !f.verified &&
       !f.verification &&
       !!f.sourceFile &&
       (f.severity === "kritis" || f.currencyStatus === "superseded")

@@ -154,12 +154,9 @@ describe("verifyFindings", () => {
   });
 });
 
-// A second Stage 5 run reused every aspect and re-derived nothing, yet three
-// findings still vanished: this step re-ran over the carried findings and the
-// skeptic reached a different verdict. The most serious findings — the only ones
-// verified — were therefore the least stable across runs, and one the lawyer had
-// already read could disappear on nothing but a coin landing differently.
-describe("does not re-verify what already survived", () => {
+// Structured H-1 dispositions, not the legacy boolean, record that a finding has
+// already completed cited-source verification and may safely survive a reused run.
+describe("does not re-verify an existing H-1 disposition", () => {
   const f = (over: Partial<DDFinding> = {}): DDFinding => ({
     id: "f1", entityId: "e1", aspectId: "perizinan", dimension: "risiko",
     severity: "kritis", anchor: "a", sourceFile: "nib.pdf", problem: "p",
@@ -167,7 +164,7 @@ describe("does not re-verify what already survived", () => {
     ...over,
   });
 
-  it("passes an already-verified finding straight through, with no model call", async () => {
+  it("passes an already-supported finding straight through, with no model call", async () => {
     const client = {
       messages: {
         create: async () => {
@@ -175,7 +172,10 @@ describe("does not re-verify what already survived", () => {
         },
       },
     } as unknown as Anthropic;
-    const carried = [f({ verified: true }), f({ id: "f2", verified: true, severity: "kritis" })];
+    const carried = [
+      f({ verified: true, verification: { status: "supported", reason: "supported" } }),
+      f({ id: "f2", verified: true, verification: { status: "supported", reason: "supported" } }),
+    ];
     const out = await verifyFindings(client, carried, "konteks");
     expect(out).toBe(carried);
   });
