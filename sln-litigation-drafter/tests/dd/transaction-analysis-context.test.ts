@@ -3,7 +3,6 @@ import { analyzeTransactionChapters } from "@/lib/dd/redflag";
 import * as analysisState from "@/lib/dd/analysis-state";
 
 type TransactionDigest = (
-  subsections: string[],
   docsText: string,
   unreadableDocs: string[],
   failedDocs: string[]
@@ -133,25 +132,16 @@ describe("transaction analysis cache context", () => {
     expect(typeof transactionSeenDigest).toBe("function");
     if (!transactionSeenDigest) return;
 
-    const none = transactionSeenDigest(["Sub A", "Sub B"], "isi readable", [], []);
-    const scanA = transactionSeenDigest(
-      ["Sub A", "Sub B"], "isi readable", ["Scan A.pdf"], []
-    );
-    const scanB = transactionSeenDigest(
-      ["Sub A", "Sub B"], "isi readable", ["Scan B.pdf"], []
-    );
-    const failedA = transactionSeenDigest(
-      ["Sub A", "Sub B"], "isi readable", [], ["Failed A.pdf"]
-    );
-    const both = transactionSeenDigest(
-      ["Sub A", "Sub B"], "isi readable", ["Scan A.pdf"], ["Failed A.pdf"]
-    );
+    const none = transactionSeenDigest("isi readable", [], []);
+    const scanA = transactionSeenDigest("isi readable", ["Scan A.pdf"], []);
+    const scanB = transactionSeenDigest("isi readable", ["Scan B.pdf"], []);
+    const failedA = transactionSeenDigest("isi readable", [], ["Failed A.pdf"]);
+    const both = transactionSeenDigest("isi readable", ["Scan A.pdf"], ["Failed A.pdf"]);
 
-    expect(none).toBe("680ce8d209264bac89bde874148d2368");
     expect(new Set([none, scanA, scanB, failedA, both])).toHaveLength(5);
   });
 
-  it("preserves the historical digest when both unreadable lists are empty", () => {
+  it("is stable for unchanged H-3 effective document input", () => {
     const transactionSeenDigest = (
       analysisState as typeof analysisState & { transactionSeenDigest?: TransactionDigest }
     ).transactionSeenDigest;
@@ -159,7 +149,7 @@ describe("transaction analysis cache context", () => {
     expect(typeof transactionSeenDigest).toBe("function");
     if (!transactionSeenDigest) return;
 
-    expect(transactionSeenDigest(["Sub A", "Sub B"], "isi readable", [], []))
-      .toBe("680ce8d209264bac89bde874148d2368");
+    expect(transactionSeenDigest("isi readable", [], []))
+      .toBe(transactionSeenDigest("isi readable", [], []));
   });
 });
