@@ -2,33 +2,54 @@ import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
 import { repairTruncatedJson } from "@/lib/json-repair";
 import { verifySystem } from "@/lib/dd/prompts";
-import type { DDFinding } from "@/types/dd";
+import { splitDocBlocks, type DocBlock } from "@/lib/extract-format";
+import type { DDFinding, DDVerificationStatus } from "@/types/dd";
 
-const CONTEXT_CAP = 50_000;
-const BATCH = 10;
-// Raised alongside ASPECT_CONCURRENCY: verification is the stage that ran out
-// of budget once the aspect calls grew to carry the report's analysis.
+// Verification calls stay concurrent, but each call now carries exactly one
+// finding and its cited source. A shared batch would let Document B vouch for a
+// finding attributed to Document A even if the prompt told the model not to.
 const VERIFY_CONCURRENCY = 5;
 
-type Verdict = { id: string; upheld: boolean };
+type Verification = { status: DDVerificationStatus; reason: string };
+type Verdict = { id: string; verification: Verification };
 
-// Adversarial pass over the findings that matter most: every kritis finding and
-// every superseded-regulation finding. Refuted → dropped; survivors → verified.
+const SOURCE_UNRESOLVED: Verification = {
+  status: "source_unresolved",
+  reason: "Cited source document could not be resolved.",
+};
+const VERIFICATION_FAILED: Verification = {
+  status: "verification_failed",
+  reason: "Adversarial verification did not return a usable conclusion.",
+};
+
+function citedSource(blocks: DocBlock[], sourceFile: string): DocBlock | null {
+  // Exact identity only. Picking the first duplicate would silently turn a
+  // filename collision into evidence from an arbitrary SharePoint document.
+  const cited = sourceFile.trim();
+  const matches = blocks.filter((block) => block.fileName === cited);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function conciseReason(value: unknown, fallback: string): string {
+  const reason = String(value ?? "").replace(/\s+/g, " ").trim();
+  return (reason || fallback).slice(0, 500);
+}
+
+// Adversarial pass over source-attributed findings that matter most: every kritis
+// finding and every superseded-regulation finding. Deterministic gap findings do
+// not cite a document and therefore do not enter a source-document verifier.
 //
-// Batches run concurrently (VERIFY_CONCURRENCY waves): each batch is an
-// independent model call against the same read-only context, so there is no
-// shared-state race — verdicts are merged into `keep` sequentially after each
-// wave settles. A batch that fails (non-JSON, unparseable, API error) SOFT-FAILS
-// to no verdicts rather than throwing: its findings then pass through UNVERIFIED
-// (never dropped). Verify only ever *removes* refuted findings, so an inability
-// to verify must keep the finding, not silently delete it — and one bad batch
-// must not abort the whole Stage-5 analysis.
+// Calls run in concurrency-limited waves. A failed call retains its finding with
+// an explicit generic failure disposition; raw provider errors stay in logs.
 export async function verifyFindings(
   client: Anthropic,
   findings: DDFinding[],
   contextText: string
 ): Promise<DDFinding[]> {
-  // A finding that already survived this check is not put through it again.
+  // A finding with an existing structured verifier disposition is not put through
+  // it again. The legacy `verified` boolean is not authoritative: old persisted
+  // findings can carry `verified: true` without ever having been checked against
+  // the exact source required by H-1, so those findings must be migrated here.
   //
   // Live, a second Stage 5 run reused every aspect and re-derived nothing, yet three
   // findings still disappeared: this step re-ran over the carried findings and the
@@ -40,27 +61,40 @@ export async function verifyFindings(
   // carried finding are byte-identical, which is why the aspect was reused at all.
   // A lawyer who wants the whole examination redone has "force".
   const targets = findings.filter(
-    (f) => !f.verified && (f.severity === "kritis" || f.currencyStatus === "superseded")
+    (f) =>
+      !f.verification &&
+      !!f.sourceFile &&
+      (f.severity === "kritis" || f.currencyStatus === "superseded")
   );
   if (targets.length === 0) return findings;
 
-  const context = contextText.slice(0, CONTEXT_CAP);
-
-  const batches: DDFinding[][] = [];
-  for (let i = 0; i < targets.length; i += BATCH) {
-    batches.push(targets.slice(i, i + BATCH));
+  const blocks = splitDocBlocks(contextText);
+  const resolutions = new Map<string, Verification>();
+  const resolvable: { finding: DDFinding; source: DocBlock }[] = [];
+  for (const finding of targets) {
+    const source = citedSource(blocks, finding.sourceFile!);
+    if (source) resolvable.push({ finding, source });
+    else resolutions.set(finding.id, SOURCE_UNRESOLVED);
   }
 
-  const processBatch = async (batch: DDFinding[]): Promise<Verdict[]> => {
-    const prompt = `=== KONTEKS DOKUMEN ===
-${context}
-=== AKHIR KONTEKS ===
+  const processFinding = async ({ finding, source }: { finding: DDFinding; source: DocBlock }): Promise<Verdict> => {
+    const prompt = `FINDING UNDER REVIEW
+${JSON.stringify({
+  id: finding.id,
+  sourceFile: finding.sourceFile,
+  anchor: finding.anchor,
+  problem: finding.problem,
+  currencyNote: finding.currencyNote ?? null,
+})}
 
-TEMUAN YANG DIPERIKSA:
-${batch.map((f) => JSON.stringify({ id: f.id, anchor: f.anchor, problem: f.problem, currencyNote: f.currencyNote ?? null })).join("\n")}
+AUTHORITATIVE CITED SOURCE
+Filename: ${source.fileName}
+${source.content}
+END AUTHORITATIVE CITED SOURCE
 
-Untuk SETIAP temuan: apakah kutipan (anchor) benar-benar ada dan mendukung masalah yang diklaim? Temuan gap (anchor kosong) dinilai dari konteks.
-Kembalikan HANYA JSON: {"verdicts":[{"id":"...","upheld":true|false,"reason":"..."}]}`;
+Does the anchor actually appear in this cited source and support the claimed problem?
+Return ONLY JSON with one concise conclusion reason, not hidden reasoning:
+{"verdicts":[{"id":"${finding.id}","upheld":true|false,"reason":"..."}]}`;
     try {
       const response = await client.messages.create({
         model: MODELS.ddVerify,
@@ -73,37 +107,55 @@ Kembalikan HANYA JSON: {"verdicts":[{"id":"...","upheld":true|false,"reason":"..
       if (!match) throw new Error("Hasil verifikasi bukan JSON");
       let jsonStr = match[0];
       if (response.stop_reason === "max_tokens") jsonStr = repairTruncatedJson(jsonStr);
-      let p: { verdicts?: { id?: string; upheld?: boolean }[] };
+      let p: { verdicts?: { id?: string; upheld?: boolean; reason?: unknown }[] };
       try {
         p = JSON.parse(jsonStr);
       } catch {
         p = JSON.parse(repairTruncatedJson(jsonStr));
       }
-      const verdicts: Verdict[] = [];
-      for (const v of p.verdicts ?? []) {
-        if (v.id) verdicts.push({ id: String(v.id), upheld: v.upheld === true });
-      }
-      return verdicts;
+      const verdict = (p.verdicts ?? []).find(
+        (candidate) => String(candidate.id ?? "") === finding.id && typeof candidate.upheld === "boolean"
+      );
+      if (!verdict) return { id: finding.id, verification: VERIFICATION_FAILED };
+      const status = verdict.upheld ? "supported" : "refuted";
+      return {
+        id: finding.id,
+        verification: {
+          status,
+          reason: conciseReason(
+            verdict.reason,
+            verdict.upheld
+              ? "Finding is supported by the cited source document."
+              : "Finding is not supported by the cited source document.",
+          ),
+        },
+      };
     } catch (e) {
-      // Soft-fail: this batch's findings will pass through unverified rather
-      // than aborting the whole analysis run.
-      console.error("[dd/verify] batch failed, findings pass through unverified:", e instanceof Error ? e.message : e);
-      return [];
+      console.error("[dd/verify] finding failed, explicit failure retained:", e instanceof Error ? e.message : e);
+      return { id: finding.id, verification: VERIFICATION_FAILED };
     }
   };
 
-  const keep = new Map<string, boolean>();
-  for (let s = 0; s < batches.length; s += VERIFY_CONCURRENCY) {
-    const wave = batches.slice(s, s + VERIFY_CONCURRENCY);
-    const settled = await Promise.allSettled(wave.map(processBatch));
-    for (const r of settled) {
-      if (r.status !== "fulfilled") continue;
-      for (const v of r.value) keep.set(v.id, v.upheld);
+  for (let s = 0; s < resolvable.length; s += VERIFY_CONCURRENCY) {
+    const wave = resolvable.slice(s, s + VERIFY_CONCURRENCY);
+    const settled = await Promise.allSettled(wave.map(processFinding));
+    for (let i = 0; i < settled.length; i++) {
+      const result = settled[i];
+      if (result.status === "fulfilled") {
+        resolutions.set(result.value.id, result.value.verification);
+      } else {
+        resolutions.set(wave[i].finding.id, VERIFICATION_FAILED);
+      }
     }
   }
 
-  return findings.flatMap((f) => {
-    if (!keep.has(f.id)) return [f];           // not a verify target, or unverified batch → pass through
-    return keep.get(f.id) ? [{ ...f, verified: true }] : []; // refuted → dropped
+  return findings.map((finding) => {
+    const verification = resolutions.get(finding.id);
+    if (!verification) return finding;
+    return {
+      ...finding,
+      verified: verification.status === "supported",
+      verification,
+    };
   });
 }

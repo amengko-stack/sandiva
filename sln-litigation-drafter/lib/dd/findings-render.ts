@@ -55,6 +55,16 @@ const UNVERIFIED_PREFIX = "[TIDAK TERVERIFIKASI TERHADAP DOKUMEN] ";
  */
 const CITATION_MARK = "[PASAL TIDAK DITEMUKAN]";
 
+/** Refuted or unresolved verifier targets stay in findings.json for audit, but
+ * must not be presented as established findings in a client deliverable. */
+export function hasEstablishedVerification(f: DDFinding): boolean {
+  return !f.verification || f.verification.status === "supported";
+}
+
+export function isReportableFinding(f: DDFinding): boolean {
+  return f.status !== "dismissed" && hasEstablishedVerification(f);
+}
+
 /** Shared wording, so the finding table and the analysis chapters say the same thing. */
 export function citationIssueNote(issues: string[]): string {
   const list = issues.join("; ");
@@ -89,7 +99,7 @@ export function renderFindingsTable(
   findings: DDFinding[],
   options: DDReportOptions = DD_DEFAULT_REPORT_OPTIONS
 ): DDNarrativeBlock[] {
-  const active = findings.filter((f) => f.status !== "dismissed");
+  const active = findings.filter(isReportableFinding);
   if (active.length === 0) return [];
 
   const ordered = sortBySeverity(active);
@@ -151,6 +161,8 @@ export function renderFindingsTable(
  * convenience, the three-state conclusion is what the standard requires.
  */
 export function renderVerdictLine(findings: DDFinding[]): string {
-  const verdict = deriveVerdict(findings.map((f) => ({ severity: f.severity, status: f.status })));
+  const verdict = deriveVerdict(
+    findings.filter(isReportableFinding).map((f) => ({ severity: f.severity, status: f.status }))
+  );
   return `Berdasarkan Dokumen Yang Diperiksa, aspek ini ${verdictLabel(verdict)}.`;
 }

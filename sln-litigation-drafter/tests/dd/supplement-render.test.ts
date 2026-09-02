@@ -83,7 +83,7 @@ describe("renderSupplementSections", () => {
 
   // The most important sentence in the document: only a lawyer can conclude that an
   // earlier finding no longer stands.
-  it("refuses to present an unraised finding as cured", () => {
+  it("accurately accounts for a prior finding now rejected by verification without presenting it as cured", () => {
     const t = text(
       diff({
         findingsNoLongerRaised: [
@@ -92,9 +92,12 @@ describe("renderSupplementSections", () => {
       })
     );
     expect(t).toContain("Izin kedaluwarsa");
+    expect(t).toContain("tidak lagi diangkat");
+    expect(t).toContain("tidak lagi diperlakukan sebagai temuan yang terverifikasi");
+    expect(t).not.toContain("TIDAK dihasilkan oleh pemeriksaan");
     expect(t).toContain("BUKAN");
     expect(t).toContain("telah teratasi");
-    expect(t).toContain("telaah advokat");
+    expect(t).toContain("telaah advokat penanggung jawab");
   });
 
   it("accounts separately for what the lawyer dismissed after the earlier report", () => {

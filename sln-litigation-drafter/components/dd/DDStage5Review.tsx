@@ -28,6 +28,9 @@ function FindingCard({ f, onAction, onOpenSource, readOnly }: {
         <span>{DIM_LABEL[f.dimension]}</span>
         {f.aspectId && <span>· {aspectLabel(f.aspectId)}</span>}
         {f.verified && <span style={{ color: "#059669" }}>✓ terverifikasi</span>}
+        {f.verification?.status === "refuted" && <span style={{ color: "#b91c1c" }}>✗ dibantah verifier</span>}
+        {f.verification?.status === "source_unresolved" && <span style={{ color: "#b45309" }}>? sumber verifier tidak terselesaikan</span>}
+        {f.verification?.status === "verification_failed" && <span style={{ color: "#b45309" }}>? verifikasi gagal</span>}
         {f.currencyStatus === "superseded" && <span style={{ color: "#b45309" }}>⚠ ketentuan dicabut/diganti</span>}
         {f.currencyStatus === "amended" && <span style={{ color: "#6b7280" }}>· ketentuan diubah, masih berlaku</span>}
         {f.currencyStatus === "unknown" && (f.regulationRefs?.length ?? 0) > 0 && <span style={{ color: "#6b7280" }}>? keberlakuan belum dicek</span>}
@@ -47,6 +50,9 @@ function FindingCard({ f, onAction, onOpenSource, readOnly }: {
       <div style={{ fontSize: 12, color: "#374151" }}><em>Dampak:</em> {f.whyItMatters}</div>
       <div style={{ fontSize: 12, color: "#374151" }}><em>Tindak lanjut:</em> {f.suggestedFix}</div>
       {f.currencyNote && <div style={{ fontSize: 12, color: "#b45309" }}>{f.currencyNote}</div>}
+      {f.verification && f.verification.status !== "supported" && (
+        <div style={{ fontSize: 12, color: "#7f1d1d" }}><em>Alasan verifier:</em> {f.verification.reason}</div>
+      )}
       {!readOnly && (
         <div style={{ display: "flex", gap: 8, fontSize: 12 }}>
           {f.anchor && f.sourceFile && <button onClick={() => onOpenSource(f)}>Lihat sumber</button>}

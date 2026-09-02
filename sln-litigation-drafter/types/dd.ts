@@ -83,6 +83,11 @@ export type DDGroundingVerdict =
   | "not_found"
   | "source_missing"
   | "no_quote";
+export type DDVerificationStatus =
+  | "supported"
+  | "refuted"
+  | "source_unresolved"
+  | "verification_failed";
 export type DDFindingReviewStatus = "open" | "accepted" | "dismissed" | "edited";
 export type DDCellType = "text" | "date" | "currency" | "number" | "verbatim" | "category" | "boolean";
 
@@ -556,6 +561,13 @@ export interface DDFinding {
   regulationRefs?: string[];
   currencyStatus?: DDCurrencyStatus;
   currencyNote?: string;
+  /**
+   * Auditable conclusion from the adversarial verifier. The reason is the
+   * verifier's concise conclusion only, never hidden reasoning. Absent on
+   * findings that are not adversarial-verification targets and on sessions
+   * persisted before H-1.
+   */
+  verification?: { status: DDVerificationStatus; reason: string };
   verified: boolean;
   status: DDFindingReviewStatus;
   editedProblem?: string;   // lawyer's replacement text when status === "edited"

@@ -13,7 +13,7 @@ import {
 } from "@/lib/dd/report-boilerplate";
 import { obligationsForLayer, resolveRegime, type DDObligation } from "@/lib/dd/regime";
 import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
-import { citationIssueNote, renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
+import { citationIssueNote, isReportableFinding, renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
 import { renderSupplementSections } from "@/lib/dd/supplement-render";
 import { chapterDisclaimer, chapterPendahuluan } from "@/lib/dd/report-chapters";
 import { DD_DEFAULT_REPORT_OPTIONS } from "@/types/dd";
@@ -327,7 +327,7 @@ function fixStatusRow(
 /** Findings belonging to a chapter's aspects, active (non-dismissed) only. */
 function findingsForChapter(r: DDEntityResult, chapter: DDChapterPlan): DDFinding[] {
   const aspectSet = new Set(chapter.aspectIds);
-  return r.findings.filter((f) => f.status !== "dismissed" && f.aspectId !== null && aspectSet.has(f.aspectId));
+  return r.findings.filter((f) => isReportableFinding(f) && f.aspectId !== null && aspectSet.has(f.aspectId));
 }
 
 /**
@@ -378,7 +378,7 @@ function renderTransaksiChapter(
     }
 
     const subFindings = r.findings.filter(
-      (f) => f.status !== "dismissed" && f.subsectionTitle === s.title
+      (f) => isReportableFinding(f) && f.subsectionTitle === s.title
     );
     for (const el of renderBlocks(renderFindingsTable(subFindings, opts))) out.push(el);
 
@@ -583,7 +583,7 @@ function renderKesimpulanChapter(
 
   // 2: Penilaian Kepatuhan per Bab
   out.push(h2(`${subNumber(chNo, 1)} ${subs[1].title}`));
-  const allActive = r.findings.filter((f) => f.status !== "dismissed");
+  const allActive = r.findings.filter(isReportableFinding);
   const overall = deriveVerdict(allActive.map((f) => ({ severity: f.severity, status: f.status })));
   out.push(
     p(
@@ -689,14 +689,14 @@ function renderRingkasanChapter(
     out.push(simpleTable(["Bab", "Penilaian", "Jumlah Temuan"], rows));
   }
 
-  const active = r.findings.filter((f) => f.status !== "dismissed");
+  const active = r.findings.filter(isReportableFinding);
   if (active.length > 0) {
     const ordered = [...active].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
     const top = ordered.slice(0, 3).map((f) => f.editedProblem ?? f.problem);
     out.push(p(`Hal yang paling memerlukan perhatian antara lain: ${top.join("; ")}.`));
   }
 
-  const overall = deriveVerdict(r.findings.map((f) => ({ severity: f.severity, status: f.status })));
+  const overall = deriveVerdict(active.map((f) => ({ severity: f.severity, status: f.status })));
   out.push(
     p(
       `Secara keseluruhan, berdasarkan Dokumen Yang Diperiksa dan dengan memperhatikan seluruh asumsi dan ` +
@@ -737,7 +737,7 @@ function renderTransaksiJualChapter(
       }
     }
 
-    const subFindings = r.findings.filter((f) => f.status !== "dismissed" && f.subsectionTitle === sub.title);
+    const subFindings = r.findings.filter((f) => isReportableFinding(f) && f.subsectionTitle === sub.title);
     for (const el of renderBlocks(renderFindingsTable(subFindings, opts))) out.push(el);
 
     if (analysis.verification.length > 0) {
@@ -783,7 +783,7 @@ function renderRekomendasiChapter(results: DDEntityResult[], out: (Paragraph | T
   const seen = new Map<string, string>(); // suggestedFix -> problem text (first occurrence)
   for (const res of results) {
     for (const f of res.findings) {
-      if (f.status === "dismissed") continue;
+      if (!isReportableFinding(f)) continue;
       if (!seen.has(f.suggestedFix)) seen.set(f.suggestedFix, f.editedProblem ?? f.problem);
     }
   }
@@ -1117,7 +1117,7 @@ export async function buildDdReportDocx(args: {
   // ---------------- Cross-entity consolidation ----------------
   if (consolidated && results.length > 1) {
     children.push(h1("TEMUAN LINTAS-ENTITAS"));
-    const activeCross = consolidated.crossEntityFindings.filter((x) => x.status !== "dismissed");
+    const activeCross = consolidated.crossEntityFindings.filter(isReportableFinding);
     if (activeCross.length === 0) {
       children.push(p("Tidak terdapat temuan lintas-entitas."));
     } else {
