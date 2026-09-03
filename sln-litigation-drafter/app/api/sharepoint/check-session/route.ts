@@ -1,5 +1,6 @@
+import { authorizeLitigation, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 import { NextRequest, NextResponse } from "next/server";
-import { listAiFolder } from "@/lib/graph-client";
+import { listAiFolder } from "@/lib/litigation-sharepoint";
 import type { CaseAnalysis, InterviewAnswer, PartiesStrategy } from "@/types";
 
 export const maxDuration = 30;
@@ -56,12 +57,10 @@ function latestFile(files: { name: string; downloadUrl: string; lastModified: st
 
 export async function POST(req: NextRequest) {
   try {
-    const { folderPath } = (await req.json()) as { folderPath: string };
-    if (!folderPath) {
-      return NextResponse.json({ error: "folderPath wajib diisi" }, { status: 400 });
-    }
+    const { sessionId, folderPath } = await req.json();
+    const registration = await authorizeLitigation(sessionId, { root: folderPath });
 
-    const files = await listAiFolder(folderPath);
+    const files = await listAiFolder(registration);
     if (files.length === 0) {
       return NextResponse.json({ found: false } satisfies CheckSessionResponse);
     }
@@ -212,6 +211,7 @@ export async function POST(req: NextRequest) {
       ...sessionMeta,
     } satisfies CheckSessionResponse);
   } catch (e: unknown) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
     const message = e instanceof Error ? e.message : "Gagal memeriksa sesi sebelumnya";
     return NextResponse.json({ error: message }, { status: 500 });
   }

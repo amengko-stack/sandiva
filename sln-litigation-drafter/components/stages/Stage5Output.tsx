@@ -100,6 +100,7 @@ export default function Stage5Output() {
         ref: state.ref,
         docType: state.docTypeId,
         claimType: state.claimType,
+        sessionId: state.sessionId,
         folderPath: state.folderPath,
         filename,
         citationAppendix: appendix,

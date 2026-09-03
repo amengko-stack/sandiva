@@ -1,19 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
-import { listMatterFiles } from "@/lib/sharepoint";
+import { NextRequest } from "next/server";
+import { listMatterFiles } from "@/lib/litigation-sharepoint";
+import { authorizeLitigation, recordLitigationListing, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 
 export const maxDuration = 120;
-
 export async function POST(req: NextRequest) {
   try {
-    const { folderPath } = await req.json();
-    if (!folderPath?.trim()) {
-      return NextResponse.json({ error: "folderPath wajib diisi" }, { status: 400 });
-    }
-
-    const files = await listMatterFiles(folderPath.trim());
-    return NextResponse.json({ files });
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Terjadi kesalahan";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const { sessionId, folderPath } = await req.json();
+    const registration = await authorizeLitigation(sessionId, { root: folderPath });
+    const files = await listMatterFiles(registration);
+    await recordLitigationListing(registration, files);
+    return Response.json({ files });
+  } catch (e) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
+    return Response.json({ error: "Gagal memuat daftar dokumen matter." }, { status: 500 });
   }
 }

@@ -111,7 +111,7 @@ export default function Stage2Files() {
   const [cacheCount, setCacheCount] = useState(0);
   // Files flagged PERLU_OCR (scanned, no text layer) — listed in 2D for external OCR + re-check
   const [perluOcrFiles, setPerluOcrFiles] = useState<FileEntry[]>([]);
-  const [ocrFolderLink, setOcrFolderLink] = useState("");
+  const [ocrFolderLink, setOcrFolderLink] = useState(state.folderPath);
   const [rechecking, setRechecking] = useState(false);
   const [recheckMsg, setRecheckMsg] = useState<string | null>(null);
   // OCR folder selection step (mirrors Stage 2A): null = not open
@@ -150,7 +150,7 @@ export default function Stage2Files() {
     fetch("/api/sharepoint/save-matter-file", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ sessionId: state.sessionId, ...body }),
     })
       .then((r) => {
         if (!r.ok) {
@@ -187,7 +187,7 @@ export default function Stage2Files() {
     fetch("/api/sharepoint/check-session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folderPath: state.folderPath }),
+      body: JSON.stringify({ sessionId: state.sessionId, folderPath: state.folderPath }),
     })
       .then((r) => r.json())
       .then((data) => {
@@ -200,14 +200,27 @@ export default function Stage2Files() {
   // ── 2A: Load filenames only ─────────────────────────────────────────────────
   async function discoverFiles() {
     const link = folderLink.trim();
-    if (!link) return;
+    if (!link || discovering) return;
     setDiscovering(true);
     setError("");
     try {
+      let sessionId = state.sessionId;
+      if (!sessionId) {
+        const registration = await fetch("/api/session/register", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folderPath: link }),
+        });
+        const registered = await registration.json();
+        if (!registration.ok) throw new Error(registered.error ?? "Gagal mendaftarkan matter");
+        sessionId = registered.sessionId;
+        dispatch({ type: "SET_SESSION_ID", id: sessionId });
+        dispatch({ type: "SET_FOLDER", folderPath: registered.folderPath });
+        setOcrFolderLink(registered.folderPath);
+      }
       const res = await fetch("/api/sharepoint/list-files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath: link }),
+        body: JSON.stringify({ sessionId, folderPath: link }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error ?? "Gagal memuat daftar file");
@@ -218,6 +231,7 @@ export default function Stage2Files() {
 
       // Save file list to SharePoint AI folder
       saveMatterFile({
+        sessionId,
         folderPath: link,
         filename: `AI/file_list_${ts()}.json`,
         content: JSON.stringify({ files: result.files, timestamp: new Date().toISOString() }),
@@ -226,10 +240,11 @@ export default function Stage2Files() {
       // Session selection metadata — check-session reads this so a resumed
       // session gets back its document type, claim type, and reference.
       saveMatterFile({
+        sessionId,
         folderPath: link,
         filename: `AI/session_meta_${ts()}.json`,
         content: JSON.stringify({
-          sessionId: state.sessionId,
+          sessionId,
           docTypeId: state.docTypeId,
           practiceAreaId: state.practiceAreaId,
           claimType: state.claimType,
@@ -243,7 +258,7 @@ export default function Stage2Files() {
       fetch("/api/sharepoint/check-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath: link }),
+        body: JSON.stringify({ sessionId, folderPath: link }),
       })
         .then((r) => r.json())
         .then((data) => {
@@ -618,7 +633,7 @@ export default function Stage2Files() {
       const res = await fetch("/api/sharepoint/list-files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath: ocrFolderLink.trim() }),
+        body: JSON.stringify({ sessionId: state.sessionId, folderPath: ocrFolderLink.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Gagal membaca folder OCR");
@@ -1143,13 +1158,13 @@ export default function Stage2Files() {
               </ul>
               <p style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 12 }}>
                 Jalankan OCR pada file di atas (Adobe Acrobat → Recognize Text, atau simpan ulang via SharePoint),
-                tempatkan versi OCR di folder terpisah (boleh subfolder <strong>OCR</strong> di dalam folder perkara,
-                atau folder lain), lalu paste sharing link folder tersebut di bawah dan klik &ldquo;Periksa Ulang Dokumen&rdquo;.
+                tempatkan versi OCR di bawah folder perkara terdaftar, misalnya subfolder <strong>OCR</strong>.
+                Muat ulang folder perkara yang sama di bawah. Folder di luar perkara tidak dapat digunakan.
                 Nama file boleh sama persis atau dengan sufiks <em>_OCR</em>.
               </p>
               <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 12, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
-                  Sharing link folder OCR
+                  Sharing link folder perkara terdaftar
                 </label>
                 <input
                   type="text"

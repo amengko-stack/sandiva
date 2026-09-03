@@ -160,6 +160,7 @@ export default function Stage3Analysis() {
       // Fire-and-forget save analysis to SharePoint
       if (state.folderPath) {
         fireAndForget("/api/sharepoint/save-matter-file", {
+          sessionId: state.sessionId,
           folderPath: state.folderPath,
           filename: `AI/analysis_${ts()}.json`,
           content: JSON.stringify({ ref: state.ref, analysis: data.analysis, timestamp: new Date().toISOString() }),
@@ -201,6 +202,7 @@ export default function Stage3Analysis() {
     fireAndForget("/api/analyze/save-parties", { sessionId: state.sessionId, partiesStrategy: ps });
     if (state.folderPath) {
       fireAndForget("/api/sharepoint/save-matter-file", {
+        sessionId: state.sessionId,
         folderPath: state.folderPath,
         filename: `AI/parties_strategy_${ts()}.json`,
         content: JSON.stringify({ ref: state.ref, ...ps, timestamp: new Date().toISOString() }),
@@ -295,6 +297,7 @@ export default function Stage3Analysis() {
     dispatch({ type: "SET_CASE_ANALYSIS", analysis: updated });
     if (state.folderPath) {
       fireAndForget("/api/sharepoint/save-matter-file", {
+        sessionId: state.sessionId,
         folderPath: state.folderPath,
         filename: `AI/kronologi_${ts()}.json`,
         content: JSON.stringify({ ref: state.ref, kronologi: kronoText, timestamp: new Date().toISOString() }),
@@ -314,6 +317,7 @@ export default function Stage3Analysis() {
     });
     if (state.folderPath) {
       fireAndForget("/api/sharepoint/save-matter-file", {
+        sessionId: state.sessionId,
         folderPath: state.folderPath,
         filename: `AI/interview_${ts()}.json`,
         content: JSON.stringify({ ref: state.ref, pihak: state.pihak, answers: ia, timestamp: new Date().toISOString() }),
@@ -345,6 +349,7 @@ export default function Stage3Analysis() {
     });
     if (state.folderPath) {
       fireAndForget("/api/sharepoint/save-matter-file", {
+        sessionId: state.sessionId,
         folderPath: state.folderPath,
         // assessment stored as JSON string so check-session resume (which
         // expects a string) keeps working; parseStoredAssessment re-hydrates.

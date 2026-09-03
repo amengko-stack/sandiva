@@ -28,7 +28,7 @@ export default function DrafterPage() {
     fetch("/api/sharepoint/check-session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folderPath: last.folderPath }),
+      body: JSON.stringify({ sessionId: last.sessionId, folderPath: last.folderPath }),
     })
       .then((r) => {
         if (!r.ok) throw new Error(`check-session ${r.status}`);
@@ -125,7 +125,7 @@ export default function DrafterPage() {
           fontSize: 13,
           color: "var(--text-muted)",
         }}>
-          Tidak dapat memeriksa sesi sebelumnya (masalah jaringan/server). Muat ulang halaman untuk mencoba lagi.
+          Sesi sebelumnya tidak dapat dipulihkan. Jika sesi telah berakhir atau belum terdaftar, mulai sesi baru dan pilih folder matter kembali.
         </div>
       )}
       {resumeData && (

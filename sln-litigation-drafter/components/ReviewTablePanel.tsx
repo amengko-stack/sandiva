@@ -124,6 +124,7 @@ export default function ReviewTablePanel() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                  sessionId: state.sessionId,
                   folderPath: state.folderPath,
                   filename: `AI/review_table_${ts()}.json`,
                   content: JSON.stringify({ ref: state.ref, rows: msg.rows, timestamp: new Date().toISOString() }),

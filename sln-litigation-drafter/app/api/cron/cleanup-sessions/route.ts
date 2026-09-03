@@ -54,7 +54,11 @@ export async function GET(req: NextRequest) {
   // blob in the session. Deciding page by page is what let a live session be
   // reaped in pieces.
   const plan = planSessionDeletions(await listAll("litigation-memory/sessions/"), nowMs);
-  const sessionsDeleted = await deleteUrls(plan.urls);
+  // Revoke C-1 authority before deleting any expired session work products.
+  // Leave the existing whole-session retention decision (including DD) intact.
+  const registrations = plan.urls.filter((url) => /\/litigation-registration\.json(?:\?|$)/.test(url));
+  const artifacts = plan.urls.filter((url) => !registrations.includes(url));
+  const sessionsDeleted = await deleteUrls(registrations) + await deleteUrls(artifacts);
   const cacheDeleted = await sweepCache(nowMs);
 
   return NextResponse.json({

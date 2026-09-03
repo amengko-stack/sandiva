@@ -1,7 +1,8 @@
+import { authorizeLitigation, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 import { NextRequest, NextResponse } from "next/server";
 import { buildLitigationDocx } from "@/lib/docx-builder";
 import { verifyDocx } from "@/lib/docx-verify";
-import { writeMatterFile } from "@/lib/graph-client";
+import { writeMatterFile } from "@/lib/litigation-sharepoint";
 
 export const maxDuration = 60;
 
@@ -9,7 +10,7 @@ const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingm
 
 export async function POST(req: NextRequest) {
   try {
-    const { draftText, ref, docType, claimType, folderPath, filename, citationAppendix } =
+    const { sessionId, draftText, ref, docType, claimType, folderPath, filename, citationAppendix } =
       await req.json();
 
     if (!draftText || !folderPath || !filename) {
@@ -18,6 +19,8 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    const registration = await authorizeLitigation(sessionId, { root: folderPath, filename, folders: ["Drafts"] });
 
     const buffer = await buildLitigationDocx(
       draftText,
@@ -38,10 +41,11 @@ export async function POST(req: NextRequest) {
 
     // filename includes the "Drafts/" subfolder; writeMatterFile resolves the
     // matter's drive from the sharing link and auto-creates Drafts/ if missing.
-    const webUrl = await writeMatterFile(folderPath, filename, buffer, DOCX_MIME);
+    const webUrl = await writeMatterFile(registration, filename, buffer, DOCX_MIME);
 
     return NextResponse.json({ ok: true, webUrl });
   } catch (e: unknown) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
     const message = e instanceof Error ? e.message : "Gagal menyimpan ke SharePoint";
     return NextResponse.json({ error: message }, { status: 500 });
   }

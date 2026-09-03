@@ -51,15 +51,9 @@ export function clearLastSession(folderPath?: string) {
   } catch {}
 }
 
-function newSessionId(): string {
-  return typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID()
-    : Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
 const initialState: WorkflowState = {
   stage: 1,
-  sessionId: newSessionId(),
+  sessionId: "",
   practiceAreaId: null,
   docTypeId: null,
   claimType: null,
@@ -234,7 +228,7 @@ function reducer(state: WorkflowState, action: WorkflowAction): WorkflowState {
       };
 
     case "RESET":
-      return { ...initialState, sessionId: newSessionId(), selectedJurisprudence: [], partiesStrategy: null, addedFileIds: [] };
+      return { ...initialState, sessionId: "", selectedJurisprudence: [], partiesStrategy: null, addedFileIds: [] };
 
     default:
       return state;
@@ -258,11 +252,31 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem(SESSION_KEY);
-      if (saved) dispatch({ type: "HYDRATE", state: JSON.parse(saved) as WorkflowState });
-    } catch {}
-    setHydrated(true);
+    let cancelled = false;
+    async function restore() {
+      try {
+        const saved = sessionStorage.getItem(SESSION_KEY);
+        if (!saved) return;
+        const candidate = JSON.parse(saved) as WorkflowState;
+        if (candidate.sessionId || candidate.folderPath) {
+          const response = await fetch("/api/session/validate", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId: candidate.sessionId, folderPath: candidate.folderPath }),
+          });
+          if (!response.ok) throw new Error("Sesi tidak terdaftar atau telah berakhir. Mulai sesi baru dan pilih folder matter kembali.");
+          const registered = await response.json();
+          candidate.sessionId = registered.sessionId;
+          candidate.folderPath = registered.folderPath;
+        }
+        if (!cancelled) dispatch({ type: "HYDRATE", state: candidate });
+      } catch (e) {
+        if (!cancelled) dispatch({ type: "SET_ERROR", error: e instanceof Error ? e.message : "Sesi tidak dapat dipulihkan." });
+      } finally {
+        if (!cancelled) setHydrated(true);
+      }
+    }
+    void restore();
+    return () => { cancelled = true; };
   }, []);
 
   // Persistence is throttled: during draft streaming the state changes once
@@ -293,7 +307,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
       }
     }
     // Persist sessionId + folderPath to localStorage (survives browser close)
-    if (s.folderPath) {
+    if (s.folderPath && s.sessionId) {
       try {
         const record: LastSessionRecord = {
           sessionId: s.sessionId,

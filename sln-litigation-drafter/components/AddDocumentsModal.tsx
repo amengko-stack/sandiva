@@ -43,7 +43,7 @@ export default function AddDocumentsModal({
   const { state, dispatch } = useWorkflow();
 
   const [step, setStep] = useState<Step>("discover");
-  const [folderLink, setFolderLink] = useState("");
+  const [folderLink, setFolderLink] = useState(state.folderPath);
   const [discovering, setDiscovering] = useState(false);
   const [mapping, setMapping] = useState(false);
   const [error, setError] = useState("");
@@ -82,7 +82,7 @@ export default function AddDocumentsModal({
       const res = await fetch("/api/sharepoint/list-files", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ folderPath: folderLink.trim() }),
+        body: JSON.stringify({ sessionId: state.sessionId, folderPath: folderLink.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Gagal memuat daftar file");
@@ -233,6 +233,7 @@ export default function AddDocumentsModal({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                  sessionId: state.sessionId,
                   folderPath: state.folderPath,
                   filename: `AI/file_list_${ts()}.json`,
                   content: JSON.stringify({
