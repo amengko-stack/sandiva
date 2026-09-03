@@ -72,7 +72,7 @@ Every row below is a separate builder-observed PASS. Production seams, adversari
 | AC-06 — `read-files` batch authorization is atomic | Selected batch → extraction and session work products | app/api/sharepoint/read-files/route.ts:POST | F10; third-item rejection; F18 read-files | All entries are checked before existing-text read, SSE, metadata, cache, extraction, model or writes. | PASS |
 | AC-07 — `add-documents` batch authorization is atomic | Additional batch → prior session text/report | app/api/sharepoint/add-documents/route.ts:POST | F11; third-item rejection; F18 add-documents | Invalid third item prevents all processing; prior bytes unchanged. | PASS |
 | AC-08 — OCR recheck remains matter-scoped | OCR selection → single registered matter | app/api/sharepoint/recheck-ocr/route.ts:POST | F12–13; F18 recheck-ocr | Complete manifest check precedes prior text/report and extraction; no external root is registered. | PASS |
-| AC-09 — Session resume is bound before work-product access | Browser continuity → SharePoint work products | app/api/sharepoint/check-session/route.ts:POST | F14; F18 check-session; validate resume | Wrong root returns fixed 403 before AI listing/download; stored snapshots never register authority. | PASS |
+| AC-09 — Session resume is bound before work-product access | Browser continuity → SharePoint work products | app/api/sharepoint/check-session/route.ts:POST | F14; F18 check-session; validate resume; saved-analysis restore; paginated AI metadata | Wrong root returns fixed 403 before AI listing/download; stored snapshots never register authority. | PASS |
 | AC-10 — Setup sample read is matter-authorized | Setup sample identity → content/model/global memory | app/api/setup/analyze-sample/route.ts:POST | F15; F18 analyze-sample; F20 | Manifest authorization precedes readFileContent, model and existing global style persistence. | PASS |
 | AC-11 — Draft SharePoint save is root- and target-scoped | Draft target → matter Drafts folder | app/api/sharepoint-save/route.ts:POST; lib/litigation-paths.ts:requireOutputTarget | F16–17; F18 sharepoint-save | Root and Drafts target validated before DOCX generation, verification or write. | PASS |
 | AC-12 — Generic matter-file save preserves and strengthens constraints | Generic output target → matter working folder | app/api/sharepoint/save-matter-file/route.ts:POST | F16–17; F18 save-matter-file | Root binding plus original AI/Drafts filename allowlist; unsafe names refused before write. | PASS |
@@ -250,23 +250,23 @@ All commands ran from sln-litigation-drafter, using Windows .cmd shims or the di
 | Check / exact command | Observed result |
 |---|---|
 | npm.cmd install --legacy-peer-deps | Exit 0; up to date, 389 packages audited; dependency file hashes unchanged. |
-| npm.cmd test -- tests/c1-litigation-routes.test.ts tests/c1-litigation-paths.test.ts | 2 files / 120 tests passed. |
-| npm.cmd test -- tests/c1-litigation-routes.test.ts | 1 file / 95 tests passed; all nine protected routes. |
+| npm.cmd test -- tests/c1-litigation-routes.test.ts tests/c1-litigation-paths.test.ts | 2 files / 122 tests passed. |
+| npm.cmd test -- tests/c1-litigation-routes.test.ts | 1 file / 96 tests passed; all nine protected routes. |
 | npm.cmd test -- tests/sharepoint.test.ts | 1 file / 7 existing SharePoint tests passed. |
-| node node_modules/vitest/vitest.mjs run tests/c1-litigation-routes.test.ts -t 'registration\|registry\|resume\|clear\|cleanup\|retention\|rebind\|Same-root\|validate' | 38 selected tests passed; 57 nonmatching tests filtered out, all of which passed in the unfiltered run. Actual regex uses unescaped vertical bars. |
+| node node_modules/vitest/vitest.mjs run tests/c1-litigation-routes.test.ts -t 'registration\|registry\|resume\|clear\|cleanup\|retention\|rebind\|Same-root\|validate' | 39 selected tests passed; 57 nonmatching tests filtered out, all of which passed in the unfiltered run. Actual regex uses unescaped vertical bars. The final rerun used the direct Node Vitest entry point for the focused and protected-route checks. |
 | node node_modules/vitest/vitest.mjs run tests/document-normalizer.test.ts | 1 file / 7 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/matter-scope.test.ts tests/dd/recheck-ocr-matter-scope.test.ts | 2 files / 21 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/raw-evidence-preservation.test.ts tests/dd/raw-evidence-route.test.ts | 2 files / 10 C-2 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/h1-verifier-source-integrity.test.ts | 1 file / 19 H-1 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/h3-analysis-cache-correctness.test.ts tests/dd/analysis-state.test.ts | 2 files / 35 H-3/state tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/retention.test.ts | 1 file / 16 retention tests passed. |
-| npm.cmd test | 59 files / 867 tests passed; zero skipped. |
+| npm.cmd test | 59 files / 869 tests passed; zero skipped. |
 | npx.cmd tsc --noEmit | Exit 0. |
 | npm.cmd run build | Exit 0; 65/65 pages generated. |
 | git diff --check | Exit 0. |
 | Lint | NOT CONFIGURED — EXISTING BASELINE. CI explicitly documents absent ESLint dependency/config; the next lint script is not counted as a passing gate. |
 | npm.cmd audit --json | Exit 1: 9 existing vulnerabilities (1 low, 3 moderate, 5 high, 0 critical); no fixes/upgrades applied. |
-| GitHub Actions / Vercel | Record exact final-head results in the draft-PR handoff; local build is not a substitute. |
+| GitHub Actions / Vercel | Record exact final-head results in the draft-PR handoff; local build is not a substitute. Initial head 025892c passed CI and Vercel; Vercel build logs confirm sln-litigation-drafter / Next.js 14.2.35 despite a stale framework label in project metadata. Final head adds two passing resume fixtures and this evidence update; production code is unchanged. |
 
 Audit packages: @xmldom/xmldom (moderate), brace-expansion (high), exceljs (moderate), nanoid (high), next (high), postcss (high), postcss-selector-parser (low), undici (high), uuid (moderate).
 

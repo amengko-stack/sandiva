@@ -267,6 +267,23 @@ describe("C-1 canonical fixtures", () => {
     expect(await (await validate(req({ sessionId, folderPath: root }))).json()).toEqual({ sessionId, folderPath: root });
     expect((await validate(req({ sessionId, folderPath: other }))).status).toBe(403); noEffects();
   });
+  it("registered resume restores saved analysis and selection without importing artifact authority", async () => {
+    const sessionId = await prepared();
+    const before = Array.from(io.bytes);
+    const artifacts: Record<string, object> = {
+      "analysis_1.json": { analysis: { kronologi: "Saved analysis" } },
+      "session_meta_1.json": { sessionId: "legacy-artifact-id", folderPath: other, docTypeId: "gugatan", practiceAreaId: "perdata", ref: "CASE-A" },
+      "file_list_1.json": { files: [file] },
+    };
+    io.listAiFolder.mockResolvedValueOnce(Object.keys(artifacts).map((name) => ({ name, downloadUrl: `https://download.test/${name}`, lastModified: "2026-09-03T00:00:00Z" })));
+    io.download.mockImplementation(async (url: string) => Response.json(artifacts[url.split("/").pop()!]));
+    const response = await resume(req({ sessionId, folderPath: root }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ found: true, analysis: { kronologi: "Saved analysis" }, docTypeId: "gugatan", ref: "CASE-A", allFiles: [file], resumeAtStage: 3 });
+    expect(io.listAiFolder).toHaveBeenCalledWith(expect.objectContaining({ sessionId, root, driveId: "driveA", itemId: "rootA" }));
+    expect(io.download).toHaveBeenCalled();
+    expect(Array.from(io.bytes)).toEqual(before); expect(io.put).not.toHaveBeenCalled(); expect(io.writeBlobText).not.toHaveBeenCalled();
+  });
   it("registration persistence failure returns no usable session identifier", async () => {
     io.put.mockRejectedValueOnce(new Error("storage unavailable"));
     const response = await register(req({ folderPath: root }));

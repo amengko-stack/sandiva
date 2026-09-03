@@ -52,4 +52,14 @@ describe("C-1 Graph resource identity", () => {
     await expect(listMatterFiles({ driveId: "driveA", itemId: "rootA" })).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it("resume listing preserves paginated in-matter artifact download metadata", async () => {
+    const collection = "https://graph.microsoft.com/v1.0/drives/driveA/items/rootA:/AI:/children";
+    fetchMock.mockResolvedValueOnce(json({ value: [{ id: "one", name: "analysis_1.json", file: {}, "@microsoft.graph.downloadUrl": "https://download.test/one", lastModifiedDateTime: "2026-09-02" }], "@odata.nextLink": `${collection}?$skiptoken=two` }))
+      .mockResolvedValueOnce(json({ value: [{ id: "two", name: "session_meta_1.json", file: {}, "@microsoft.graph.downloadUrl": "https://download.test/two", lastModifiedDateTime: "2026-09-03" }] }));
+    expect(await listAiFolder({ driveId: "driveA", itemId: "rootA" })).toEqual([
+      { name: "analysis_1.json", downloadUrl: "https://download.test/one", lastModified: "2026-09-02" },
+      { name: "session_meta_1.json", downloadUrl: "https://download.test/two", lastModified: "2026-09-03" },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
