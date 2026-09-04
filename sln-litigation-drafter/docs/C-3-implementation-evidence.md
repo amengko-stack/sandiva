@@ -14,6 +14,22 @@ This document is an implementation handoff for independent QA. It is not an
 approval or acceptance record. The canonical C-3 Acceptance Contract remains
 authoritative if any summary below is incomplete.
 
+## Independent-QA rework: Stage 5 approval authority
+
+Independent QA found that the production `Stage5Output` approval action still
+posted the legacy payload even though the revised backend correctly required a
+C-1 session. The caller now uses the existing workflow `state.sessionId`, passes
+it as the explicit `sessionId` field, and refuses to issue the request when the
+current workflow session is absent. The backend route and C-1 authority boundary
+were not weakened.
+
+The production call is exercised through
+`components/stages/stage5-memory-approval.ts`, not by source inspection. Its
+focused integration test sends the exact browser payload into the real approval
+route and asserts the resulting matter-scoped style, index and pattern bytes.
+Negative tests prove no request on an absent session and server rejection for
+malformed, unregistered and cleared sessions.
+
 ## Current memory trace
 
 The required pre-implementation object, writer, source, risk, storage, reader,
@@ -49,7 +65,7 @@ target scope, authority-key and legacy analysis is in
 | AC-03 — Matter-scoped storage | Fixed opaque `matter-memory/<64-hex>/...` keys | A, O, R, S | New matter-derived records are written only inside the authorized namespace. PASS |
 | AC-04 — Analysis memory isolation | `loadAnalysisMemory(authority)` reads validated firm-safe plus same-matter records | D, P | Captured Matter B Stage 3 prompt has zero Matter A sentinel occurrences; Matter A reuse remains present. PASS |
 | AC-05 — Draft memory isolation | `loadDraftMemory(authority, docType, claimType)` filters before ranking | B, C, E, Q, U | Captured Matter B Stage 4 prompt has zero Matter A sentinel occurrences; same-matter ranking is preserved. PASS |
-| AC-06 — Approved-draft write isolation | Approval requires session authority and `saveApprovedDraft` receives that authority | A, K, L, S, V | Full draft, index and patterns remain matter-scoped; invalid/cleared sessions write zero bytes. PASS |
+| AC-06 — Approved-draft write isolation | Stage 5 passes `state.sessionId`; approval requires server authority and `saveApprovedDraft` receives it | Stage 5 focused caller tests; A, K, L, S, V | The real caller is accepted for a valid current session and writes only matter-scoped draft, index and pattern records; absent/invalid/cleared sessions write zero bytes. PASS |
 | AC-07 — Case-pattern isolation | Pattern collection and extracted notes share the approved draft's matter/provenance | D, S, V | Matter A pattern marker is absent from Matter B analysis and no firm-safe pattern is created. PASS |
 | AC-08 — Firm-safe convention reuse | Strict validated firm-safe convention reader | F; citation consumer test | Explicit generic methodology is available across matters; matter and legacy convention text is not. PASS |
 | AC-09 — Legacy style fail closed | Production loaders do not read legacy global index/object keys | G | Legacy bytes remain stored and are excluded. PASS |
@@ -57,7 +73,7 @@ target scope, authority-key and legacy analysis is in
 | AC-11 — Legacy convention fail closed | Production loaders do not read `firm_conventions.md` | I; citation consumer test | Legacy convention marker is absent from analysis and citation prompts. PASS |
 | AC-12 — Setup-sample isolation | Setup analysis stores raw samples in the authorized matter; convention save requires that session | K, R, S | Raw and derived real-client setup material remains in Matter A and is absent from Matter B/global storage. PASS |
 | AC-13 — Provenance | Strict records persist schema, scope, authority, origin/source, creation, workflow, session/run and type metadata | S | Persisted style, pattern and setup records validate the required fields. PASS |
-| AC-14 — Authorization ordering | Route calls place C-1 authorization before protected reads/writes and model invocation | J, K, L | Denials perform zero protected memory reads/writes and zero model calls. PASS |
+| AC-14 — Authorization ordering | Stage 5 stops before `fetch` when session authority is absent; the unchanged route performs C-1 authorization before writes | Stage 5 focused caller tests; J, K, L | Valid same-matter approval is reusable; absent session sends no request; malformed, unregistered and cleared sessions write zero bytes; foreign prompt sentinels remain absent. PASS |
 | AC-15 — Ref/type/claim manipulation resistance | Scope key accepts only C-1 authority; metadata is used only after filtering | B, C, M, N | Forged labels cannot select another matter namespace. PASS |
 | AC-16 — Traversal and prefix-collision resistance | Storage keys use fixed namespaces, opaque hash and generated record UUIDs | O | Unsafe IDs and client identifiers are inert and no foreign object is read. PASS |
 | AC-17 — Prompt-level leakage proof | Tests capture complete Anthropic request objects | P, Q; D, E | Matter B Stage 3/4 requests contain zero sentinel occurrences; positive same-matter controls contain the sentinel. PASS |
@@ -101,7 +117,9 @@ pre-commit tree on 4 September 2026:
 |---|---|
 | C-3 focused suite | PASS — 23/23 (22 canonical fixtures A–V plus one additional citation-memory consumer) |
 | C-1 standalone security suites | PASS — 208/208 across three files |
-| Full suite | PASS — 978/978 across 61 files |
+| Stage 5 production caller | PASS — 5/5, including real-route write and four denial paths |
+| Affected C-3 fixtures | PASS — 6/6: A, K, L, P, Q and V |
+| Full suite | PASS — 983/983 across 62 files |
 | `npx tsc --noEmit` | PASS — exit 0 |
 | `npm run build` | PASS — Next.js 14.2.35 compiled; 65/65 static pages generated |
 | `npm install --legacy-peer-deps` | PASS — up to date; package and lock files unchanged |
