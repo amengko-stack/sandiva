@@ -1,7 +1,8 @@
+import { authorizeLitigation, litigationDenied } from "@/lib/litigation-session";
 import { NextRequest } from "next/server";
 import { documentNormalizer } from "@/lib/document-normalizer";
 import { type ExtractionMetadata } from "@/lib/extraction-cache";
-import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
+import { readBlobText, writeBlobText } from "@/lib/blob";
 import type { FileEntry, DocMapEntry, DocCategory, DocDocumentType, ExtractReport } from "@/types";
 
 export const maxDuration = 300;
@@ -39,12 +40,16 @@ export async function POST(req: NextRequest) {
       ref?: string;
     };
 
-  if (!files?.length || !isValidSessionId(sessionId)) {
+  if (!files?.length) {
     return new Response(
       JSON.stringify({ error: "files dan sessionId wajib diisi" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
+
+  try {
+    await authorizeLitigation(sessionId, { files, ...(folderPath !== undefined ? { root: folderPath } : {}) });
+  } catch { return litigationDenied(); }
 
   const mapById = new Map<string, DocMapEntry>(docMap?.map((e) => [e.fileId, e]) ?? []);
 

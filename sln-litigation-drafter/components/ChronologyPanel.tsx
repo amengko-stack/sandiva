@@ -176,6 +176,7 @@ export default function ChronologyPanel({ onUseAsKronologi }: { onUseAsKronologi
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                  sessionId: state.sessionId,
                   folderPath: state.folderPath,
                   filename: `AI/chronology_${ts()}.json`,
                   content: JSON.stringify({ ref: state.ref, events: msg.events, conflicts: msg.conflicts, timestamp: new Date().toISOString() }),

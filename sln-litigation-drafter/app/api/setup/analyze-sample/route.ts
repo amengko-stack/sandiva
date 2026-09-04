@@ -1,3 +1,4 @@
+import { authorizeLitigation, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 import { NextRequest, NextResponse } from "next/server";
 import { readFileContent } from "@/lib/sharepoint";
 import Anthropic from "@anthropic-ai/sdk";
@@ -63,11 +64,13 @@ Tulis dalam Bahasa Indonesia formal. Maksimum 1000 kata.`;
 export async function POST(req: NextRequest) {
   let step = "parse";
   try {
-    const { sharePointPath, docType, claimType } = await req.json();
+    const { sessionId, sharePointPath, docType, claimType } = await req.json();
 
     if (!sharePointPath) {
       return NextResponse.json({ error: "sharePointPath wajib diisi" }, { status: 400 });
     }
+
+    await authorizeLitigation(sessionId, { files: [{ path: sharePointPath }] });
 
     step = "readFile";
     const fileContent = await readFileContent(sharePointPath);
@@ -103,6 +106,7 @@ export async function POST(req: NextRequest) {
       storedChars: fileContent.length,
     });
   } catch (e: unknown) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
     const message = e instanceof Error ? e.message : String(e);
     // Stack traces stay in the server logs — never in the response body.
     console.error(`[analyze-sample][step=${step}]`, message, e instanceof Error ? e.stack : "");

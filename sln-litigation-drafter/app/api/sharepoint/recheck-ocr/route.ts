@@ -1,6 +1,7 @@
+import { authorizeLitigation, litigationDenied } from "@/lib/litigation-session";
 import { NextRequest, NextResponse } from "next/server";
 import { documentNormalizer } from "@/lib/document-normalizer";
-import { readBlobText, writeBlobText, isValidSessionId } from "@/lib/blob";
+import { readBlobText, writeBlobText } from "@/lib/blob";
 import { type ExtractionMetadata } from "@/lib/extraction-cache";
 import type { DocCategory, ExtractReport } from "@/types";
 
@@ -34,9 +35,13 @@ export async function POST(req: NextRequest) {
     files: SelectedOcrFile[];
   };
 
-  if (!isValidSessionId(sessionId) || !files?.length) {
+  if (!files?.length) {
     return NextResponse.json({ error: "sessionId dan files wajib diisi" }, { status: 400 });
   }
+
+  try {
+    await authorizeLitigation(sessionId, { files });
+  } catch { return litigationDenied(); }
 
   // Load existing combined text + report for append.
   const existingText = (await readBlobText(`sessions/${sessionId}/extracted_text.json`)) ?? "";

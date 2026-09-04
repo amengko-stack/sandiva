@@ -104,7 +104,7 @@ export default function DDStage1Setup() {
     if (!e.dataRoomPath.trim()) return;
     setBusy(e.id);
     try {
-      const res = await fetch("/api/sharepoint/list-files", {
+      const res = await fetch("/api/dd/list-files", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderPath: e.dataRoomPath.trim() }),
       });

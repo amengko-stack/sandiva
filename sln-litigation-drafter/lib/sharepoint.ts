@@ -12,7 +12,7 @@ let _cachedToken: { token: string; expiresAt: number } | null = null;
 // cold start otherwise fires several simultaneous token round-trips.
 let _tokenInFlight: Promise<string> | null = null;
 
-async function getGraphToken(): Promise<string> {
+export async function getGraphToken(): Promise<string> {
   const now = Date.now();
   if (_cachedToken && _cachedToken.expiresAt > now + 60_000) {
     return _cachedToken.token;

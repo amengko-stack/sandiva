@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { FileEntry } from "@/types";
 import { CLAIM_TYPES } from "@/config/documentTypes";
 import JurisprudenceManager from "@/components/setup/JurisprudenceManager";
 
@@ -38,6 +39,10 @@ function emptySample(): DocSample {
 
 export default function SetupPage() {
   const router = useRouter();
+  const [matterFolder, setMatterFolder] = useState("");
+  const [matterSessionId, setMatterSessionId] = useState("");
+  const [matterFiles, setMatterFiles] = useState<FileEntry[]>([]);
+  const [loadingMatter, setLoadingMatter] = useState(false);
   const [mode, setMode] = useState<SetupMode>("konvensi");
   const [step, setStep] = useState<SetupStep>(1);
   const [globalError, setGlobalError] = useState("");
@@ -53,6 +58,35 @@ export default function SetupPage() {
     setSamples((s) => ({ ...s, [key]: { ...s[key], ...patch } }));
   }
 
+  async function loadMatterSamples() {
+    if (loadingMatter || !matterFolder.trim()) return;
+    setLoadingMatter(true);
+    setGlobalError("");
+    try {
+      let sessionId = matterSessionId;
+      if (!sessionId) {
+        const response = await fetch("/api/session/register", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ folderPath: matterFolder }),
+        });
+        const registered = await response.json();
+        if (!response.ok) throw new Error(registered.error);
+        sessionId = registered.sessionId;
+        setMatterSessionId(sessionId);
+        setMatterFolder(registered.folderPath);
+      }
+      const response = await fetch("/api/sharepoint/list-files", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, folderPath: matterFolder }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setMatterFiles(data.files);
+    } catch (e) {
+      setGlobalError(e instanceof Error ? e.message : "Gagal memuat dokumen matter.");
+    } finally { setLoadingMatter(false); }
+  }
+
   async function analyzeSample(key: string) {
     const path = samples[key].path.trim();
     if (!path) return;
@@ -62,7 +96,7 @@ export default function SetupPage() {
       const res = await fetch("/api/setup/analyze-sample", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sharePointPath: path, docType: key, claimType: samples[key].claimType }),
+        body: JSON.stringify({ sessionId: matterSessionId, sharePointPath: path, docType: key, claimType: samples[key].claimType }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
@@ -198,9 +232,20 @@ export default function SetupPage() {
               Sampel Dokumen
             </h2>
             <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 28 }}>
-              Tempelkan sharing link SharePoint untuk setiap jenis dokumen yang ingin dijadikan referensi gaya penulisan. Semua opsional — lewati yang tidak ada sampelnya.
+              Daftarkan folder matter, lalu pilih dokumen dari daftar untuk setiap jenis sampel. Semua opsional — lewati yang tidak ada sampelnya.
             </p>
 
+            <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+              <input value={matterFolder} onChange={(e) => setMatterFolder(e.target.value)}
+                placeholder="Sharing link folder matter" disabled={!!matterSessionId || loadingMatter} style={{ flex: 1 }} />
+              <button onClick={() => void loadMatterSamples()} disabled={loadingMatter || !matterFolder.trim()}>
+                {loadingMatter ? "Memuat…" : "Muat dokumen matter"}
+              </button>
+              {matterSessionId && <button disabled={loadingMatter} onClick={() => {
+                setMatterSessionId(""); setMatterFolder(""); setMatterFiles([]);
+                setSamples((previous) => Object.fromEntries(Object.entries(previous).map(([key, value]) => [key, { ...value, path: "" }])));
+              }}>Pilih matter baru</button>}
+            </div>
             {groups.map((group) => (
               <div key={group} style={{ marginBottom: 32 }}>
                 <div style={{ fontSize: 11, letterSpacing: "0.12em", color: "var(--accent-gold)", fontWeight: 600, marginBottom: 14 }}>
@@ -220,13 +265,11 @@ export default function SetupPage() {
                       </div>
                       <div style={{ padding: "12px 16px", background: "var(--bg-primary)" }}>
                         <div style={{ display: "flex", gap: 8, marginBottom: s.analysis ? 12 : 0 }}>
-                          <input
-                            type="text"
-                            value={s.path}
-                            onChange={(e) => setSample(docType.key, { path: e.target.value })}
-                            placeholder="https://sandiva.sharepoint.com/:w:/s/..."
-                            style={{ flex: 1, fontSize: 12 }}
-                          />
+                          <select value={s.path} onChange={(e) => setSample(docType.key, { path: e.target.value })}
+                            aria-label={`Dokumen sampel ${docType.label}`} style={{ flex: 1, fontSize: 12 }}>
+                            <option value="">Pilih dokumen matter</option>
+                            {matterFiles.map((file) => <option key={file.path} value={file.path}>{file.folder ? `${file.folder}/` : ""}{file.name}</option>)}
+                          </select>
                           <select
                             value={s.claimType}
                             onChange={(e) => setSample(docType.key, { claimType: e.target.value })}

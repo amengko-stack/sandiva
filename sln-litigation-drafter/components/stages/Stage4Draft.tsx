@@ -148,6 +148,7 @@ export default function Stage4Draft() {
                   ref: state.ref,
                   docType: state.docTypeId,
                   claimType: state.claimType,
+                  sessionId: state.sessionId,
                   folderPath: state.folderPath,
                   filename,
                 });

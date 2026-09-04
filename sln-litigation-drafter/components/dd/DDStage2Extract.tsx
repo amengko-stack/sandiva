@@ -224,7 +224,7 @@ export default function DDStage2Extract() {
     if (!report || !folder) return;
     patch(eid, { ocrLoading: true, ocrMatches: null, ocrSkippedCount: 0 });
     try {
-      const res = await fetch("/api/sharepoint/list-files", {
+      const res = await fetch("/api/dd/list-files", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderPath: folder }),
       });
