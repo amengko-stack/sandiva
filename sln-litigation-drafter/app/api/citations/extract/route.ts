@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
-import { readBlobText, isValidSessionId } from "@/lib/blob";
+import { readBlobText } from "@/lib/blob";
+import { loadEligibleConventions } from "@/lib/litigation-memory";
+import { authorizeLitigation, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 import type { CitationItem, JurisprudenceEntry } from "@/types";
 
 export const maxDuration = 60;
@@ -21,15 +23,13 @@ export async function POST(req: NextRequest) {
     if (!draftText?.trim()) {
       return NextResponse.json({ error: "draftText wajib diisi" }, { status: 400 });
     }
-    if (sessionId != null && !isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: "sessionId tidak valid" }, { status: 400 });
-    }
+    const authority = await authorizeLitigation(sessionId);
 
     // Read conventions, case documents, and selected jurisprudence in parallel
     const [conventions, caseDocsRaw, jurisRaw] = await Promise.all([
-      readBlobText("firm_conventions.md"),
-      sessionId ? readBlobText(`sessions/${sessionId}/extracted_text.json`) : Promise.resolve(null),
-      sessionId ? readBlobText(`sessions/${sessionId}/jurisprudence_selected.json`) : Promise.resolve(null),
+      loadEligibleConventions(authority),
+      readBlobText(`sessions/${sessionId}/extracted_text.json`),
+      readBlobText(`sessions/${sessionId}/jurisprudence_selected.json`),
     ]);
 
     const conventionsText = conventions ?? "(tidak tersedia)";
@@ -120,6 +120,7 @@ Kembalikan HANYA JSON dengan format:
     console.log(`[citations] extracted=${citations.length} perluVerifikasi=${citations.filter(c => c.source === "perlu verifikasi").length} terverifikasi=${citations.filter(c => c.source === "terverifikasi — dari database SLN").length}`);
     return NextResponse.json({ citations });
   } catch (e: unknown) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
     const message = e instanceof Error ? e.message : "Terjadi kesalahan";
     console.error("[citations] error:", message);
     return NextResponse.json({ error: message }, { status: 500 });

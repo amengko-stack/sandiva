@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getSystemPrompt, isSupportedDocType } from "@/src/prompts";
-import { loadDraftMemory, buildMemoryContext } from "@/lib/blob";
+import { loadDraftMemory, buildMemoryContext } from "@/lib/litigation-memory";
+import { authorizeLitigation, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 import type { CaseAnalysis, InterviewAnswer, JurisprudenceEntry, PartiesStrategy } from "@/types";
 import { MODELS } from "@/config/models";
 
@@ -18,6 +19,7 @@ const MAX_DRAFT_CALLS = 3;
 export async function POST(req: NextRequest) {
   try {
     const {
+      sessionId,
       docTypeId,
       practiceAreaId,
       claimType,
@@ -32,6 +34,7 @@ export async function POST(req: NextRequest) {
       selectedJurisprudence,
       partiesStrategy,
     } = (await req.json()) as {
+      sessionId: string;
       docTypeId: string;
       practiceAreaId: string;
       claimType: string | null;
@@ -46,6 +49,7 @@ export async function POST(req: NextRequest) {
       selectedJurisprudence?: JurisprudenceEntry[];
       partiesStrategy?: PartiesStrategy | null;
     };
+    const authority = await authorizeLitigation(sessionId);
 
     if (!isSupportedDocType(docTypeId)) {
       return new Response(
@@ -62,7 +66,7 @@ export async function POST(req: NextRequest) {
 
     // Budget allocation: 1 full best-match style example (docType+claimType →
     // docType → recency), examples 2-3 at 8K chars, full conventions.
-    const memory = await loadDraftMemory(docTypeId, claimType);
+    const memory = await loadDraftMemory(authority, docTypeId, claimType);
     const memoryContext = buildMemoryContext(memory);
 
     const analysisText = formatCaseAnalysis(
@@ -208,6 +212,7 @@ ${currentDraft}`
       },
     });
   } catch (e: unknown) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
     const message = e instanceof Error ? e.message : "Terjadi kesalahan";
     return new Response(
       JSON.stringify({ error: message }),

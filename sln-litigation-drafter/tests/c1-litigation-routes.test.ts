@@ -219,11 +219,15 @@ describe("C-1 canonical fixtures", () => {
     await io.del(expired.urls); vi.clearAllMocks();
     expect((await listing(req({ sessionId, folderPath: root }))).status).toBe(403); noEffects();
   });
-  it("20. C-3 global-memory behavior is unchanged and remains explicitly open.", async () => {
+  it("20. C-3 setup storage remains downstream of C-1 authority and is bound to the registered matter.", async () => {
     const sessionId = await prepared();
     expect((await sample(req({ sessionId, sharePointPath: file.path, docType: "gugatan" }))).status).toBe(200);
-    expect(io.bytes.get("style_examples/index.json")).toContain('"source": "setup"');
-    expect(Array.from(io.bytes.entries()).find(([key]) => key.startsWith("style_examples/setup_gugatan_"))?.[1]).toBe("Sample text. ".repeat(30));
+    const scoped = Array.from(io.bytes.entries()).filter(([key]) => /^matter-memory\/[a-f0-9]{64}\/style_examples\//.test(key));
+    expect(scoped).toHaveLength(2);
+    expect(scoped.find(([key]) => key.endsWith("/index.json"))?.[1]).toContain('"scopeClass": "matter"');
+    const sampleRecord = JSON.parse(scoped.find(([key]) => !key.endsWith("/index.json"))?.[1] ?? "{}") as Record<string, unknown>;
+    expect(sampleRecord).toMatchObject({ scopeClass: "matter", sessionId, source: "setup", content: "Sample text. ".repeat(30) });
+    expect(io.bytes.has("style_examples/index.json")).toBe(false);
   });
   it("clear revokes only the named session; a late manifest refresh cannot restore it", async () => {
     const sessionId = await prepared(); const another = await registered();

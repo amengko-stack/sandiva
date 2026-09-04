@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useWorkflow } from "@/context/WorkflowContext";
 import { CheckIcon, DownloadIcon, CloudIcon, BookmarkIcon, ShieldIcon } from "lucide-react";
 import type { CitationItem } from "@/types";
+import { approveDraftForMemory } from "@/components/stages/stage5-memory-approval";
 
 export default function Stage5Output() {
   const { state, dispatch, goToStage } = useWorkflow();
@@ -154,6 +155,7 @@ export default function Stage5Output() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId: state.sessionId,
           draftText: state.draftText,
           ref: state.ref,
           docType: state.docTypeId || "draf",
@@ -192,18 +194,13 @@ export default function Stage5Output() {
     setApprovingMemory(true);
     setMemoryError("");
     try {
-      const res = await fetch("/api/memory/approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          draftText: state.draftText,
-          docType: state.docTypeId,
-          claimType: state.claimType || "",
-          ref: state.ref,
-        }),
+      await approveDraftForMemory({
+        sessionId: state.sessionId,
+        draftText: state.draftText,
+        docType: state.docTypeId,
+        claimType: state.claimType || "",
+        ref: state.ref,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal menyimpan ke memory library");
       dispatch({ type: "SET_APPROVED_MEMORY", value: true });
     } catch (e: unknown) {
       setMemoryError(e instanceof Error ? e.message : "Terjadi kesalahan");

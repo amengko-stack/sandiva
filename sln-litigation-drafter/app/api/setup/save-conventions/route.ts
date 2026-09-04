@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { writeBlobText, readBlobText } from "@/lib/blob";
+import { loadMatterConventions, saveMatterConventions } from "@/lib/litigation-memory";
+import { authorizeLitigation, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 import { MODELS } from "@/config/models";
 
 export const maxDuration = 120;
@@ -25,12 +26,14 @@ const DOC_LABELS: Record<string, string> = {
 
 export async function POST(req: NextRequest) {
   try {
-    const { samples, generalRefinements } = await req.json() as {
+    const { sessionId, samples, generalRefinements } = await req.json() as {
+      sessionId: string;
       samples: Record<string, { analysis: string; refinements: string }>;
       generalRefinements: string;
     };
+    const authority = await authorizeLitigation(sessionId);
 
-    const existingConventions = await readBlobText("firm_conventions.md");
+    const existingConventions = await loadMatterConventions(authority);
     const isRerun = !!existingConventions && existingConventions.length > 50;
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -89,24 +92,11 @@ Dokumen harus mencakup:
 
     const conventions = response.content.find((b) => b.type === "text")?.text || "";
 
-    await writeBlobText("firm_conventions.md", conventions);
-
-    // Initialise pattern/style stores only when they don't exist yet — the
-    // style index may already hold setup samples persisted by analyze-sample
-    // earlier in this same first run; overwriting it with [] would wipe them.
-    if (!isRerun) {
-      const existingPatterns = await readBlobText("case_patterns.json");
-      if (!existingPatterns) {
-        await writeBlobText("case_patterns.json", JSON.stringify({ totalDrafts: 0, patterns: [] }));
-      }
-      const existingIndex = await readBlobText("style_examples/index.json");
-      if (!existingIndex) {
-        await writeBlobText("style_examples/index.json", JSON.stringify([]));
-      }
-    }
+    await saveMatterConventions(authority, conventions);
 
     return NextResponse.json({ ok: true, conventions, isRerun });
   } catch (e: unknown) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
     const message = e instanceof Error ? e.message : "Terjadi kesalahan";
     return NextResponse.json({ error: message }, { status: 500 });
   }

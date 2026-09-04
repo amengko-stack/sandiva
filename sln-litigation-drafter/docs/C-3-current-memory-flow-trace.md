@@ -1,0 +1,46 @@
+# C-3 current Litigation memory-flow trace
+
+Baseline: `665b2b68ff17674fb78d75f736761c7a65c40827`
+
+Contract: C-3 v1
+
+Architecture: ADR-024, preserving ADR-017
+
+This trace was completed before C-3 implementation. It describes the pre-C-3
+production behavior and the restrictive target design. No legacy object's name,
+label, `ref`, document type, claim type or content is accepted as scope evidence.
+
+| Object / flow | Current writer | Source material and client-data risk | Current storage scope | Current readers | Proposed C-3 scope | Authoritative scope key | Legacy behavior |
+|---|---|---|---|---|---|---|---|
+| `firm_conventions.md` | `/api/setup/save-conventions`; Anthropic output merges setup-sample analyses, per-type refinements, general refinements and any existing convention text | Yes. Sample analyses derive from real matter documents; refinements may contain client/matter facts; reruns propagate existing unsafe text | Firm-global `litigation-memory/firm_conventions.md` | `loadMemoryLibrary`; `loadDraftMemory` through the base loader; `/api/citations/extract`; the setup rerun itself; unused `conventionsExist` | Matter-scoped conventions when produced through the current setup flow. Separately provisioned global methodology is eligible only as a validated `firm_safe` record with trusted provenance | SHA-256 of the exact C-1 registration `driveId` and `itemId`, resolved from a valid server-issued session before any read/write/model call | Preserve the blob but never load it into a production matter prompt or merge it into a new record |
+| `case_patterns.json` | `saveApprovedDraft`; setup save only initializes an empty file | Yes. Each note copies up to 200 characters from approved matter draft text; length is not anonymization | Firm-global `litigation-memory/case_patterns.json` | `loadMemoryLibrary`; `loadDraftMemory` through the base loader; `saveApprovedDraft` | Matter-only pattern collection in the same authoritative matter namespace as its draft | Same server-derived C-1 matter key | Preserve and exclude; do not infer, copy or promote |
+| `style_examples/index.json` | `saveApprovedDraft`; `persistSetupSample`; setup save may initialize it | Yes. Labels include `ref`; entries point to approved drafts or raw real-firm setup documents | Firm-global index | `loadMemoryLibrary`; `loadDraftMemory`; both writers | Separate validated matter index per authoritative matter. A distinct validated `firm_safe` index may be read globally, but the current setup/approval routes never write it | Same server-derived C-1 matter key for matter records; fixed `firm-safe` namespace only for explicitly classified records | Preserve and exclude every unclassified entry, including entries marked only by legacy `source` |
+| `style_examples/*` setup objects | `/api/setup/analyze-sample` through `persistSetupSample` | Yes. Complete SharePoint document text is stored before the style-analysis model call | Firm-global object path derived from document/claim type and date | `loadMemoryLibrary`; `loadDraftMemory` after global index selection | Matter-only reusable style record with full provenance; setup does not imply firm-safe | Same server-derived C-1 matter key | Preserve and exclude; never auto-copy into the current matter |
+| `style_examples/*` approved-draft objects | `/api/memory/approve` through `saveApprovedDraft` | Yes. Complete Stage 5 approved draft text, including parties, facts, amounts, dates, strategy and evidence | Firm-global object path derived from document/claim type and date | `loadMemoryLibrary`; `loadDraftMemory` after global index selection | Matter-only reusable style record with full provenance. Approval means same-matter reuse only | Same server-derived C-1 matter key | Preserve and exclude; approval does not establish `firm_safe` |
+| Setup sample analysis | `/api/setup/analyze-sample` reads a C-1-manifest-authorized SharePoint file, stores the full file globally, then sends the first 5,000 characters to Anthropic | Yes. Raw client document and model-derived style summary | Raw sample becomes global style memory; analysis is returned to browser and later submitted to convention save | Setup UI; `/api/setup/save-conventions`; later all memory loaders through the resulting convention/style objects | Raw sample and derived analysis/conventions remain within the same matter. Authorization precedes file read, memory write and model call | Same server-derived C-1 matter key | Existing global sample and derivative convention/index records remain untouched and ineligible |
+| Approved drafts | Stage 5 UI calls `/api/memory/approve`; route calls `saveApprovedDraft` | Yes. Complete matter draft; pattern extraction copies matter text | Global style object, global index and global pattern collection | Stage 3 and Stage 4 loaders; same route's future writes | Atomic matter-scoped style, index and pattern writes after C-1 authorization | Same server-derived C-1 matter key | Existing global drafts/patterns are untouched and ineligible |
+| Pattern extraction | `saveApprovedDraft` selects the first two draft lines longer than 40 characters and truncates to 200 characters | Yes. A short extract can still contain names, facts, strategy, dates or amounts | Global `case_patterns.json` | Stage 3 and Stage 4 through `buildMemoryContext` | Matter-only pattern record sharing the approval run/session provenance | Same server-derived C-1 matter key | Existing global patterns are untouched and ineligible |
+| `loadMemoryLibrary` (Stage 3 base loader) | Read-only | Reads global convention, all global patterns and the three newest global style entries; any can contain client data | No authorization or scope filtering | `/api/analyze`; also `loadDraftMemory` | Resolve C-1 authority first; load only validated `firm_safe` records plus validated same-matter records; reject malformed records individually/fail closed | Same server-derived C-1 matter key plus fixed validated `firm-safe` namespace | Never read legacy global keys for production context |
+| `buildMemoryContext` | Read-only formatter | Concatenates all supplied convention, recent pattern notes and style content verbatim | In-memory prompt context | Stage 3 analyzer; Stage 4 system-prompt builder | Formatting remains semantically the same, but input is already scope-filtered and provenance-validated | Not an authority seam; it consumes only an eligible library | Legacy data cannot reach it through production loaders |
+| `loadDraftMemory` (Stage 4 loader) | Read-only | Loads global base memory, then ranks the entire global style index by type/claim/source/recency before reading three objects | No authorization or scope filtering | `/api/draft` | Authorize, determine eligible `firm_safe + same-matter` records, then rank only that eligible set by the existing document/claim/source/recency rules | Same server-derived C-1 matter key plus fixed validated `firm-safe` namespace | Never rank or read legacy global entries |
+| Stage 3 analysis caller | `/api/analyze` | Reads session extraction/review artifacts, builds global memory context and calls `analyzeCase` | Only regex-validates client session ID; does not resolve C-1 authority before memory/model work | Anthropic through `analyzeCase` | Validate C-1 session first, then read same-session artifacts, load eligible memory, construct the final context and call the model | C-1 registration returned by `authorizeLitigation` | Unregistered/cleared/malformed session returns stable denial with zero matter-memory read/model call |
+| Stage 4 draft caller | `/api/draft` | Client supplies type/claim/ref/case analysis; global memory is ranked and injected into the system prompt | No session authority is supplied or validated | Anthropic drafting stream | Require session ID, validate C-1 authority before memory load/ranking/prompt construction/model call; type/claim/ref affect ranking/content only, never scope | C-1 registration returned by `authorizeLitigation` | Unregistered/cleared/malformed session returns stable denial with zero matter-memory read/prompt/model call |
+| Citation extraction convention reader | `/api/citations/extract` reads `firm_conventions.md` | Yes. The legacy global convention may include matter-derived content and is sent to the citation model | Firm-global | Anthropic citation prompt | Authorize C-1 session first and use only eligible same-matter plus explicit `firm_safe` conventions | Same server-derived C-1 matter key plus fixed validated `firm-safe` namespace | Legacy global convention is excluded |
+
+## Target ordering
+
+For every protected memory route:
+
+```text
+validate C-1 session authority
+-> derive opaque authoritative matter key from driveId + itemId
+-> read only validated firm_safe and same-matter C-3 records
+-> rank eligible records where applicable
+-> construct prompt or perform write
+-> call model where applicable
+```
+
+The current setup and approval workflows never promote content to `firm_safe`.
+An explicit administrative firm-safe writer/reclassification workflow is outside
+C-3 v1. The C-3 reader supports only already-classified records whose complete
+schema and provenance validate; unknown or legacy data remains stored but inert.
