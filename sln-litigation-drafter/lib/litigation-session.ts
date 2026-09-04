@@ -9,9 +9,40 @@ export const LITIGATION_DENIAL = { code: "LITIGATION_SCOPE_DENIED", error: "Akse
 export class LitigationScopeError extends Error { constructor() { super(LITIGATION_DENIAL.error); } }
 export function litigationDenied() { return Response.json(LITIGATION_DENIAL, { status: 403 }); }
 const validId = (id: unknown): id is string => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
+const validResourceId = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9!_-]+$/.test(id);
 export const registrationKey = (id: string) => `sessions/${id}/litigation-registration.json`;
 const manifestKey = (id: string) => `sessions/${id}/litigation-manifest.json`;
 export interface LitigationRegistration extends MatterLocation { version: 1; status: "active"; sessionId: string; root: string; createdAt: string }
+const REGISTRATION_FIELDS = ["version", "status", "sessionId", "root", "driveId", "itemId", "createdAt"] as const;
+
+// Persisted JSON is an authorization boundary. Validate every raw runtime type
+// before normalization so malformed values can never acquire authority through
+// template-string, Date or path coercion.
+export function parseLitigationSessionAuthority(value: unknown): LitigationRegistration | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== REGISTRATION_FIELDS.length ||
+      !REGISTRATION_FIELDS.every((field) => keys.includes(field))) return null;
+
+  const { version, status, sessionId, root, driveId, itemId, createdAt } = record;
+  if (version !== 1 || status !== "active" ||
+      typeof sessionId !== "string" || sessionId.trim() === "" ||
+      typeof root !== "string" || root.trim() === "" ||
+      typeof driveId !== "string" || driveId.trim() === "" ||
+      typeof itemId !== "string" || itemId.trim() === "" ||
+      typeof createdAt !== "string" || createdAt.trim() === "") return null;
+
+  if (!validId(sessionId) || !validResourceId(driveId) || !validResourceId(itemId)) return null;
+  const timestamp = Date.parse(createdAt);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== createdAt) return null;
+  try {
+    if (normalizeLitigationRoot(root) !== root) return null;
+  } catch {
+    return null;
+  }
+  return { version: 1, status: "active", sessionId, root, driveId, itemId, createdAt };
+}
 
 // No ordinary route writes this record. Create-only storage prevents collision
 // or double-submit from overwriting a different binding. Failed creation never
@@ -19,7 +50,7 @@ export interface LitigationRegistration extends MatterLocation { version: 1; sta
 export async function createLitigationSession(folderPath: unknown): Promise<LitigationRegistration> {
   const root = normalizeLitigationRoot(folderPath);
   const resolved = await resolveMatterRoot(root);
-  if (!isDriveIdentity(`drive:${resolved.driveId}:${resolved.itemId}`)) throw new LitigationScopeError();
+  if (!validResourceId(resolved.driveId) || !validResourceId(resolved.itemId)) throw new LitigationScopeError();
   const sessionId = randomUUID();
   const registration: LitigationRegistration = { version: 1, status: "active", sessionId, root, ...resolved, createdAt: new Date().toISOString() };
   await put(`litigation-memory/${registrationKey(sessionId)}`, JSON.stringify(registration), {
@@ -32,8 +63,8 @@ async function loadRegistration(id: unknown): Promise<LitigationRegistration> {
   if (!validId(id)) throw new LitigationScopeError();
   const raw = await readBlobText(registrationKey(id));
   if (!raw) throw new LitigationScopeError();
-  const r = JSON.parse(raw) as LitigationRegistration;
-  if (r.version !== 1 || r.status !== "active" || r.sessionId !== id || normalizeLitigationRoot(r.root) !== r.root || !isDriveIdentity(`drive:${r.driveId}:${r.itemId}`) || !Number.isFinite(Date.parse(r.createdAt))) throw new LitigationScopeError();
+  const r = parseLitigationSessionAuthority(JSON.parse(raw));
+  if (!r || r.sessionId !== id) throw new LitigationScopeError();
   return r;
 }
 

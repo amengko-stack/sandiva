@@ -23,6 +23,14 @@ Listing and resume trusted folderPath; extraction/add/OCR trusted files[].path. 
 
 Baseline red evidence: 12/12 behavioral tests failed across all nine routes and three batch paths. Eight routes returned 200 for an unregistered session; inventory returned its ordinary 404 after accessing the report seam. Mixed batches processed the third cross-matter identity and wrote session blobs. This was observed in `baseline-red.log`, not inferred from source-name matching.
 
+## Independent QA rework — strict persisted authority validation
+
+Independent QA returned AC-03 and AC-15 for rework at previous head `96c34acdaacc5bf0a098c3b22a13ce55e6ca608c`. `loadRegistration` cast parsed JSON to `LitigationRegistration` and interpolated persisted `driveId` and `itemId` into a `drive:` string before validation. JavaScript therefore converted missing, null, numeric and array values into strings that could satisfy the later identity check. The defect allowed malformed registry state to reach protected processing; it did not establish arbitrary-file access or browser modification of the private registry.
+
+The rework adds `parseLitigationSessionAuthority(unknown)`, the sole persisted-registration schema boundary. It rejects non-object and array roots, missing or extra fields, wrong field types, empty/whitespace values, non-v1/non-active records, malformed server UUIDs, malformed SharePoint resource IDs, non-canonical roots and non-canonical ISO timestamps. It validates every raw runtime type before path, identifier or date normalization and returns a newly constructed authority object. `loadRegistration` accepts only that result and separately requires its server-issued UUID to equal the requested UUID. Session creation uses the same direct resource-ID validation without template-string coercion.
+
+Red/green evidence: before the correction, the focused rework selection failed 14/14 assertions—representative malformed authority reached each of the nine protected routes, and all five independent-QA regressions reached protected reads or DOCX generation. After the correction, the same 14 assertions pass. The direct schema matrix passes 71/71 cases. All nine malformed-route cases assert the stable 403 and zero Graph/list/download/upload, extraction, cache, work-product, generation, model or SharePoint-write calls. The DOCX regression specifically proves `buildLitigationDocx` is not called when `driveId` is missing.
+
 ## Server registration and lifecycle
 
 `POST /api/session/register` accepts folderPath and refuses any supplied sessionId. Existing shared-login middleware protects the endpoint. Registration validates the root, resolves a folder (never a file or remote shortcut), issues `crypto.randomUUID()` on the server and performs a create-only private Blob put before returning the identifier. It does not list matter children. Collision/double-submit cannot overwrite another registration. An unsuccessful resolve or put returns no usable ID.
@@ -41,7 +49,7 @@ Manifest key: `litigation-memory/sessions/<uuid>/litigation-manifest.json`.
 
 Only a completed recursive listing of the stored drive/folder replaces the manifest. Ordinary routes never create/rebind registration. Exact drive identity membership is required; path/name/id tampering cannot extend the manifest. Stale snapshots/browser files are not imported into it. New files require refreshing the registered root. Concurrent refreshes can replace a snapshot only with server-listed entries from that same root.
 
-Retention uses the existing whole-session policy: the newest artifact in the session prefix determines expiry (Litigation: 24 hours of inactivity; existing mixed/DD policy unchanged). There is intentionally no independent registry expiry timer that could expire earlier than live work products. Cleanup is the expiry authority: it removes C-1 registration before session artifacts. Missing, malformed and non-active/expired registry state fails closed. Manifest and registry are in the same retention group. No storage migration.
+Retention uses the existing whole-session policy: the newest artifact in the session prefix determines expiry (Litigation: 24 hours of inactivity; existing mixed/DD policy unchanged). There is intentionally no independent registry expiry timer that could expire earlier than live work products. Cleanup is the expiry authority: it removes C-1 registration before session artifacts. Missing, malformed and non-active/expired registry state fails closed through the strict unknown-to-authority parser. Manifest and registry are in the same retention group. No storage migration.
 
 Session clear removes registration first, enumerates all artifact pages and then deletes those artifacts. Failed/partial deletion leaves no usable root authority. A late manifest write cannot recreate registration. Requests already authorized before a clear are not retroactively cancelled; subsequent authorization fails. Other sessions retain their independent records.
 
@@ -66,7 +74,7 @@ Every row below is a separate builder-observed PASS. Production seams, adversari
 |---|---|---|---|---|---|
 | AC-01 — Server-issued session and root registration | Client session creation → server issuance | app/api/session/register/route.ts; lib/litigation-session.ts:createLitigationSession | F01; failed persistence; simultaneous registration | Server UUID and normalized root stored with create-only private put; listing has not run. | PASS |
 | AC-02 — Root binding is immutable | Client root request → immutable registration | lib/litigation-session.ts:authorizeLitigation; register route | F02–03; double-submit | Same normalized root lists safely; another root and any sessionId on registration are refused; original bytes remain unchanged. | PASS |
-| AC-03 — Missing, expired and legacy state fail closed | Browser/legacy state → active server record | lib/litigation-session.ts:loadRegistration | F04; malformed/expired per-route tables; unknown UUID | All nine routes refuse absent, malformed or expired authority; no work-product or target access. | PASS |
+| AC-03 — Missing, expired and legacy state fail closed | Browser/legacy/persisted unknown state → active server record | lib/litigation-session.ts:parseLitigationSessionAuthority / loadRegistration | F04; 71-case raw-schema matrix; nine-route malformed table; five QA regressions; expired/unknown UUID | All nine routes refuse absent, type-invalid, malformed, expired or legacy authority; no work-product or target access. | PASS |
 | AC-04 — Registered-root listing only | Requested listing → registered drive folder | app/api/sharepoint/list-files/route.ts; lib/litigation-sharepoint.ts:listMatterFiles | F05–07; path-adversary table | Root equality is checked before recursive Graph listing; sibling, traversal and other host/site/library cause zero calls. | PASS |
 | AC-05 — Server-authoritative file manifest | Client file object → server-produced manifest | lib/litigation-session.ts:recordLitigationListing / exactFilePath / authorizeLitigation | F08–09; manifest refresh; exact site-path membership | Only completed server listing writes the manifest; names/IDs/paths cannot grant membership; opaque identities require exact membership. | PASS |
 | AC-06 — `read-files` batch authorization is atomic | Selected batch → extraction and session work products | app/api/sharepoint/read-files/route.ts:POST | F10; third-item rejection; F18 read-files | All entries are checked before existing-text read, SSE, metadata, cache, extraction, model or writes. | PASS |
@@ -78,7 +86,7 @@ Every row below is a separate builder-observed PASS. Production seams, adversari
 | AC-12 — Generic matter-file save preserves and strengthens constraints | Generic output target → matter working folder | app/api/sharepoint/save-matter-file/route.ts:POST | F16–17; F18 save-matter-file | Root binding plus original AI/Drafts filename allowlist; unsafe names refused before write. | PASS |
 | AC-13 — Inventory save is authorized before artifact use | Inventory target → report/PDF/write | app/api/docx/inventory-save/route.ts:POST | F16; F18 inventory-save | Root verified before report read/PDF generation; generated target stays under AI/. | PASS |
 | AC-14 — Conservative path handling | Ambiguous path spelling → canonical resource identity | lib/litigation-paths.ts; lib/litigation-sharepoint.ts:resolveMatterRoot | F05–07/17; c1-litigation-paths.test.ts | Decode once per segment; reject traversal, encoded separators, malformed escapes, backslashes, ambiguous paths; preserve path/token case. | PASS |
-| AC-15 — Authorization precedes every protected side effect | Complete authorization → all protected side effects | All nine POST handlers; authorizeLitigation | F04/10–17; negative route tables | Zero Graph/list/download/upload, cache, normalizer, generation, model and work-product calls on denial; registry/manifest reads alone allowed. | PASS |
+| AC-15 — Authorization precedes every protected side effect | Strict authority plus complete target authorization → all protected side effects | parseLitigationSessionAuthority; authorizeLitigation; all nine POST handlers | F04/10–17; nine-route malformed table; five QA regressions | Type-invalid registry state is rejected before Graph/list/download/upload, cache, normalizer, DOCX/PDF generation, model, work-product or SharePoint-write calls; registry/manifest reads alone remain allowed. | PASS |
 | AC-16 — Browser state is not authority | Browser metadata → server-validated continuation | context/WorkflowContext.tsx; app/drafter/page.tsx; app/setup/page.tsx; changed Litigation callers | All route tampering tests; static caller inventory below | Initial/reset IDs empty; registration supplies UUID; hydration validates ID/root; every protected caller sends sessionId. | PASS |
 | AC-17 — Current authorized workflow remains functional | Authorized session → existing Litigation workflow | Nine protected routes; necessary client callers | F18 (nine positive paths); full suite | Registered recursive listing, extraction, add, in-root OCR, resume, sample, DOCX, JSON and inventory save all pass. | PASS |
 | AC-18 — Scope and architecture boundaries are preserved | C-1 → protected architectural boundaries | Base-to-head production diff; unchanged package manifests | F20; LDD compatibility; separate C2/H1/H3 regressions | No memory destination, analysis/prompt, LDD guard, model, AI-02, dependency, identity or governance changes. | PASS |
@@ -250,25 +258,26 @@ All commands ran from sln-litigation-drafter, using Windows .cmd shims or the di
 | Check / exact command | Observed result |
 |---|---|
 | npm.cmd install --legacy-peer-deps | Exit 0; up to date, 389 packages audited; dependency file hashes unchanged. |
-| npm.cmd test -- tests/c1-litigation-routes.test.ts tests/c1-litigation-paths.test.ts | 2 files / 122 tests passed. |
-| npm.cmd test -- tests/c1-litigation-routes.test.ts | 1 file / 96 tests passed; all nine protected routes. |
+| npm.cmd test -- tests/c1-litigation-authority-schema.test.ts tests/c1-litigation-routes.test.ts tests/c1-litigation-paths.test.ts | 3 files / 208 tests passed. |
+| npm.cmd test -- tests/c1-litigation-authority-schema.test.ts | 1 file / 71 strict-schema tests passed. |
+| npm.cmd test -- tests/c1-litigation-routes.test.ts -t "independent QA regression" | 5 selected tests passed; 105 nonmatching tests skipped. These are the five previously failing QA assertions. |
+| npm.cmd test -- tests/c1-litigation-routes.test.ts -t "malformed typed authority" | 9 selected tests passed; 101 nonmatching tests skipped; one case per canonical protected route. |
+| npm.cmd test -- tests/c1-litigation-routes.test.ts | 1 file / 111 tests passed; all nine protected routes. |
 | npm.cmd test -- tests/sharepoint.test.ts | 1 file / 7 existing SharePoint tests passed. |
-| node node_modules/vitest/vitest.mjs run tests/c1-litigation-routes.test.ts -t 'registration\|registry\|resume\|clear\|cleanup\|retention\|rebind\|Same-root\|validate' | 39 selected tests passed; 57 nonmatching tests filtered out, all of which passed in the unfiltered run. Actual regex uses unescaped vertical bars. The final rerun used the direct Node Vitest entry point for the focused and protected-route checks. |
+| node node_modules/vitest/vitest.mjs run tests/c1-litigation-routes.test.ts -t 'registration\|registry\|resume\|clear\|cleanup\|retention\|rebind\|Same-root\|validate' | 39 selected tests passed; 71 nonmatching tests filtered out, all of which passed in the unfiltered run. Actual regex uses unescaped vertical bars. The final rerun used the direct Node Vitest entry point for the focused session/resume check. |
 | node node_modules/vitest/vitest.mjs run tests/document-normalizer.test.ts | 1 file / 7 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/matter-scope.test.ts tests/dd/recheck-ocr-matter-scope.test.ts | 2 files / 21 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/raw-evidence-preservation.test.ts tests/dd/raw-evidence-route.test.ts | 2 files / 10 C-2 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/h1-verifier-source-integrity.test.ts | 1 file / 19 H-1 tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/h3-analysis-cache-correctness.test.ts tests/dd/analysis-state.test.ts | 2 files / 35 H-3/state tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/dd/retention.test.ts | 1 file / 16 retention tests passed. |
-| npm.cmd test | 59 files / 869 tests passed; zero skipped. |
+| npm.cmd test | 60 files / 955 tests passed; zero skipped. |
 | npx.cmd tsc --noEmit | Exit 0. |
 | npm.cmd run build | Exit 0; 65/65 pages generated. |
 | git diff --check | Exit 0. |
 | Lint | NOT CONFIGURED — EXISTING BASELINE. CI explicitly documents absent ESLint dependency/config; the next lint script is not counted as a passing gate. |
-| npm.cmd audit --json | Exit 1: 9 existing vulnerabilities (1 low, 3 moderate, 5 high, 0 critical); no fixes/upgrades applied. |
+| npm.cmd audit --json | Exit 0: 0 reported vulnerabilities on 4 September 2026; no fixes/upgrades applied. |
 | GitHub Actions / Vercel | Record exact final-head results in the draft-PR handoff; local build is not a substitute. Initial head 025892c passed CI and Vercel; Vercel build logs confirm sln-litigation-drafter / Next.js 14.2.35 despite a stale framework label in project metadata. Final head adds two passing resume fixtures and this evidence update; production code is unchanged. |
-
-Audit packages: @xmldom/xmldom (moderate), brace-expansion (high), exceljs (moderate), nanoid (high), next (high), postcss (high), postcss-selector-parser (low), undici (high), uuid (moderate).
 
 Unchanged package.json SHA-256: `F92E9272A469F9B1798BD427963E45A66C816F7409989AE7F5D3F156E7D5379D`.
 Unchanged package-lock.json SHA-256: `EF8AE73926A502229488686F4A79DB86DEFD2A613A0CB2213B76E02CB661B2A1`.
@@ -317,4 +326,5 @@ This build is ready only for independent semantic security QA after the recorded
 - `sln-litigation-drafter/context/WorkflowContext.tsx`
 - `sln-litigation-drafter/lib/sharepoint.ts`
 - `tests/c1-litigation-paths.test.ts`
+- `tests/c1-litigation-authority-schema.test.ts`
 - `tests/c1-litigation-routes.test.ts`

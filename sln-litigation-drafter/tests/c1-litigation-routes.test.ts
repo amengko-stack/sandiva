@@ -111,6 +111,13 @@ async function prepared() {
   return sessionId;
 }
 
+function replaceRegistration(sessionId: string, mutate: (record: Record<string, unknown>) => void) {
+  const key = `sessions/${sessionId}/litigation-registration.json`;
+  const record = JSON.parse(io.bytes.get(key)!) as Record<string, unknown>;
+  mutate(record);
+  io.bytes.set(key, JSON.stringify(record));
+}
+
 describe("C-1 canonical fixtures", () => {
   it("1. Server registration returns a valid server-issued Litigation session and stores one root.", async () => {
     const sessionId = await registered();
@@ -233,6 +240,35 @@ describe("C-1 canonical fixtures", () => {
     const sessionId = await prepared();
     io.bytes.set(`sessions/${sessionId}/litigation-registration.json`, '{"version":0}');
     expect((await handler(req({ ...body, sessionId }))).status).toBe(403); noEffects();
+  });
+  it("malformed registry JSON syntax fails before protected reads", async () => {
+    const sessionId = await prepared();
+    io.bytes.set(`sessions/${sessionId}/litigation-registration.json`, '{"version":');
+    expect((await reading(req({ sessionId, folderPath: root, files: [file] }))).status).toBe(403);
+    noEffects();
+  });
+  it.each(routes)("malformed typed authority is denied before target access: %s", async (_name, handler, body) => {
+    const sessionId = await prepared();
+    replaceRegistration(sessionId, (record) => { record.itemId = 123; });
+    expect((await handler(req({ ...body, sessionId }))).status).toBe(403);
+    noEffects();
+  });
+  it.each([
+    ["missing itemId", (record: Record<string, unknown>) => { delete record.itemId; }],
+    ["null itemId", (record: Record<string, unknown>) => { record.itemId = null; }],
+    ["numeric itemId", (record: Record<string, unknown>) => { record.itemId = 123; }],
+    ["array itemId", (record: Record<string, unknown>) => { record.itemId = [123]; }],
+  ] as const)("independent QA regression rejects %s before protected reads", async (_name, mutate) => {
+    const sessionId = await prepared();
+    replaceRegistration(sessionId, mutate);
+    expect((await reading(req({ sessionId, folderPath: root, files: [file] }))).status).toBe(403);
+    noEffects();
+  });
+  it("independent QA regression rejects missing driveId before protected DOCX generation", async () => {
+    const sessionId = await prepared();
+    replaceRegistration(sessionId, (record) => { delete record.driveId; });
+    expect((await draft(req({ sessionId, folderPath: root, filename: "Drafts/output.docx", draftText: "Draft" }))).status).toBe(403);
+    noEffects();
   });
   it.each(routes)("expired registration fails before target access: %s", async (_name, handler, body) => {
     const sessionId = await prepared();
