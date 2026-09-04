@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeCase } from "@/src/analyzer";
-import { loadMemoryLibrary, buildMemoryContext, readBlobText, isValidSessionId } from "@/lib/blob";
+import { readBlobText } from "@/lib/blob";
+import { loadMemoryLibrary, buildMemoryContext } from "@/lib/litigation-memory";
+import { authorizeLitigation, litigationDenied, LitigationScopeError } from "@/lib/litigation-session";
 import type { ReviewTableRow } from "@/types";
 
 export const maxDuration = 300;
@@ -8,10 +10,7 @@ export const maxDuration = 300;
 export async function POST(req: NextRequest) {
   try {
     const { sessionId, docTypeId, practiceAreaId, claimType } = await req.json();
-
-    if (!isValidSessionId(sessionId)) {
-      return NextResponse.json({ error: "sessionId tidak valid" }, { status: 400 });
-    }
+    const authority = await authorizeLitigation(sessionId);
 
     const blobKey = `sessions/${sessionId}/extracted_text.json`;
     console.log(`[analyze] READ blob: sessionId=${sessionId} key=${blobKey}`);
@@ -24,7 +23,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const memory = await loadMemoryLibrary();
+    const memory = await loadMemoryLibrary(authority);
     const memoryContext = buildMemoryContext(memory);
 
     // If a review table exists (regeneration / Tambah Dokumen re-analysis),
@@ -67,6 +66,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ analysis });
   } catch (e: unknown) {
+    if (e instanceof LitigationScopeError) return litigationDenied();
     const message = e instanceof Error ? e.message : "Terjadi kesalahan";
     return NextResponse.json({ error: message }, { status: 500 });
   }

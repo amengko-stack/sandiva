@@ -121,7 +121,7 @@ export default function SetupPage() {
       const res = await fetch("/api/setup/save-conventions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ samples: samplePayload, generalRefinements }),
+        body: JSON.stringify({ sessionId: matterSessionId, samples: samplePayload, generalRefinements }),
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
@@ -158,7 +158,7 @@ export default function SetupPage() {
         {/* Tab bar */}
         <div style={{ display: "flex", gap: 0, marginBottom: 36, borderBottom: "2px solid var(--border-color)" }}>
           {([
-            { key: "konvensi", label: "Konvensi Firma" },
+            { key: "konvensi", label: "Konvensi Matter" },
             { key: "yurisprudensi", label: "Kelola Yurisprudensi" },
           ] as { key: SetupMode; label: string }[]).map((tab) => (
             <button
@@ -259,7 +259,7 @@ export default function SetupPage() {
                         <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{docType.label}</span>
                         {s.analysis && (
                           <span style={{ fontSize: 11, color: "var(--success)", fontWeight: 600 }}>
-                            ✓ Tersimpan sebagai sampel firma{s.storedChars > 0 ? ` (${s.storedChars.toLocaleString("id-ID")} karakter)` : ""}
+                            ✓ Tersimpan sebagai sampel matter{s.storedChars > 0 ? ` (${s.storedChars.toLocaleString("id-ID")} karakter)` : ""}
                           </span>
                         )}
                       </div>
@@ -359,7 +359,7 @@ export default function SetupPage() {
               Catatan Umum
             </h2>
             <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 24 }}>
-              Instruksi umum yang berlaku untuk semua jenis dokumen litigasi. Akan digabungkan dengan konvensi yang sudah ada jika setup dijalankan ulang.
+              Instruksi umum yang berlaku untuk semua jenis dokumen litigasi dalam matter ini. Akan digabungkan dengan konvensi matter yang sudah ada jika setup dijalankan ulang.
             </p>
             <textarea
               value={generalRefinements}
@@ -371,8 +371,8 @@ export default function SetupPage() {
               <button onClick={() => setStep(2)} style={{ padding: "10px 16px", background: "transparent", border: "1px solid var(--border-color)", borderRadius: 4, color: "var(--text-muted)", fontSize: 13, cursor: "pointer" }}>← Kembali</button>
               <button
                 onClick={saveConventions}
-                disabled={saving || (!anyAnalyzed && !generalRefinements.trim())}
-                style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: saving ? "wait" : "pointer", opacity: (!anyAnalyzed && !generalRefinements.trim()) ? 0.5 : 1 }}
+                disabled={saving || !matterSessionId || (!anyAnalyzed && !generalRefinements.trim())}
+                style={{ padding: "10px 24px", background: "var(--accent-blue)", color: "white", border: "none", borderRadius: 4, fontSize: 14, fontWeight: 500, cursor: saving ? "wait" : "pointer", opacity: (!matterSessionId || (!anyAnalyzed && !generalRefinements.trim())) ? 0.5 : 1 }}
               >
                 {saving ? "Menyimpan..." : "Buat & Simpan Konvensi →"}
               </button>
@@ -384,10 +384,10 @@ export default function SetupPage() {
         {step === 4 && (
           <div>
             <div style={{ padding: "12px 16px", background: "rgba(39,174,96,0.1)", border: "1px solid var(--success)", borderRadius: 4, color: "var(--success)", fontSize: 13, marginBottom: 24, display: "flex", alignItems: "center", gap: 8 }}>
-              ✓ Konvensi firma berhasil {isRerun ? "diperbarui dan digabungkan" : "disimpan"} ke Vercel Blob
+              ✓ Konvensi matter berhasil {isRerun ? "diperbarui dan digabungkan" : "disimpan"} ke Vercel Blob
             </div>
             <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
-              Pratinjau Konvensi Firma
+              Pratinjau Konvensi Matter
             </h2>
             <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", borderRadius: 4, padding: "20px 24px", maxHeight: 420, overflowY: "auto", marginBottom: 24 }}>
               <pre style={{ fontSize: 13, color: "var(--text-primary)", whiteSpace: "pre-wrap", margin: 0, lineHeight: 1.7, fontFamily: "var(--font-inter), sans-serif" }}>

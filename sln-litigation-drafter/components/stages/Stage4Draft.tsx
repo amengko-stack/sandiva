@@ -83,6 +83,7 @@ export default function Stage4Draft() {
         headers: { "Content-Type": "application/json" },
         signal: abortRef.current.signal,
         body: JSON.stringify({
+          sessionId: state.sessionId,
           docTypeId: state.docTypeId,
           practiceAreaId: state.practiceAreaId,
           claimType: state.claimType,

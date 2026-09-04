@@ -71,9 +71,11 @@ export interface StyleExample {
   claimType: string;
   label: string;
   content: string;
-  // "setup" = real firm document provided during setup; "approved" =
-  // AI draft approved in Stage 5. Setup samples outrank approved drafts.
-  source?: "setup" | "approved";
+  // "setup" = real matter document provided during setup; "approved" =
+  // same-matter AI draft approved in Stage 5; "firm_safe" = explicitly
+  // classified non-client methodology. Setup/firm-safe examples outrank
+  // approved drafts only after C-3 scope filtering.
+  source?: "setup" | "approved" | "firm_safe";
 }
 
 export interface ExtractReportFile {

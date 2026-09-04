@@ -154,6 +154,7 @@ export default function Stage5Output() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sessionId: state.sessionId,
           draftText: state.draftText,
           ref: state.ref,
           docType: state.docTypeId || "draf",
