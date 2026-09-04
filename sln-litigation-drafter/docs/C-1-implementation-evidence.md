@@ -260,8 +260,8 @@ All commands ran from sln-litigation-drafter, using Windows .cmd shims or the di
 | npm.cmd install --legacy-peer-deps | Exit 0; up to date, 389 packages audited; dependency file hashes unchanged. |
 | npm.cmd test -- tests/c1-litigation-authority-schema.test.ts tests/c1-litigation-routes.test.ts tests/c1-litigation-paths.test.ts | 3 files / 208 tests passed. |
 | npm.cmd test -- tests/c1-litigation-authority-schema.test.ts | 1 file / 71 strict-schema tests passed. |
-| npm.cmd test -- tests/c1-litigation-routes.test.ts -t "independent QA regression" | 5 selected tests passed; 105 nonmatching tests skipped. These are the five previously failing QA assertions. |
-| npm.cmd test -- tests/c1-litigation-routes.test.ts -t "malformed typed authority" | 9 selected tests passed; 101 nonmatching tests skipped; one case per canonical protected route. |
+| npm.cmd test -- tests/c1-litigation-routes.test.ts -t "independent QA regression" | 5 selected tests passed; 106 nonmatching tests skipped. These are the five previously failing QA assertions. |
+| npm.cmd test -- tests/c1-litigation-routes.test.ts -t "malformed typed authority" | 9 selected tests passed; 102 nonmatching tests skipped; one case per canonical protected route. |
 | npm.cmd test -- tests/c1-litigation-routes.test.ts | 1 file / 111 tests passed; all nine protected routes. |
 | npm.cmd test -- tests/sharepoint.test.ts | 1 file / 7 existing SharePoint tests passed. |
 | node node_modules/vitest/vitest.mjs run tests/c1-litigation-routes.test.ts -t 'registration\|registry\|resume\|clear\|cleanup\|retention\|rebind\|Same-root\|validate' | 39 selected tests passed; 71 nonmatching tests filtered out, all of which passed in the unfiltered run. Actual regex uses unescaped vertical bars. The final rerun used the direct Node Vitest entry point for the focused session/resume check. |
@@ -277,7 +277,7 @@ All commands ran from sln-litigation-drafter, using Windows .cmd shims or the di
 | git diff --check | Exit 0. |
 | Lint | NOT CONFIGURED — EXISTING BASELINE. CI explicitly documents absent ESLint dependency/config; the next lint script is not counted as a passing gate. |
 | npm.cmd audit --json | Exit 0: 0 reported vulnerabilities on 4 September 2026; no fixes/upgrades applied. |
-| GitHub Actions / Vercel | Record exact final-head results in the draft-PR handoff; local build is not a substitute. Initial head 025892c passed CI and Vercel; Vercel build logs confirm sln-litigation-drafter / Next.js 14.2.35 despite a stale framework label in project metadata. Final head adds two passing resume fixtures and this evidence update; production code is unchanged. |
+| GitHub Actions / Vercel | Rework implementation commit `ab79452391b2aad3973b741ee0e146d28cc13b6f` passed GitHub CI run 33823411273 (install, typecheck and test) and Vercel deployment `GHHzLXQBxTHVF5bxh87wRR1U52jd`. The PR remains open and draft. |
 
 Unchanged package.json SHA-256: `F92E9272A469F9B1798BD427963E45A66C816F7409989AE7F5D3F156E7D5379D`.
 Unchanged package-lock.json SHA-256: `EF8AE73926A502229488686F4A79DB86DEFD2A613A0CB2213B76E02CB661B2A1`.
