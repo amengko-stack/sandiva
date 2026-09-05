@@ -1,0 +1,12 @@
+{
+  "environmentKind": "production",
+  "runtimeRole": "authoritative-vm",
+  "environmentId": "hermes-prod-vm",
+  "taskNamespace": "prod.build-steward.phase1",
+  "leaseDomain": "prod.hermes-vm",
+  "workerIdentity": "hermes-vm-worker-01",
+  "hermesVersion": "0.1.0",
+  "stateBackend": "sharepoint-list",
+  "stateEndpoint": "https://graph.microsoft.com/v1.0/sites/{site-id}/lists/{list-id}",
+  "resultMaxBytes": 8192
+}

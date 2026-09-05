@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sandiva.example/schemas/normalized-build-result-v1.schema.json",
+  "title": "Normalized Build Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "taskId", "attemptId", "HermesVersion", "configFingerprint",
+    "workerIdentity", "leaseId", "fencingToken", "specificationRef", "specificationHash",
+    "acceptanceContractRef", "acceptanceContractHash", "repository", "baseRef", "branchRef",
+    "prRef", "commitRefs", "deterministicEvidence", "semanticEvidence",
+    "acceptanceCriteriaResults", "result", "residualRisks", "retryInformation",
+    "timestamps", "auditReferences"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "taskId": {"type": "string", "minLength": 1},
+    "attemptId": {"type": "string", "minLength": 1},
+    "HermesVersion": {"type": "string", "minLength": 1},
+    "configFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "workerIdentity": {"type": "string", "minLength": 1},
+    "leaseId": {"type": "string", "minLength": 1},
+    "fencingToken": {"type": "integer", "minimum": 1},
+    "specificationRef": {"type": "string"},
+    "specificationHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "acceptanceContractRef": {"type": "string"},
+    "acceptanceContractHash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "repository": {"type": "string"},
+    "baseRef": {"type": "string"},
+    "branchRef": {"type": ["string", "null"]},
+    "prRef": {"type": ["string", "null"]},
+    "commitRefs": {"type": "array", "items": {"type": "string"}},
+    "deterministicEvidence": {"type": "array", "items": {"type": "object"}},
+    "semanticEvidence": {"type": "array", "items": {"type": "object"}},
+    "acceptanceCriteriaResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion", "result", "evidenceRefs"],
+        "properties": {
+          "criterion": {"type": "string", "minLength": 1},
+          "result": {"enum": ["PASS", "FAIL", "PARTNER_DECISION_REQUIRED"]},
+          "evidenceRefs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "result": {"enum": ["PASS", "FAIL", "PARTNER_DECISION_REQUIRED"]},
+    "residualRisks": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "retryInformation": {"type": "object"},
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startedAt", "completedAt"],
+      "properties": {
+        "startedAt": {"type": "string", "format": "date-time"},
+        "completedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "auditReferences": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  }
+}

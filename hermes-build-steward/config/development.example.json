@@ -1,0 +1,12 @@
+{
+  "environmentKind": "development",
+  "runtimeRole": "local-development",
+  "environmentId": "hermes-dev-local",
+  "taskNamespace": "dev.synthetic",
+  "leaseDomain": "dev.local",
+  "workerIdentity": "developer-workstation",
+  "hermesVersion": "0.1.0",
+  "stateBackend": "memory-test-only",
+  "stateEndpoint": "memory://tests",
+  "resultMaxBytes": 65536
+}
