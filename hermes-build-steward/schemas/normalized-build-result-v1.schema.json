@@ -4,6 +4,32 @@
   "title": "Normalized Build Result v1",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "evidenceRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceRef", "kind", "source", "result", "trustedOrigin", "criteria", "details"],
+      "properties": {
+        "evidenceRef": {"type": "string", "format": "uri", "minLength": 1},
+        "kind": {
+          "enum": [
+            "isolated-job-observation", "github-ci", "coordinator-observation",
+            "lease-fencing", "runtime-state", "coordinator-audit", "partner-gate"
+          ]
+        },
+        "source": {"type": "string", "format": "uri", "minLength": 1},
+        "result": {"enum": ["PASS", "FAIL", "PARTNER_DECISION_REQUIRED"]},
+        "trustedOrigin": {
+          "enum": ["ISOLATED_VERIFICATION_JOB", "TRUSTED_COORDINATOR", "TRUSTED_EXTERNAL_SYSTEM"]
+        },
+        "criteria": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "details": {"type": "object"}
+      }
+    }
+  },
   "required": [
     "schemaVersion", "taskId", "attemptId", "HermesVersion", "configFingerprint",
     "workerIdentity", "leaseId", "fencingToken", "specificationRef", "specificationHash",
@@ -30,8 +56,8 @@
     "branchRef": {"type": ["string", "null"]},
     "prRef": {"type": ["string", "null"]},
     "commitRefs": {"type": "array", "items": {"type": "string"}},
-    "deterministicEvidence": {"type": "array", "items": {"type": "object"}},
-    "semanticEvidence": {"type": "array", "items": {"type": "object"}},
+    "deterministicEvidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceRecord"}},
+    "semanticEvidence": {"type": "array", "items": {"$ref": "#/$defs/evidenceRecord"}},
     "acceptanceCriteriaResults": {
       "type": "array",
       "items": {

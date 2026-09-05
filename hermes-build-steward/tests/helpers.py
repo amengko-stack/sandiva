@@ -57,6 +57,7 @@ def build_task(**overrides):
 
 def normalized_result(task, lease, result="PASS", **overrides):
     now = datetime(2026, 9, 5, 8, 1, tzinfo=timezone.utc).isoformat()
+    evidence_reference = "isolated-job://synthetic/attempt-1/unit"
     value = {
         "schemaVersion": "1.0",
         "taskId": task["taskId"],
@@ -75,10 +76,19 @@ def normalized_result(task, lease, result="PASS", **overrides):
         "branchRef": task["branchRef"],
         "prRef": task["prRef"],
         "commitRefs": task["commitRefs"],
-        "deterministicEvidence": [{"kind": "unit", "result": "PASS", "ref": "ci://synthetic/1"}],
+        "deterministicEvidence": [
+            {
+                "evidenceRef": evidence_reference,
+                "kind": "isolated-job-observation",
+                "source": "isolated-job://synthetic/attempt-1/stdout",
+                "result": result,
+                "criteria": list(task["acceptanceCriteria"]),
+                "details": {"check": "unit", "exitCode": 0 if result == "PASS" else 1},
+            }
+        ],
         "semanticEvidence": [],
         "acceptanceCriteriaResults": [
-            {"criterion": criterion, "result": "PASS" if result == "PASS" else "FAIL", "evidenceRefs": ["ci://synthetic/1"]}
+            {"criterion": criterion, "result": result, "evidenceRefs": [evidence_reference]}
             for criterion in task["acceptanceCriteria"]
         ],
         "result": result,

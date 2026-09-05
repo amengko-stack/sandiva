@@ -10,6 +10,7 @@ from hermes_steward.authority import AuthorityDenied, Phase1Authority
 from hermes_steward.config import ConfigurationError, RuntimeConfig
 from hermes_steward.contracts import ContractValidationError, validate_build_task, validate_reference_hashes, validate_repository_paths
 from hermes_steward.coordinator import Coordinator, CoordinatorError, StaleFenceError
+from hermes_steward.evidence import GitHubEvidenceReader
 from hermes_steward.state import InvalidTransition, TaskStatus, validate_transition
 from hermes_steward.store import InMemoryStateStore
 from test_sharepoint_store import FakeGraphTransport
@@ -159,11 +160,44 @@ class OriginalFixturesAToX(unittest.TestCase):
             coordinator.raise_partner_decision(task["taskId"], 1, "test failure", lease.lease_id, lease.fencing_token)
 
     def test_fixture_s_github_ci_traceability(self):
-        coordinator, _, task = self.new_coordinator()
-        _, record = self.verify(coordinator, task)
+        sha = "c59596559515efa6e088eff4024f90cdca5b3898"
+        coordinator, _, _ = self.new_coordinator()
+        task = build_task(taskId="HERMES-01-SYNTHETIC-CI", acceptanceCriteria=["AC-CI"], commitRefs=[sha])
+        coordinator.submit_task(task)
+        lease = coordinator.claim(task["taskId"], 1, "a", 30)
+        coordinator.begin_verification(task["taskId"], 1, lease.lease_id, lease.fencing_token)
+
+        class Transport:
+            def __init__(self):
+                self.calls = []
+
+            def request(self, method, url, headers, body=None):
+                self.calls.append((method, url))
+                if url.endswith("/check-runs"):
+                    payload = {"check_runs": [{"id": 1, "name": "Hermes", "conclusion": "success", "head_sha": sha}]}
+                else:
+                    payload = {"sha": sha, "html_url": f"https://github.com/amengko-stack/sandiva/commit/{sha}"}
+                return 200, {}, json.dumps(payload).encode()
+
+        transport = Transport()
+        evidence = coordinator.retrieve_github_ci_evidence(
+            task["taskId"], 1, lease.lease_id, lease.fencing_token, sha, ["AC-CI"],
+            GitHubEvidenceReader(transport=transport),
+        )
+        candidate = normalized_result(task, lease)
+        candidate["deterministicEvidence"] = []
+        candidate["acceptanceCriteriaResults"] = [
+            {"criterion": "AC-CI", "result": "PASS", "evidenceRefs": [evidence.evidence_ref]}
+        ]
+        record = coordinator.complete_attempt(
+            task["taskId"], 1, candidate, lease.lease_id, lease.fencing_token,
+            trusted_evidence=[evidence],
+        )
         result = record.results[0]
         self.assertEqual(result["repository"], task["repository"])
-        self.assertTrue(result["deterministicEvidence"][0]["ref"].startswith("ci://"))
+        self.assertEqual(result["deterministicEvidence"][0]["evidenceRef"], evidence.evidence_ref)
+        self.assertEqual(result["deterministicEvidence"][0]["trustedOrigin"], "TRUSTED_EXTERNAL_SYSTEM")
+        self.assertEqual([method for method, _ in transport.calls], ["GET", "GET"])
 
     def test_fixture_t_audit_reconstruction(self):
         coordinator, _, task = self.new_coordinator()

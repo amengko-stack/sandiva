@@ -34,7 +34,7 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 - read-only, host-allowlisted Control Tower and GitHub evidence clients;
 - closed least-privilege authority envelope;
 - digest-pinned, network-denied, capability-dropped, read-only-root Docker job construction with CPU, memory, process, disk, output, and time bounds;
-- strict size-bounded normalized result ingestion;
+- strict size-bounded normalized result ingestion with unique evidence identities, exact criterion-to-evidence resolution, and acquisition-path trust stamping;
 - operator health endpoint on `127.0.0.1:8787/healthz`;
 - audit/provenance retained with the durable task record and recursive secret-field redaction.
 
@@ -52,7 +52,7 @@ python -m unittest discover -s tests -v
 python -m compileall -q src tests qualification
 ```
 
-The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A deterministic boundary tests are in `tests/test_isolation.py` and `tests/test_authority_identity_runner.py`.
+The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A deterministic boundary tests are in `tests/test_isolation.py` and `tests/test_authority_identity_runner.py`. Hostile forged-result fixtures F1–F7, plus origin/kind and semantic-channel checks, are in `tests/test_result_evidence_integrity.py`.
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
 

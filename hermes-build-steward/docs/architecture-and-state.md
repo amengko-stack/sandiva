@@ -6,6 +6,14 @@ The trusted coordinator alone validates Build Tasks, reads canonical evidence, o
 
 Verification defaults to `--network none`. Dependency installation is therefore not assumed. The coordinator should consume an approved deterministic GitHub CI result when it already proves the required check. A future egress allowlist is outside this implementation and requires a separate reviewed policy change.
 
+## Trusted result evidence
+
+Every normalized evidence record has a stable `evidenceRef`, a bounded evidence `kind`, its immutable or audit `source`, a disposition, an acquisition-path `trustedOrigin`, the exact criteria it can prove, and structured details. Every criterion is evaluated exactly once and every `evidenceRefs` entry must resolve to one unique record that expressly names that criterion. Dangling, duplicate, conflicting, malformed, or cross-criterion references fail closed.
+
+Repository JSON can supply only `isolated-job-observation` records in the deterministic-evidence channel. The coordinator adds `trustedOrigin: ISOLATED_VERIFICATION_JOB`; a repository-supplied origin or trusted evidence kind is rejected. Semantic evidence cannot come from the job result. `github-ci` evidence exists only when the coordinator's read-only GitHub client retrieves an immutable task-bound commit and its check runs, after which it is stamped `TRUSTED_EXTERNAL_SYSTEM`. Lease, recovery, VM-runtime, audit, and reserved Partner Gate observations are constructed only on the trusted coordinator path and stamped `TRUSTED_COORDINATOR`. Kind labels do not create trust.
+
+Before a PASS can reach `READY_FOR_PM_ACCEPTANCE`, the coordinator revalidates task, lease/fence, specification and acceptance-contract identities, evidence structure and identity, criterion-to-evidence resolution, origin/kind compatibility, criterion dispositions, and the overall disposition. This remains evidence for PM review only.
+
 ## State technology
 
 A dedicated SharePoint List is the Phase 1 production state authority. This is the smallest CAS-capable mechanism available inside Sandiva's existing Microsoft 365 boundary:

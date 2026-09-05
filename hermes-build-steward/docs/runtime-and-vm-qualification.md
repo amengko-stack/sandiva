@@ -26,6 +26,7 @@ Prerequisites:
 - one approved, preloaded Python verification image pinned by `@sha256:`;
 - a dedicated runtime list configured as described in the README;
 - a unique synthetic/non-client Build Task whose `auditMetadata.classification` is exactly `synthetic-non-client`;
+- that dedicated task contains exactly these acceptance criteria and no unrelated build criterion: `VMQ-RUNAWAY-TERMINATION`, `VMQ-CONTAINER-CLEANUP`, `VMQ-RESTART-RECOVERY`, `VMQ-LEASE-FENCING`, `VMQ-SECRET-ISOLATION`, `VMQ-FILESYSTEM-ISOLATION`, `VMQ-NETWORK-ISOLATION`, `VMQ-NORMAL-VERIFICATION`, and `VMQ-DURABLE-STATE-RECOVERY`;
 - that task's `executorPolicy.approvedCommands` must contain the exact entries `python runaway.py` and `python probe.py`;
 - canonical synthetic specification and acceptance-contract files whose SHA-256 values match that task.
 
@@ -51,6 +52,8 @@ PYTHONPATH=src python qualification/run_vm_qualification.py recover \
   --image 'approved-python-image@sha256:approved-digest'
 ```
 
-The second phase must show attempt count `2`, a larger fencing token, all isolation probes `true`, and final state `READY_FOR_PM_ACCEPTANCE`. Inspect the list item/version history to confirm the earlier attempt, lease, fence, ambiguous recovery, takeover, result, and audit remained durable with no duplicate result.
+The preparation phase durably records the coordinator-observed runaway termination and container cleanup before intentional exit. The recovery phase resolves those checkpoints, restart/reconciliation, the new lease/fence, durable-state recovery, and four distinct isolated-job observations into separate evidence identities. Each qualification criterion references only its specific record; the script rejects a missing, extra, or unevaluated criterion instead of manufacturing a contract-wide PASS.
+
+The second phase must show attempt count `2`, a larger fencing token, all isolation probes `true`, and final state `READY_FOR_PM_ACCEPTANCE`. Inspect the list item/version history to confirm the earlier attempt, lease, fence, qualification checkpoint, ambiguous recovery, takeover, result, and audit remained durable with no duplicate result.
 
 Local unit tests and command construction are implementation evidence only. They must not be reported as actual VM qualification.

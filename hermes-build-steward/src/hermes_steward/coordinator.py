@@ -4,10 +4,16 @@ import copy
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from .audit import sanitize_audit_value
 from .contracts import canonical_json, fingerprint, validate_build_task, validate_reference_hashes
+from .evidence import (
+    GitHubEvidenceReader,
+    TrustedEvidence,
+    coordinator_observation_evidence,
+    retrieve_github_ci_evidence,
+)
 from .results import normalize_and_validate_result
 from .state import TaskStatus, validate_transition
 from .store import RecordNotFound, StateStore, StoreConflict
@@ -208,7 +214,84 @@ class Coordinator:
 
         return self._mutate(key, mutation)
 
-    def complete_attempt(self, task_id: str, task_version: int, candidate: Mapping[str, Any], lease_id: str, fencing_token: int) -> TaskRecord:
+    def record_qualification_checkpoint(
+        self,
+        task_id: str,
+        task_version: int,
+        lease_id: str,
+        fencing_token: int,
+        checks: Mapping[str, bool],
+    ) -> TaskRecord:
+        expected = {"VMQ-RUNAWAY-TERMINATION", "VMQ-CONTAINER-CLEANUP"}
+        if set(checks) != expected or any(type(value) is not bool for value in checks.values()):
+            raise CoordinatorError("qualification checkpoint fields are invalid")
+        key = self._key(task_id, task_version)
+
+        def mutation(record: TaskRecord) -> TaskRecord:
+            self._assert_fence(record, lease_id, fencing_token)
+            if record.status != TaskStatus.VERIFYING:
+                raise CoordinatorError("qualification checkpoint requires VERIFYING state")
+            self._event(
+                record,
+                "QUALIFICATION_CHECKPOINT",
+                attemptId=record.active_lease.attempt_id if record.active_lease else None,
+                leaseId=lease_id,
+                fencingToken=fencing_token,
+                checks=dict(checks),
+            )
+            return record
+
+        return self._mutate(key, mutation)
+
+    def retrieve_github_ci_evidence(
+        self,
+        task_id: str,
+        task_version: int,
+        lease_id: str,
+        fencing_token: int,
+        commit_sha: str,
+        criteria: Sequence[str],
+        reader: GitHubEvidenceReader,
+    ) -> TrustedEvidence:
+        key = self._key(task_id, task_version)
+        snapshot = self.store.get(key).value
+        self._assert_fence(snapshot, lease_id, fencing_token)
+        if snapshot.status != TaskStatus.VERIFYING:
+            raise CoordinatorError("trusted CI evidence can only be retrieved while VERIFYING")
+        if commit_sha not in snapshot.task["commitRefs"]:
+            raise CoordinatorError("trusted CI evidence commit is not bound to the Build Task")
+        if not criteria or not set(criteria).issubset(set(snapshot.task["acceptanceCriteria"])):
+            raise CoordinatorError("trusted CI evidence criteria are not bound to the Build Task")
+        evidence = retrieve_github_ci_evidence(reader, snapshot.task["repository"], commit_sha, criteria)
+
+        def mutation(record: TaskRecord) -> TaskRecord:
+            self._assert_fence(record, lease_id, fencing_token)
+            if record.status != TaskStatus.VERIFYING or record.task_fingerprint != snapshot.task_fingerprint:
+                raise CoordinatorError("task changed while trusted CI evidence was retrieved")
+            self._event(
+                record,
+                "TRUSTED_EVIDENCE_RETRIEVED",
+                evidenceRef=evidence.evidence_ref,
+                kind=evidence.kind,
+                source=evidence.source,
+                commitSha=commit_sha,
+                criteria=list(criteria),
+            )
+            return record
+
+        self._mutate(key, mutation)
+        return evidence
+
+    def complete_attempt(
+        self,
+        task_id: str,
+        task_version: int,
+        candidate: Mapping[str, Any],
+        lease_id: str,
+        fencing_token: int,
+        *,
+        trusted_evidence: Sequence[TrustedEvidence] = (),
+    ) -> TaskRecord:
         key = self._key(task_id, task_version)
 
         def mutation(record: TaskRecord) -> TaskRecord:
@@ -224,14 +307,24 @@ class Coordinator:
                     lease_for_normalization.worker_id = existing["workerIdentity"]
                     lease_for_normalization.lease_id = existing["leaseId"]
                     lease_for_normalization.fencing_token = existing["fencingToken"]
-                normalized = normalize_and_validate_result(candidate, record.task, lease_for_normalization, self.config)
+                normalized = normalize_and_validate_result(
+                    candidate,
+                    record.task,
+                    lease_for_normalization,
+                    self.config,
+                    trusted_evidence=trusted_evidence,
+                )
                 if canonical_json(existing) != canonical_json(normalized):
                     raise CoordinatorError("conflicting result for deterministic attempt identity")
                 return _NoWrite(record)
             lease = self._assert_fence(record, lease_id, fencing_token)
             if record.status != TaskStatus.VERIFYING:
                 raise CoordinatorError("result can only be ingested while VERIFYING")
-            normalized = normalize_and_validate_result(candidate, record.task, lease, self.config)
+            if candidate.get("result") == "PARTNER_DECISION_REQUIRED":
+                raise CoordinatorError("untrusted verification result cannot raise a Partner Decision")
+            normalized = normalize_and_validate_result(
+                candidate, record.task, lease, self.config, trusted_evidence=trusted_evidence
+            )
             disposition = normalized["result"]
             if disposition == "PARTNER_DECISION_REQUIRED":
                 raise CoordinatorError("untrusted verification result cannot raise a Partner Decision")
@@ -261,6 +354,14 @@ class Coordinator:
                 raise CoordinatorError("Partner Decision can only be raised while VERIFYING")
             now = self.clock().isoformat()
             evidence_reference = f"audit://{record.key}/partner-gate/{lease.attempt_id}"
+            trusted_evidence = coordinator_observation_evidence(
+                evidence_ref=evidence_reference,
+                kind="partner-gate",
+                source=evidence_reference,
+                result="PARTNER_DECISION_REQUIRED",
+                criteria=record.task["acceptanceCriteria"],
+                details={"reservedMatter": normalized_reason},
+            )
             candidate = {
                 "schemaVersion": "1.0", "taskId": record.task["taskId"], "attemptId": lease.attempt_id,
                 "HermesVersion": self.config.hermes_version, "configFingerprint": self.config.fingerprint,
@@ -271,7 +372,7 @@ class Coordinator:
                 "repository": record.task["repository"], "baseRef": record.task["baseRef"],
                 "branchRef": record.task["branchRef"], "prRef": record.task["prRef"],
                 "commitRefs": record.task["commitRefs"],
-                "deterministicEvidence": [{"kind": "trusted-partner-gate", "result": "PARTNER_DECISION_REQUIRED", "ref": evidence_reference}],
+                "deterministicEvidence": [],
                 "semanticEvidence": [],
                 "acceptanceCriteriaResults": [
                     {"criterion": criterion, "result": "PARTNER_DECISION_REQUIRED", "evidenceRefs": [evidence_reference]}
@@ -282,7 +383,9 @@ class Coordinator:
                 "timestamps": {"startedAt": lease.lease_started_at.isoformat(), "completedAt": now},
                 "auditReferences": [evidence_reference],
             }
-            normalized = normalize_and_validate_result(candidate, record.task, lease, self.config)
+            normalized = normalize_and_validate_result(
+                candidate, record.task, lease, self.config, trusted_evidence=[trusted_evidence]
+            )
             record.results.append(normalized)
             record.failure_history.append(
                 {"attemptId": lease.attempt_id, "disposition": "PARTNER_DECISION_REQUIRED", "at": now}
