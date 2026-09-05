@@ -1,0 +1,48 @@
+name: Hermes Build Steward
+
+on:
+  pull_request:
+    paths:
+      - "hermes-build-steward/**"
+      - ".github/workflows/hermes-build-steward.yml"
+  push:
+    branches: [main]
+    paths:
+      - "hermes-build-steward/**"
+      - ".github/workflows/hermes-build-steward.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: hermes-build-steward
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+      - name: Unit, contract, state, concurrency, recovery, isolation-policy, health and audit tests
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests -v
+      - name: Syntax and bytecode compilation
+        run: python -m compileall -q src tests qualification
+      - name: Secret-pattern and local-path hygiene
+        shell: bash
+        run: |
+          if git ls-files --full-name -- . | grep -Ei '\.(pem|pfx|p12|key)$'; then
+            echo "Prohibited private certificate or key file found"
+            exit 1
+          fi
+          if git grep -nIE 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' -- .; then
+            echo "Prohibited private-key material found"
+            exit 1
+          fi
+          if grep -RInE --exclude-dir=__pycache__ --exclude='*.md' '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AZURE_CLIENT_SECRET[[:space:]]*=|C:\\Users\\|OneDrive)' src config deploy qualification; then
+            echo "Prohibited secret material or local path found"
+            exit 1
+          fi

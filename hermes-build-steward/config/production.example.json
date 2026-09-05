@@ -1,0 +1,19 @@
+{
+  "environmentKind": "production",
+  "runtimeRole": "authoritative-vm",
+  "vmProvider": "hostinger",
+  "graphAuthentication": {
+    "provider": "entra-certificate",
+    "tenantId": "replace-with-approved-tenant-id",
+    "clientId": "replace-with-approved-application-id",
+    "certificatePath": "/etc/sandiva-hermes/credentials/hermes-graph.pfx"
+  },
+  "environmentId": "hermes-prod-hostinger",
+  "taskNamespace": "prod.build-steward.phase1",
+  "leaseDomain": "prod.hermes-vm",
+  "workerIdentity": "hermes-hostinger-worker-01",
+  "hermesVersion": "0.1.0",
+  "stateBackend": "sharepoint-list",
+  "stateEndpoint": "https://graph.microsoft.com/v1.0/sites/{site-id}/lists/{list-id}",
+  "resultMaxBytes": 8192
+}

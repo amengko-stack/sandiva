@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sandiva.example/schemas/canonical-build-task-v1.schema.json",
+  "title": "Canonical Build Task v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "taskId", "taskVersion", "originatingPmInstructionRef",
+    "originatingPmInstructionFingerprint", "specificationRef", "specificationVersion",
+    "specificationHash", "acceptanceContractRef", "acceptanceContractVersion",
+    "acceptanceContractHash", "repository", "baseRef", "scope", "acceptanceCriteria",
+    "criterionEvidencePolicy",
+    "permittedRepositoryAreas", "prohibitedRepositoryAreas", "riskLevel", "executorPolicy",
+    "executionStatus", "branchRef", "prRef", "commitRefs", "evaluationRequirements",
+    "qaRequirements", "partnerGateStatus", "retryPolicy", "attemptCount", "failureHistory",
+    "permissionEnvelopeRef", "provenance", "auditMetadata", "createdAt", "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "taskId": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$"},
+    "taskVersion": {"type": "integer", "minimum": 1},
+    "originatingPmInstructionRef": {"type": "string", "minLength": 1},
+    "originatingPmInstructionFingerprint": {"$ref": "#/$defs/sha256"},
+    "specificationRef": {"type": "string", "minLength": 1},
+    "specificationVersion": {"type": "string", "minLength": 1},
+    "specificationHash": {"$ref": "#/$defs/sha256"},
+    "acceptanceContractRef": {"type": "string", "minLength": 1},
+    "acceptanceContractVersion": {"type": "string", "minLength": 1},
+    "acceptanceContractHash": {"$ref": "#/$defs/sha256"},
+    "repository": {"type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+/?$"},
+    "baseRef": {"$ref": "#/$defs/commit"},
+    "scope": {"$ref": "#/$defs/nonEmptyStrings"},
+    "acceptanceCriteria": {"$ref": "#/$defs/nonEmptyStrings"},
+    "criterionEvidencePolicy": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["allowedEvidence"],
+        "properties": {
+          "allowedEvidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"$ref": "#/$defs/evidenceAuthorityPair"}
+          }
+        }
+      }
+    },
+    "permittedRepositoryAreas": {"$ref": "#/$defs/nonEmptyStrings"},
+    "prohibitedRepositoryAreas": {"$ref": "#/$defs/nonEmptyStrings"},
+    "riskLevel": {"type": "string", "minLength": 1},
+    "executorPolicy": {
+      "type": "object",
+      "required": ["automaticDispatch"],
+      "properties": {"automaticDispatch": {"const": false}},
+      "additionalProperties": true
+    },
+    "executionStatus": {"const": "CREATED"},
+    "branchRef": {"type": ["string", "null"]},
+    "prRef": {"type": ["string", "null"]},
+    "commitRefs": {"type": "array", "items": {"$ref": "#/$defs/commit"}},
+    "evaluationRequirements": {"$ref": "#/$defs/nonEmptyStrings"},
+    "qaRequirements": {"$ref": "#/$defs/nonEmptyStrings"},
+    "partnerGateStatus": {"type": "string", "minLength": 1},
+    "retryPolicy": {
+      "type": "object",
+      "required": ["maxAttempts"],
+      "properties": {"maxAttempts": {"type": "integer", "minimum": 1, "maximum": 3}},
+      "additionalProperties": true
+    },
+    "attemptCount": {"const": 0},
+    "failureHistory": {"type": "array"},
+    "permissionEnvelopeRef": {"type": "string", "minLength": 1},
+    "provenance": {"type": "object"},
+    "auditMetadata": {"type": "object"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "nonEmptyStrings": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "evidenceAuthorityPair": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["origin", "kind"],
+          "properties": {
+            "origin": {"const": "ISOLATED_VERIFICATION_JOB"},
+            "kind": {"const": "isolated-job-observation"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["origin", "kind"],
+          "properties": {
+            "origin": {"const": "TRUSTED_EXTERNAL_SYSTEM"},
+            "kind": {"const": "github-ci"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["origin", "kind"],
+          "properties": {
+            "origin": {"const": "TRUSTED_COORDINATOR"},
+            "kind": {
+              "enum": [
+                "coordinator-observation", "lease-fencing", "runtime-state",
+                "coordinator-audit", "partner-gate"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}
