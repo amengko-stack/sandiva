@@ -6,7 +6,7 @@ The implementation is not a production gate. A `PASS` means that validated evide
 
 ## Implementation boundary
 
-Repository inspection found the existing local Hermes installation at `AppData/Local/hermes/hermes-agent`, based on `NousResearch/hermes-agent` v0.21.0. Its current state is local SQLite and its active connection is local-only. No registered VM peer, remote Hermes connection, Hermes-named Azure VM/resource, or separate Sandiva-owned Hermes repository was accessible from the build environment.
+Repository inspection found the existing local Hermes installation at `AppData/Local/hermes/hermes-agent`, based on `NousResearch/hermes-agent` v0.21.0. Its current state is local SQLite and its active connection is local-only. The Partner has confirmed that the existing sole authoritative production-target Hermes VM is hosted on Hostinger. No separate Sandiva-owned Hermes repository was accessible from the build environment.
 
 The canonical relationship is therefore:
 
@@ -30,7 +30,7 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 - external SharePoint List state adapter using unique task keys and `If-Match` ETags;
 - restart reconciliation that never assumes ambiguous verification succeeded;
 - production/development identity, namespace, lease-domain, and backend separation;
-- Azure VM managed identity for short-lived Graph tokens without a stored application secret;
+- provider-neutral Graph token acquisition, with Entra certificate app-only authentication selected for the Hostinger production VM and optional Azure managed-identity support retained as an independent adapter;
 - read-only, host-allowlisted Control Tower and GitHub evidence clients;
 - closed least-privilege authority envelope;
 - digest-pinned, network-denied, capability-dropped, read-only-root Docker job construction with CPU, memory, process, disk, output, and time bounds;
@@ -52,13 +52,13 @@ python -m unittest discover -s tests -v
 python -m compileall -q src tests qualification
 ```
 
-The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A deterministic boundary tests are in `tests/test_isolation.py` and `tests/test_authority_identity_runner.py`. Hostile forged-result fixtures F1–F7, plus origin/kind and semantic-channel checks, are in `tests/test_result_evidence_integrity.py`. Criterion-authority fixtures G1–G9, task-fingerprint binding, and pre-retrieval CI authorization are in `tests/test_criterion_evidence_policy.py`.
+The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A deterministic boundary tests are in `tests/test_isolation.py` and `tests/test_authority_identity_runner.py`. Hostile forged-result fixtures F1–F7, plus origin/kind and semantic-channel checks, are in `tests/test_result_evidence_integrity.py`. Criterion-authority fixtures G1–G9, task-fingerprint binding, and pre-retrieval CI authorization are in `tests/test_criterion_evidence_policy.py`. Hostinger authentication fixtures HA-01–HA-10 are in `tests/test_hostinger_authentication.py`.
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
 
 ## Runtime configuration
 
-`config/production.example.json` documents the schema. Before qualification, an authorized infrastructure operator must replace the two clearly named endpoint segments with the approved SharePoint site ID and dedicated runtime-list ID. The dedicated list is runtime state, not the Control Tower, and this build does not provision or modify it.
+`config/production.example.json` documents the schema. Production must explicitly select `vmProvider: hostinger` and `graphAuthentication.provider: entra-certificate`. Before qualification, an authorized infrastructure operator must replace the tenant, application, SharePoint site, and dedicated runtime-list identifiers. The certificate file is external runtime state and must be readable only by the trusted `sandiva-hermes` service account. The dedicated list is runtime state, not the Control Tower, and this build does not provision or modify it.
 
 The list must have these internal column names:
 
@@ -71,4 +71,4 @@ The list must have these internal column names:
 
 To keep the complete task, audit, and retry history inside that bounded field, the validator limits a Canonical Build Task to 8,192 bytes and three attempts, and production limits each normalized result to 8,192 bytes. The adapter checks the final serialized record before every write and fails closed instead of truncating it.
 
-The service refuses production configuration unless it uses the `authoritative-vm` role, a production namespace and lease domain, and a Microsoft Graph SharePoint List endpoint. Local, file, Windows-user, and OneDrive endpoints fail closed.
+The service refuses production configuration unless it uses the `authoritative-vm` role, a production namespace and lease domain, and a Microsoft Graph SharePoint List endpoint. A Hostinger configuration using Azure managed identity, an unsupported authentication provider, or an incomplete certificate identity fails closed. Local, file, Windows-user, and OneDrive endpoints fail closed.

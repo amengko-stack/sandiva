@@ -8,7 +8,7 @@ from .config import RuntimeConfig
 from .contracts import validate_build_task, validate_reference_hashes
 from .coordinator import Coordinator
 from .health_server import create_health_server
-from .identity import ManagedIdentityTokenProvider
+from .identity import build_graph_token_provider
 from .sharepoint_store import SharePointListStateStore
 
 
@@ -19,11 +19,16 @@ def _read_json(path: str) -> dict:
     return value
 
 
-def _production_coordinator(config_path: str, managed_identity_client_id: str | None) -> Coordinator:
+def _production_coordinator(config_path: str) -> Coordinator:
     config = RuntimeConfig.from_mapping(_read_json(config_path))
     if config.environment_kind != "production":
         raise ValueError("runtime commands require an authoritative production VM configuration")
-    token_provider = ManagedIdentityTokenProvider(client_id=managed_identity_client_id)
+    if config.graph_authentication is None:
+        raise ValueError("production Graph authentication is not configured")
+    token_provider = build_graph_token_provider(config.graph_authentication)
+    # Fail startup before health/task reads can mischaracterize an authentication
+    # failure as empty durable state. MSAL retains the successful token in memory.
+    token_provider()
     store = SharePointListStateStore(
         config.state_endpoint, config.task_namespace, config.environment_id, token_provider,
     )
@@ -42,7 +47,6 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("recover", "health", "serve-health"):
         command = subparsers.add_parser(name)
         command.add_argument("--config", required=True)
-        command.add_argument("--managed-identity-client-id")
         if name == "recover":
             command.add_argument("--task-id", required=True)
             command.add_argument("--task-version", required=True, type=int)
@@ -62,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"taskId": task["taskId"], "taskVersion": task["taskVersion"], "valid": True}, sort_keys=True))
         return 0
 
-    coordinator = _production_coordinator(arguments.config, arguments.managed_identity_client_id)
+    coordinator = _production_coordinator(arguments.config)
     if arguments.command == "recover":
         record = coordinator.recover(arguments.task_id, arguments.task_version)
         print(json.dumps({"taskId": arguments.task_id, "taskVersion": arguments.task_version, "status": record.status.value}, sort_keys=True))

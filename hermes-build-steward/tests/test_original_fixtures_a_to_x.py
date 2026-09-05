@@ -18,6 +18,18 @@ from hermes_steward.sharepoint_store import SharePointListStateStore
 from test_state_and_leases import ManualClock, config
 
 
+def hostinger_production_fields():
+    return {
+        "vmProvider": "hostinger",
+        "graphAuthentication": {
+            "provider": "entra-certificate",
+            "tenantId": "tenant-id",
+            "clientId": "client-id",
+            "certificatePath": "/etc/sandiva-hermes/credentials/hermes-graph.pfx",
+        },
+    }
+
+
 class OriginalFixturesAToX(unittest.TestCase):
     def new_coordinator(self):
         clock = ManualClock()
@@ -41,6 +53,7 @@ class OriginalFixturesAToX(unittest.TestCase):
                 "environmentId": "hermes-prod-vm", "taskNamespace": "prod.tasks", "leaseDomain": "prod.vm",
                 "workerIdentity": "vm-worker", "hermesVersion": "0.1.0", "stateBackend": "sharepoint-list",
                 "stateEndpoint": "https://graph.microsoft.com/v1.0/sites/site/lists/list", "resultMaxBytes": 8192,
+                **hostinger_production_fields(),
             }
         )
         self.assertNotIn("local", production.runtime_role)
@@ -117,6 +130,7 @@ class OriginalFixturesAToX(unittest.TestCase):
                     "taskNamespace": "prod.tasks", "leaseDomain": "prod.vm", "workerIdentity": "vm",
                     "hermesVersion": "0.1.0", "stateBackend": "sharepoint-list",
                     "stateEndpoint": "C:\\Users\\partner\\OneDrive\\state", "resultMaxBytes": 65536,
+                    **hostinger_production_fields(),
                 }
             )
 

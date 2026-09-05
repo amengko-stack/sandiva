@@ -2,12 +2,12 @@
 
 ## Deployment mechanism
 
-The intended mechanism is a narrow manual release to the existing Hermes VM:
+The intended mechanism is a narrow manual release to the existing authoritative Hostinger Hermes VM:
 
 1. an authorized operator checks out the independently accepted commit under `/opt/sandiva/hermes-build-steward`;
-2. the operator creates a Python virtual environment and installs this package without third-party runtime dependencies;
-3. the operator places non-secret configuration at `/etc/sandiva-hermes/runtime.json`;
-4. the VM managed identity receives the approved resource-specific Graph grants;
+2. the operator creates a Python virtual environment and installs this package and its pinned-range MSAL dependency;
+3. the operator places non-secret configuration at `/etc/sandiva-hermes/runtime.json` and the certificate credential in an external service-account-only location such as `/etc/sandiva-hermes/credentials/`;
+4. the configured Entra application receives only the approved resource-specific selected Graph grants;
 5. the operator installs `deploy/hermes-build-steward-health.service`, runs the synthetic qualification below, and preserves its output as audit evidence;
 6. production task consumption remains disabled until separate acceptance and activation authority is given.
 
@@ -21,7 +21,9 @@ The hardened systemd unit exposes only `GET http://127.0.0.1:8787/healthz`. It e
 
 Prerequisites:
 
-- run on the existing authoritative Hermes VM, with partner laptop and local Hermes offline;
+- run on the existing authoritative Hostinger Hermes VM, with partner laptop and local Hermes offline;
+- production configuration explicitly selects `hostinger` and `entra-certificate`; Azure managed identity is not a valid Hostinger qualification configuration;
+- the configured PFX credential is non-empty, owned by the trusted Hermes service account, and has no group/other permission bits on Linux;
 - Docker-compatible containment available on the VM;
 - one approved, preloaded Python verification image pinned by `@sha256:`;
 - a dedicated runtime list configured as described in the README;

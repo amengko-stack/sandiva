@@ -6,3 +6,7 @@ dist/
 *.egg-info/
 .tmp/
 .wheel-test/
+*.pem
+*.pfx
+*.key
+*.p12

@@ -34,6 +34,14 @@ jobs:
       - name: Secret-pattern and local-path hygiene
         shell: bash
         run: |
+          if git ls-files --full-name -- . | grep -Ei '\.(pem|pfx|p12|key)$'; then
+            echo "Prohibited private certificate or key file found"
+            exit 1
+          fi
+          if git grep -nIE 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' -- .; then
+            echo "Prohibited private-key material found"
+            exit 1
+          fi
           if grep -RInE --exclude-dir=__pycache__ --exclude='*.md' '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AZURE_CLIENT_SECRET[[:space:]]*=|C:\\Users\\|OneDrive)' src config deploy qualification; then
             echo "Prohibited secret material or local path found"
             exit 1

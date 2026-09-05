@@ -30,7 +30,10 @@ REQUIRED_TASK_FIELDS = {
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
-_SECRET_SUFFIXES = ("secret", "password", "credential", "privatekey", "apikey", "accesstoken", "refreshtoken", "bearertoken")
+_SECRET_SUFFIXES = (
+    "secret", "password", "credential", "privatekey", "apikey", "accesstoken",
+    "refreshtoken", "bearertoken", "certificatepath",
+)
 MAX_TASK_BYTES = 8192
 MAX_ATTEMPTS = 3
 ALLOWED_EVIDENCE_KINDS_BY_ORIGIN = {
@@ -75,7 +78,7 @@ def fingerprint(value: Any) -> str:
 def reject_secret_fields(value: Any, path: str = "payload") -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
-            normalized = str(key).replace("_", "").replace("-", "").lower()
+            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
             if normalized == "token" or normalized.endswith(_SECRET_SUFFIXES):
                 raise ContractValidationError(f"secret-bearing field is prohibited in Build Task: {path}.{key}")
             reject_secret_fields(item, f"{path}.{key}")

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
-_SECRET_MARKERS = ("secret", "password", "credential", "privatekey", "apikey", "authorization")
+_SECRET_MARKERS = (
+    "secret", "password", "credential", "privatekey", "apikey", "authorization", "certificatepath",
+)
 
 
 def sanitize_audit_value(value: Any) -> Any:
     if isinstance(value, dict):
         sanitized = {}
         for key, item in value.items():
-            normalized = str(key).replace("_", "").lower()
+            normalized = re.sub(r"[^a-z0-9]", "", str(key).lower())
             token_secret = normalized == "token" or normalized.endswith(("accesstoken", "refreshtoken", "secrettoken", "bearertoken", "graphtoken", "githubtoken"))
             sanitized[key] = "[REDACTED]" if token_secret or any(marker in normalized for marker in _SECRET_MARKERS) else sanitize_audit_value(item)
         return sanitized

@@ -10,6 +10,18 @@ from hermes_steward.coordinator import Coordinator
 from hermes_steward.store import InMemoryStateStore
 
 
+def hostinger_production_fields():
+    return {
+        "vmProvider": "hostinger",
+        "graphAuthentication": {
+            "provider": "entra-certificate",
+            "tenantId": "tenant-id",
+            "clientId": "client-id",
+            "certificatePath": "/etc/sandiva-hermes/credentials/hermes-graph.pfx",
+        },
+    }
+
+
 class EnvironmentSeparationTests(unittest.TestCase):
     def test_local_identity_cannot_address_production_namespace(self):
         with self.assertRaises(ConfigurationError):
@@ -28,6 +40,7 @@ class EnvironmentSeparationTests(unittest.TestCase):
             "environmentId": "hermes-prod-vm", "taskNamespace": "prod.tasks", "leaseDomain": "prod.vm",
             "workerIdentity": "vm-worker", "hermesVersion": "0.1.0",
             "stateBackend": "memory-test-only", "stateEndpoint": "memory://test", "resultMaxBytes": 1024,
+            **hostinger_production_fields(),
         }
         with self.assertRaises(ConfigurationError):
             RuntimeConfig.from_mapping(baseline)
@@ -45,6 +58,7 @@ class EnvironmentSeparationTests(unittest.TestCase):
                     "environmentId": "hermes-prod-vm", "taskNamespace": "prod.tasks", "leaseDomain": "prod.vm",
                     "workerIdentity": "vm-worker", "hermesVersion": "0.1.0", "stateBackend": "sharepoint-list",
                     "stateEndpoint": "https://graph.microsoft.com/v1.0/sites/site/lists/list", "resultMaxBytes": 65536,
+                    **hostinger_production_fields(),
                 }
             )
 
@@ -58,6 +72,7 @@ class EnvironmentSeparationTests(unittest.TestCase):
                             "environmentId": "hermes-prod-vm", "taskNamespace": "prod.tasks", "leaseDomain": "prod.vm",
                             "workerIdentity": "vm-worker", "hermesVersion": "0.1.0",
                             "stateBackend": "sharepoint-list", "stateEndpoint": endpoint, "resultMaxBytes": 1024,
+                            **hostinger_production_fields(),
                         }
                     )
 
@@ -76,6 +91,7 @@ class EnvironmentSeparationTests(unittest.TestCase):
                             "environmentId": "hermes-prod-vm", "taskNamespace": "prod.tasks", "leaseDomain": "prod.vm",
                             "workerIdentity": "vm-worker", "hermesVersion": "0.1.0",
                             "stateBackend": "sharepoint-list", "stateEndpoint": endpoint, "resultMaxBytes": 1024,
+                            **hostinger_production_fields(),
                         }
                     )
 
@@ -94,6 +110,7 @@ class EnvironmentSeparationTests(unittest.TestCase):
                 "environmentId": "hermes-prod-vm", "taskNamespace": "prod.tasks", "leaseDomain": "prod.vm",
                 "workerIdentity": "vm-worker", "hermesVersion": "0.1.0", "stateBackend": "sharepoint-list",
                 "stateEndpoint": "https://graph.microsoft.com/v1.0/sites/site/lists/list", "resultMaxBytes": 8192,
+                **hostinger_production_fields(),
             }
         )
         coordinator = Coordinator(InMemoryStateStore(), production)

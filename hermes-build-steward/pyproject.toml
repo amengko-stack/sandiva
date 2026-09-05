@@ -7,7 +7,7 @@ name = "sandiva-hermes-build-steward"
 version = "0.1.0"
 description = "Sandiva HERMES-01 Phase 1 trusted build coordinator"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["msal>=1.29,<2"]
 
 [project.scripts]
 hermes-build-steward = "hermes_steward.cli:main"

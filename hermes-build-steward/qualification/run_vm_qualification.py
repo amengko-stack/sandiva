@@ -26,6 +26,7 @@ QUALIFICATION_CRITERIA = (
     "VMQ-NORMAL-VERIFICATION",
     "VMQ-DURABLE-STATE-RECOVERY",
 )
+HOSTINGER_CERTIFICATE_SENTINEL_PATH = "/etc/sandiva-hermes/credentials/HOSTINGER-CERTIFICATE-SENTINEL.pfx"
 
 QUALIFICATION_EVIDENCE_POLICY = {
     "VMQ-RUNAWAY-TERMINATION": {
@@ -83,9 +84,29 @@ def load_task(arguments):
     return task, specification, acceptance
 
 
+def isolation_probe_script() -> str:
+    return f"""
+import json, os, urllib.request
+secret = os.environ.get('COORDINATOR_SECRET_SENTINEL')
+host_exposed = os.path.exists('/host-secret-sentinel') or os.path.exists('/etc/sandiva-hermes/runtime.json')
+try:
+    with open({HOSTINGER_CERTIFICATE_SENTINEL_PATH!r}, 'rb') as credential:
+        credential.read(1)
+    certificate_denied = False
+except OSError:
+    certificate_denied = True
+try:
+    urllib.request.urlopen('https://example.com', timeout=2)
+    network_denied = False
+except Exception:
+    network_denied = True
+print(json.dumps({{'secretIsolation': secret is None, 'certificateIsolation': certificate_denied, 'filesystemIsolation': not host_exposed, 'networkDenied': network_denied, 'normalVerification': True}}))
+""".strip()
+
+
 def prepare(arguments) -> int:
     task, specification, acceptance = load_task(arguments)
-    coordinator = _production_coordinator(arguments.config, arguments.managed_identity_client_id)
+    coordinator = _production_coordinator(arguments.config)
     coordinator.submit_task(task, specification, acceptance)
     lease = coordinator.claim(task["taskId"], task["taskVersion"], coordinator.config.worker_identity, 5)
     coordinator.begin_verification(task["taskId"], task["taskVersion"], lease.lease_id, lease.fencing_token)
@@ -160,7 +181,7 @@ def result_candidate(
 
 def recover(arguments) -> int:
     task, _, _ = load_task(arguments)
-    coordinator = _production_coordinator(arguments.config, arguments.managed_identity_client_id)
+    coordinator = _production_coordinator(arguments.config)
     recovered = coordinator.recover(task["taskId"], task["taskVersion"])
     if recovered.status != TaskStatus.REWORK_REQUIRED:
         print(json.dumps({"status": recovered.status.value, "error": "expired VERIFYING attempt was not reconciled"}, sort_keys=True))
@@ -181,17 +202,7 @@ def recover(arguments) -> int:
         print(json.dumps({"error": "takeover did not issue a newer fencing token"}, sort_keys=True))
         return 2
     coordinator.begin_verification(task["taskId"], task["taskVersion"], lease.lease_id, lease.fencing_token)
-    probe = """
-import json, os, urllib.request
-secret = os.environ.get('COORDINATOR_SECRET_SENTINEL')
-host_exposed = os.path.exists('/host-secret-sentinel') or os.path.exists('/etc/sandiva-hermes/runtime.json')
-try:
-    urllib.request.urlopen('https://example.com', timeout=2)
-    network_denied = False
-except Exception:
-    network_denied = True
-print(json.dumps({'secretIsolation': secret is None, 'filesystemIsolation': not host_exposed, 'networkDenied': network_denied, 'normalVerification': True}))
-""".strip()
+    probe = isolation_probe_script()
     os.environ["COORDINATOR_SECRET_SENTINEL"] = "HOST-ONLY-SENTINEL"
     with tempfile.TemporaryDirectory(prefix="hermes-synthetic-input-") as workspace:
         Path(workspace, "probe.py").write_text(probe + "\n", encoding="utf-8")
@@ -203,7 +214,9 @@ print(json.dumps({'secretIsolation': secret is None, 'filesystemIsolation': not 
         print(json.dumps({"error": "normal isolated job failed", "terminationReason": job.termination_reason}, sort_keys=True))
         return 3
     probe_evidence = json.loads(job.stdout)
-    expected_probe = {"secretIsolation", "filesystemIsolation", "networkDenied", "normalVerification"}
+    expected_probe = {
+        "secretIsolation", "certificateIsolation", "filesystemIsolation", "networkDenied", "normalVerification",
+    }
     if set(probe_evidence) != expected_probe or any(value is not True for value in probe_evidence.values()):
         print(json.dumps({"error": "isolation probe failed", "evidence": probe_evidence}, sort_keys=True))
         return 4
@@ -252,20 +265,21 @@ print(json.dumps({'secretIsolation': secret is None, 'filesystemIsolation': not 
     ]
     job_evidence = []
     probe_mapping = {
-        "VMQ-SECRET-ISOLATION": "secretIsolation",
-        "VMQ-FILESYSTEM-ISOLATION": "filesystemIsolation",
-        "VMQ-NETWORK-ISOLATION": "networkDenied",
-        "VMQ-NORMAL-VERIFICATION": "normalVerification",
+        "VMQ-SECRET-ISOLATION": ("secretIsolation", "certificateIsolation"),
+        "VMQ-FILESYSTEM-ISOLATION": ("filesystemIsolation",),
+        "VMQ-NETWORK-ISOLATION": ("networkDenied",),
+        "VMQ-NORMAL-VERIFICATION": ("normalVerification",),
     }
-    for criterion, observation in probe_mapping.items():
+    for criterion, observations in probe_mapping.items():
+        values = {observation: probe_evidence[observation] for observation in observations}
         job_evidence.append(
             {
-                "evidenceRef": f"isolated-job://{lease.attempt_id}/{observation}",
+                "evidenceRef": f"isolated-job://{lease.attempt_id}/{'-'.join(observations)}",
                 "kind": "isolated-job-observation",
                 "source": f"isolated-job://{lease.attempt_id}/stdout",
-                "result": "PASS" if probe_evidence[observation] else "FAIL",
+                "result": "PASS" if all(values.values()) else "FAIL",
                 "criteria": [criterion],
-                "details": {"observation": observation, "value": probe_evidence[observation], "returnCode": job.return_code},
+                "details": {"observations": values, "returnCode": job.return_code},
             }
         )
     criterion_evidence = {
@@ -289,7 +303,6 @@ def main() -> int:
     parser.add_argument("--specification", required=True)
     parser.add_argument("--acceptance-contract", required=True)
     parser.add_argument("--image", required=True, help="approved preloaded verification image pinned with @sha256")
-    parser.add_argument("--managed-identity-client-id")
     arguments = parser.parse_args()
     return prepare(arguments) if arguments.phase == "prepare" else recover(arguments)
 

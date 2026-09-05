@@ -16,7 +16,7 @@
 | AC-10 | Fresh coordinator reconciles unfinished durable record | LOCAL PASS; VM PENDING |
 | AC-11 | Expired `VERIFYING` becomes `REWORK_REQUIRED`, never success | LOCAL PASS |
 | AC-12 | Read-only loopback health endpoint contains every required field | LOCAL PASS; VM PENDING |
-| AC-13 | Managed identity, secret allowlist/redaction, no job credential propagation | LOCAL PASS; VM PENDING |
+| AC-13 | Hostinger Entra certificate adapter, external credential mode/ownership validation, secret allowlist/redaction, no job credential propagation, and optional Azure managed-identity adapter | LOCAL PASS; VM PENDING |
 | AC-14 | Closed authority envelope denies client-document access and broader powers | LOCAL PASS; permission grant VM PENDING |
 | AC-15 | Durable record retains task, attempt, lease/fence, result and audit history | LOCAL PASS; VM PENDING |
 | AC-16 | Merge/deploy/spec/code/Partner Decision powers explicitly denied | LOCAL PASS |

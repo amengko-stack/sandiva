@@ -50,7 +50,7 @@ class SharePointListStateStore:
     def _headers(self, *, etag: str | None = None) -> dict[str, str]:
         token = self.token_provider()
         if not token:
-            raise RuntimeError("managed identity did not provide a Graph access token")
+            raise RuntimeError("Graph token provider did not provide an access token")
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"}
         if etag is not None:
             headers["If-Match"] = etag
