@@ -217,7 +217,17 @@ class EvidenceForgeryRegressionTests(unittest.TestCase):
 
     def test_f7_coordinator_retrieved_github_ci_evidence_can_prove_its_criterion(self):
         sha = "c59596559515efa6e088eff4024f90cdca5b3898"
-        task = build_task(acceptanceCriteria=["AC-CI"], commitRefs=[sha])
+        task = build_task(
+            acceptanceCriteria=["AC-CI"],
+            criterionEvidencePolicy={
+                "AC-CI": {
+                    "allowedEvidence": [
+                        {"origin": "TRUSTED_EXTERNAL_SYSTEM", "kind": "github-ci"}
+                    ]
+                }
+            },
+            commitRefs=[sha],
+        )
         coordinator = Coordinator(InMemoryStateStore(), runtime_config())
         coordinator.submit_task(task)
         lease = coordinator.claim(task["taskId"], 1, "worker-1", 30)

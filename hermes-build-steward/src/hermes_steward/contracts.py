@@ -21,6 +21,7 @@ REQUIRED_TASK_FIELDS = {
     "originatingPmInstructionFingerprint", "specificationRef", "specificationVersion",
     "specificationHash", "acceptanceContractRef", "acceptanceContractVersion",
     "acceptanceContractHash", "repository", "baseRef", "scope", "acceptanceCriteria",
+    "criterionEvidencePolicy",
     "permittedRepositoryAreas", "prohibitedRepositoryAreas", "riskLevel", "executorPolicy",
     "executionStatus", "branchRef", "prRef", "commitRefs", "evaluationRequirements",
     "qaRequirements", "partnerGateStatus", "retryPolicy", "attemptCount", "failureHistory",
@@ -32,6 +33,13 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _SECRET_SUFFIXES = ("secret", "password", "credential", "privatekey", "apikey", "accesstoken", "refreshtoken", "bearertoken")
 MAX_TASK_BYTES = 8192
 MAX_ATTEMPTS = 3
+ALLOWED_EVIDENCE_KINDS_BY_ORIGIN = {
+    "ISOLATED_VERIFICATION_JOB": frozenset({"isolated-job-observation"}),
+    "TRUSTED_EXTERNAL_SYSTEM": frozenset({"github-ci"}),
+    "TRUSTED_COORDINATOR": frozenset(
+        {"coordinator-observation", "lease-fencing", "runtime-state", "coordinator-audit", "partner-gate"}
+    ),
+}
 
 
 def _nonempty_string(value: Any, field: str) -> None:
@@ -122,6 +130,39 @@ def validate_build_task(raw: Mapping[str, Any]) -> dict[str, Any]:
         _string_list(task[field], field)
         if len(task[field]) != len(set(task[field])):
             raise ContractValidationError(f"{field} must not contain duplicates")
+    evidence_policy = task["criterionEvidencePolicy"]
+    if not isinstance(evidence_policy, dict) or set(evidence_policy) != set(task["acceptanceCriteria"]):
+        raise ContractValidationError(
+            "criterionEvidencePolicy must cover every acceptance criterion exactly once"
+        )
+    for criterion, entry in evidence_policy.items():
+        if not isinstance(entry, dict) or set(entry) != {"allowedEvidence"}:
+            raise ContractValidationError(
+                f"criterionEvidencePolicy.{criterion} must contain only allowedEvidence"
+            )
+        allowed_evidence = entry["allowedEvidence"]
+        if not isinstance(allowed_evidence, list) or not allowed_evidence:
+            raise ContractValidationError(
+                f"criterionEvidencePolicy.{criterion}.allowedEvidence must be a non-empty list"
+            )
+        pairs = []
+        for authority in allowed_evidence:
+            if not isinstance(authority, dict) or set(authority) != {"origin", "kind"}:
+                raise ContractValidationError("criterion evidence authority must contain only origin and kind")
+            origin = authority["origin"]
+            kind = authority["kind"]
+            if (
+                not isinstance(origin, str)
+                or not isinstance(kind, str)
+                or origin not in ALLOWED_EVIDENCE_KINDS_BY_ORIGIN
+                or kind not in ALLOWED_EVIDENCE_KINDS_BY_ORIGIN[origin]
+            ):
+                raise ContractValidationError("criterion evidence authority origin/kind pair is invalid")
+            pairs.append((origin, kind))
+        if len(pairs) != len(set(pairs)):
+            raise ContractValidationError(
+                f"criterionEvidencePolicy.{criterion}.allowedEvidence must not contain duplicates"
+            )
     _string_list(task["commitRefs"], "commitRefs", allow_empty=True)
     if any(not _COMMIT.fullmatch(commit) for commit in task["commitRefs"]):
         raise ContractValidationError("commitRefs must contain immutable commit SHAs")

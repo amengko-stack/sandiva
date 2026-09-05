@@ -27,8 +27,11 @@ Prerequisites:
 - a dedicated runtime list configured as described in the README;
 - a unique synthetic/non-client Build Task whose `auditMetadata.classification` is exactly `synthetic-non-client`;
 - that dedicated task contains exactly these acceptance criteria and no unrelated build criterion: `VMQ-RUNAWAY-TERMINATION`, `VMQ-CONTAINER-CLEANUP`, `VMQ-RESTART-RECOVERY`, `VMQ-LEASE-FENCING`, `VMQ-SECRET-ISOLATION`, `VMQ-FILESYSTEM-ISOLATION`, `VMQ-NETWORK-ISOLATION`, `VMQ-NORMAL-VERIFICATION`, and `VMQ-DURABLE-STATE-RECOVERY`;
+- the task's immutable `criterionEvidencePolicy` must use the exact authority mapping below; the qualification command rejects any missing, additional, or altered pair;
 - that task's `executorPolicy.approvedCommands` must contain the exact entries `python runaway.py` and `python probe.py`;
 - canonical synthetic specification and acceptance-contract files whose SHA-256 values match that task.
+
+The coordinator-only criteria and kinds are: runaway termination and container cleanup as `coordinator-observation`, restart recovery as `runtime-state`, lease/fencing as `lease-fencing`, and durable recovery as `coordinator-audit`. Secret, filesystem, network, and normal verification checks permit only `ISOLATED_VERIFICATION_JOB/isolated-job-observation`. No isolated-job observation can substitute for a coordinator-only qualification criterion.
 
 Phase 1 deliberately terminates its process after leaving a durable `VERIFYING` attempt:
 

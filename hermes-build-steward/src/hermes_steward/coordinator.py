@@ -262,6 +262,13 @@ class Coordinator:
             raise CoordinatorError("trusted CI evidence commit is not bound to the Build Task")
         if not criteria or not set(criteria).issubset(set(snapshot.task["acceptanceCriteria"])):
             raise CoordinatorError("trusted CI evidence criteria are not bound to the Build Task")
+        required_authority = {"origin": "TRUSTED_EXTERNAL_SYSTEM", "kind": "github-ci"}
+        if any(
+            required_authority
+            not in snapshot.task["criterionEvidencePolicy"][criterion]["allowedEvidence"]
+            for criterion in criteria
+        ):
+            raise CoordinatorError("trusted CI evidence is not authorized by criterion evidence policy")
         evidence = retrieve_github_ci_evidence(reader, snapshot.task["repository"], commit_sha, criteria)
 
         def mutation(record: TaskRecord) -> TaskRecord:

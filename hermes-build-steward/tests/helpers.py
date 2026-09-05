@@ -52,6 +52,19 @@ def build_task(**overrides):
         "updatedAt": now,
     }
     task.update(overrides)
+    if "criterionEvidencePolicy" not in overrides:
+        task["criterionEvidencePolicy"] = {
+            criterion: {
+                "allowedEvidence": [
+                    {
+                        "origin": "ISOLATED_VERIFICATION_JOB",
+                        "kind": "isolated-job-observation",
+                    },
+                    {"origin": "TRUSTED_COORDINATOR", "kind": "partner-gate"},
+                ]
+            }
+            for criterion in task["acceptanceCriteria"]
+        }
     return task
 
 

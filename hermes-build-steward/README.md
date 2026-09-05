@@ -24,7 +24,7 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 
 ## Implemented capabilities
 
-- strict Canonical Build Task v1 validation, immutable base/hash validation, and permitted/prohibited path enforcement;
+- strict Canonical Build Task v1 validation, immutable base/hash validation, complete criterion evidence-authority policy, and permitted/prohibited path enforcement;
 - explicit fail-closed Phase 1 state machine;
 - compare-and-swap task state, exclusive leases, expiry, renewal, monotonic fencing, deterministic attempt IDs, and duplicate delivery/result handling;
 - external SharePoint List state adapter using unique task keys and `If-Match` ETags;
@@ -34,7 +34,7 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 - read-only, host-allowlisted Control Tower and GitHub evidence clients;
 - closed least-privilege authority envelope;
 - digest-pinned, network-denied, capability-dropped, read-only-root Docker job construction with CPU, memory, process, disk, output, and time bounds;
-- strict size-bounded normalized result ingestion with unique evidence identities, exact criterion-to-evidence resolution, and acquisition-path trust stamping;
+- strict size-bounded normalized result ingestion with unique evidence identities, exact criterion-to-evidence resolution, acquisition-path trust stamping, and task-bound origin/kind authorization;
 - operator health endpoint on `127.0.0.1:8787/healthz`;
 - audit/provenance retained with the durable task record and recursive secret-field redaction.
 
@@ -52,7 +52,7 @@ python -m unittest discover -s tests -v
 python -m compileall -q src tests qualification
 ```
 
-The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A deterministic boundary tests are in `tests/test_isolation.py` and `tests/test_authority_identity_runner.py`. Hostile forged-result fixtures F1–F7, plus origin/kind and semantic-channel checks, are in `tests/test_result_evidence_integrity.py`.
+The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A deterministic boundary tests are in `tests/test_isolation.py` and `tests/test_authority_identity_runner.py`. Hostile forged-result fixtures F1–F7, plus origin/kind and semantic-channel checks, are in `tests/test_result_evidence_integrity.py`. Criterion-authority fixtures G1–G9, task-fingerprint binding, and pre-retrieval CI authorization are in `tests/test_criterion_evidence_policy.py`.
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
 

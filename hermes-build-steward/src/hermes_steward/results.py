@@ -6,7 +6,11 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 from urllib.parse import urlparse
 
-from .contracts import ContractValidationError, reject_secret_fields
+from .contracts import (
+    ALLOWED_EVIDENCE_KINDS_BY_ORIGIN,
+    ContractValidationError,
+    reject_secret_fields,
+)
 from .evidence import TrustedEvidence
 
 
@@ -46,14 +50,7 @@ def _validate_evidence_record(record: Mapping[str, Any], task: Mapping[str, Any]
         "ISOLATED_VERIFICATION_JOB", "TRUSTED_COORDINATOR", "TRUSTED_EXTERNAL_SYSTEM"
     }:
         raise ResultValidationError("evidence trusted origin is invalid")
-    allowed_kinds = {
-        "ISOLATED_VERIFICATION_JOB": {"isolated-job-observation"},
-        "TRUSTED_EXTERNAL_SYSTEM": {"github-ci"},
-        "TRUSTED_COORDINATOR": {
-            "coordinator-observation", "lease-fencing", "runtime-state", "coordinator-audit", "partner-gate"
-        },
-    }
-    if record["kind"] not in allowed_kinds[record["trustedOrigin"]]:
+    if record["kind"] not in ALLOWED_EVIDENCE_KINDS_BY_ORIGIN[record["trustedOrigin"]]:
         raise ResultValidationError("trusted origin does not authorize evidence kind")
     criteria = record["criteria"]
     if (
@@ -190,6 +187,11 @@ def validate_job_result(
         if len(item["evidenceRefs"]) != len(set(item["evidenceRefs"])):
             raise ResultValidationError("acceptance criterion contains duplicate evidence references")
         resolved = []
+        try:
+            policy = task["criterionEvidencePolicy"][item["criterion"]]["allowedEvidence"]
+            allowed_evidence = {(entry["origin"], entry["kind"]) for entry in policy}
+        except (KeyError, TypeError) as error:
+            raise ResultValidationError("trusted task criterion evidence policy is invalid") from error
         for reference in item["evidenceRefs"]:
             evidence = evidence_by_ref.get(reference)
             if evidence is None:
@@ -197,6 +199,10 @@ def validate_job_result(
             if item["criterion"] not in evidence["criteria"]:
                 raise ResultValidationError(
                     f"evidence reference {reference} does not prove criterion {item['criterion']}"
+                )
+            if (evidence["trustedOrigin"], evidence["kind"]) not in allowed_evidence:
+                raise ResultValidationError(
+                    f"evidence reference {reference} is not authorized by criterion evidence policy"
                 )
             resolved.append(evidence)
         if item["result"] == "PASS" and any(evidence["result"] != "PASS" for evidence in resolved):

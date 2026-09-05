@@ -27,6 +27,36 @@ QUALIFICATION_CRITERIA = (
     "VMQ-DURABLE-STATE-RECOVERY",
 )
 
+QUALIFICATION_EVIDENCE_POLICY = {
+    "VMQ-RUNAWAY-TERMINATION": {
+        "allowedEvidence": [{"origin": "TRUSTED_COORDINATOR", "kind": "coordinator-observation"}]
+    },
+    "VMQ-CONTAINER-CLEANUP": {
+        "allowedEvidence": [{"origin": "TRUSTED_COORDINATOR", "kind": "coordinator-observation"}]
+    },
+    "VMQ-RESTART-RECOVERY": {
+        "allowedEvidence": [{"origin": "TRUSTED_COORDINATOR", "kind": "runtime-state"}]
+    },
+    "VMQ-LEASE-FENCING": {
+        "allowedEvidence": [{"origin": "TRUSTED_COORDINATOR", "kind": "lease-fencing"}]
+    },
+    "VMQ-DURABLE-STATE-RECOVERY": {
+        "allowedEvidence": [{"origin": "TRUSTED_COORDINATOR", "kind": "coordinator-audit"}]
+    },
+    "VMQ-SECRET-ISOLATION": {
+        "allowedEvidence": [{"origin": "ISOLATED_VERIFICATION_JOB", "kind": "isolated-job-observation"}]
+    },
+    "VMQ-FILESYSTEM-ISOLATION": {
+        "allowedEvidence": [{"origin": "ISOLATED_VERIFICATION_JOB", "kind": "isolated-job-observation"}]
+    },
+    "VMQ-NETWORK-ISOLATION": {
+        "allowedEvidence": [{"origin": "ISOLATED_VERIFICATION_JOB", "kind": "isolated-job-observation"}]
+    },
+    "VMQ-NORMAL-VERIFICATION": {
+        "allowedEvidence": [{"origin": "ISOLATED_VERIFICATION_JOB", "kind": "isolated-job-observation"}]
+    },
+}
+
 
 def policy(image: str, timeout: int) -> IsolationPolicy:
     return IsolationPolicy(
@@ -35,12 +65,18 @@ def policy(image: str, timeout: int) -> IsolationPolicy:
     )
 
 
-def load_task(arguments):
-    task = validate_build_task(_read_json(arguments.task))
+def validate_qualification_task(task: dict) -> None:
     if task["auditMetadata"].get("classification") != "synthetic-non-client":
         raise SystemExit("qualification refuses any task not marked synthetic-non-client")
     if len(task["acceptanceCriteria"]) != len(QUALIFICATION_CRITERIA) or set(task["acceptanceCriteria"]) != set(QUALIFICATION_CRITERIA):
         raise SystemExit("qualification requires a dedicated task containing only the exact VM qualification criteria")
+    if task["criterionEvidencePolicy"] != QUALIFICATION_EVIDENCE_POLICY:
+        raise SystemExit("qualification requires the exact trusted evidence-authority policy")
+
+
+def load_task(arguments):
+    task = validate_build_task(_read_json(arguments.task))
+    validate_qualification_task(task)
     specification = Path(arguments.specification).read_bytes()
     acceptance = Path(arguments.acceptance_contract).read_bytes()
     validate_reference_hashes(task, specification, acceptance)

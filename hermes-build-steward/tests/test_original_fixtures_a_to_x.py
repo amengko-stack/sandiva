@@ -162,7 +162,18 @@ class OriginalFixturesAToX(unittest.TestCase):
     def test_fixture_s_github_ci_traceability(self):
         sha = "c59596559515efa6e088eff4024f90cdca5b3898"
         coordinator, _, _ = self.new_coordinator()
-        task = build_task(taskId="HERMES-01-SYNTHETIC-CI", acceptanceCriteria=["AC-CI"], commitRefs=[sha])
+        task = build_task(
+            taskId="HERMES-01-SYNTHETIC-CI",
+            acceptanceCriteria=["AC-CI"],
+            criterionEvidencePolicy={
+                "AC-CI": {
+                    "allowedEvidence": [
+                        {"origin": "TRUSTED_EXTERNAL_SYSTEM", "kind": "github-ci"}
+                    ]
+                }
+            },
+            commitRefs=[sha],
+        )
         coordinator.submit_task(task)
         lease = coordinator.claim(task["taskId"], 1, "a", 30)
         coordinator.begin_verification(task["taskId"], 1, lease.lease_id, lease.fencing_token)
