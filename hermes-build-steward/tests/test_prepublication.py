@@ -75,7 +75,10 @@ class PrepublicationTests(unittest.TestCase):
 
     def test_secret_binary_generated_and_oversized_material_fail_closed(self):
         fixtures = {
-            "private-key": ("allowed/signing.pem", b"-----BEGIN PRIVATE KEY-----\nSENTINEL\n"),
+            "private-key": (
+                "allowed/signing.pem",
+                b"-----BEGIN " + b"PRIVATE KEY-----\nSENTINEL\n",
+            ),
             "binary": ("allowed/blob.bin", b"\x00\x01\x02"),
             "generated": ("allowed/app.min.js", b"minified"),
             "oversized": ("allowed/large.txt", b"x" * 65),
