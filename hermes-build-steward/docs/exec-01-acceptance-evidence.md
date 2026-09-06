@@ -33,7 +33,7 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests | 983/983 application regression; scoped diff inspection | PASS |
 | AC-25 | accepted Hermes behavior unmodified | complete 193/193 Hermes regression including A–X, F1–F7, G1–G9, HA-01–HA-10 and VM regression | PASS |
-| AC-26 | application/type/build/CI | 983/983 application tests; TypeScript and production build pass | PASS locally; GitHub Actions pending draft PR |
+| AC-26 | application/type/build/CI | 983/983 application tests; TypeScript, production build, Hermes deterministic CI and application CI pass | PASS |
 | AC-27 | `build_execution_audit_record` | end-to-end provenance test | PASS |
 | AC-28 | `run_exec01_vm_qualification.py` | actual Hostinger synthetic Codex/Claude qualification | DEFERRED — separate PM authorization required |
 
@@ -54,5 +54,7 @@ Observed on the authorized branch before publication:
 - package: `sandiva_hermes_build_steward-0.2.0-py3-none-any.whl` built, SHA-256 `27db0a9da265664a32eacaecd31881bf1e7504826855e6e987cfa8d733f66534`;
 - output-flood regression: repeated ten times after correcting the Windows termination-observation race, all passed;
 - diff hygiene: `git diff --check` passed (line-ending notices only).
+- draft PR: `https://github.com/amengko-stack/sandiva/pull/85`, open and draft against the exact authorized base;
+- GitHub readback: Hermes `deterministic` and `sln-litigation-drafter` checks passed; Vercel preview checks passed. The existing PR integration created only a non-production preview, not production deployment or activation.
 
-Commit/PR identities and GitHub Actions readback are recorded after publication. Hostinger evidence is not represented as local evidence and remains deferred.
+Hostinger evidence is not represented as local or CI evidence and remains deferred.
