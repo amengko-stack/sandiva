@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -40,12 +40,18 @@ class SharePointListStateStore:
         token_provider: Callable[[], str],
         *,
         transport: GraphTransport | None = None,
+        record_encoder: Callable[[Any], Mapping[str, object]] = record_to_dict,
+        record_decoder: Callable[[Mapping[str, object]], Any] = record_from_dict,
+        status_getter: Callable[[Any], str] | None = None,
     ):
         self.list_endpoint = list_endpoint.rstrip("/")
         self.task_namespace = task_namespace
         self.environment_id = environment_id
         self.token_provider = token_provider
         self.transport = transport or UrlLibGraphTransport()
+        self.record_encoder = record_encoder
+        self.record_decoder = record_decoder
+        self.status_getter = status_getter or (lambda record: record.status.value)
 
     def _headers(self, *, etag: str | None = None) -> dict[str, str]:
         token = self.token_provider()
@@ -56,8 +62,8 @@ class SharePointListStateStore:
             headers["If-Match"] = etag
         return headers
 
-    def _fields(self, key: str, record: TaskRecord) -> dict[str, str]:
-        payload = canonical_json(record_to_dict(record)).decode("utf-8")
+    def _fields(self, key: str, record: Any) -> dict[str, str]:
+        payload = canonical_json(self.record_encoder(record)).decode("utf-8")
         if len(payload) > SHAREPOINT_PAYLOAD_LIMIT_CHARS:
             raise ValueError(f"durable task record exceeds the {SHAREPOINT_PAYLOAD_LIMIT_CHARS}-character Payload limit")
         return {
@@ -65,17 +71,16 @@ class SharePointListStateStore:
             "TaskKey": key,
             "TaskNamespace": self.task_namespace,
             "EnvironmentId": self.environment_id,
-            "TaskStatus": record.status.value,
+            "TaskStatus": self.status_getter(record),
             "Payload": payload,
         }
 
-    @staticmethod
-    def _decode_item(item: Mapping[str, object]) -> VersionedRecord[TaskRecord]:
+    def _decode_item(self, item: Mapping[str, object]) -> VersionedRecord[Any]:
         fields = item.get("fields")
         etag = item.get("eTag")
         if not isinstance(fields, dict) or not isinstance(fields.get("Payload"), str) or not isinstance(etag, str):
             raise RuntimeError("SharePoint state item is missing Payload or eTag")
-        return VersionedRecord(record_from_dict(json.loads(fields["Payload"])), etag)
+        return VersionedRecord(self.record_decoder(json.loads(fields["Payload"])), etag)
 
     def _query_url(self, key: str | None = None) -> str:
         expand = "$expand=fields($select=TaskKey,TaskNamespace,EnvironmentId,TaskStatus,Payload)&$top=999"

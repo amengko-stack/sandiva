@@ -1,6 +1,6 @@
 # Sandiva Hermes Build Steward — Phase 1
 
-This package is the Sandiva-specific trusted coordinator required by HERMES-01 and the restrictive HERMES-01A addendum. It is intentionally a small companion to the existing upstream Hermes Agent runtime. It is not a fork, replacement, executor framework, deployment controller, or legal-workflow component.
+This package is the Sandiva-specific trusted coordinator required by HERMES-01/HERMES-01A and the provider-neutral build-plane adapter required by EXEC-01. It remains a small companion to the upstream Hermes Agent runtime, not a fork, replacement, deployment controller, or legal-workflow component.
 
 The implementation is not a production gate. A `PASS` means that validated evidence is ready for PM acceptance review; it never accepts, merges, deploys, or activates anything.
 
@@ -37,10 +37,15 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 - strict size-bounded normalized result ingestion with unique evidence identities, exact criterion-to-evidence resolution, acquisition-path trust stamping, and task-bound origin/kind authorization;
 - operator health endpoint on `127.0.0.1:8787/healthz`;
 - audit/provenance retained with the durable task record and recursive secret-field redaction.
+- an explicit Canonical Build Task v2.0 dispatch contract while accepted v1.0 remains non-dispatch;
+- fingerprinted Codex and Claude Code profiles behind one normalized `ExecutionAdapter` boundary;
+- exact-base attempt workspaces, executor/control-plane credential separation, explicit network/resource containment, and complete pre-publication enforcement;
+- deterministic task-bound draft-PR publication through a separate least-privilege publisher; and
+- CAS-shaped execution checkpoints, duplicate idempotency, stale-fence denial, bounded retry/fallback, crash reconciliation and bounded provenance.
 
 ## Deliberate exclusions
 
-There is no Codex or Claude Code dispatch, automatic rework, automatic merge, deployment, production activation, client-document access, browser/computer use, EXEC-01, AI-01, AI-02, Capability Router, Legal Execution Adapter, or Evaluation Harness. No specialist LDD or Litigation code is imported or changed.
+There is no automatic rework approval, automatic merge, deployment, production activation, client-document access, browser/computer use, AI-01, AI-02, Capability Router, Legal Execution Adapter, or Evaluation Harness. No specialist LDD or Litigation code is imported or changed. Actual Codex/Claude Hostinger execution remains a separate synthetic qualification gate.
 
 ## Local deterministic checks
 
@@ -55,6 +60,8 @@ python -m compileall -q src tests qualification
 The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A deterministic boundary tests are in `tests/test_isolation.py` and `tests/test_authority_identity_runner.py`. Hostile forged-result fixtures F1–F7, plus origin/kind and semantic-channel checks, are in `tests/test_result_evidence_integrity.py`. Criterion-authority fixtures G1–G9, task-fingerprint binding, and pre-retrieval CI authorization are in `tests/test_criterion_evidence_policy.py`. Hostinger authentication fixtures HA-01–HA-10 are in `tests/test_hostinger_authentication.py`.
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
+
+EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
 
 ## Runtime configuration
 

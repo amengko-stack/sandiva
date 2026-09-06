@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sandiva.example/schemas/normalized-execution-result-v1.schema.json",
+  "title": "EXEC-01 Normalized Execution Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "disposition", "acceptanceDisposition", "taskId", "taskVersion",
+    "taskFingerprint", "attemptId", "executorProfile", "timestamps", "baseSha",
+    "changedPaths", "patchDigest", "commandsExecuted", "testOutcomes", "branch",
+    "commitSha", "draftPr", "evidenceReferences", "failureClassification",
+    "provenance", "auditProvenanceId"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "disposition": {"enum": ["EXECUTION_SUCCEEDED", "EXECUTION_FAILED", "EXECUTION_BLOCKED", "EXECUTION_CANCELLED", "EXECUTION_TIMED_OUT"]},
+    "acceptanceDisposition": {"const": "NOT_EVALUATED"},
+    "taskId": {"type": "string", "minLength": 1},
+    "taskVersion": {"type": "integer", "minimum": 1},
+    "taskFingerprint": {"$ref": "#/$defs/sha256"},
+    "attemptId": {"type": "string", "minLength": 1},
+    "executorProfile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profileId", "profileFingerprint", "provider"],
+      "properties": {
+        "profileId": {"type": "string", "minLength": 1},
+        "profileFingerprint": {"$ref": "#/$defs/sha256"},
+        "provider": {"enum": ["codex", "claude-code"]}
+      }
+    },
+    "timestamps": {
+      "type": "object", "additionalProperties": false,
+      "required": ["startedAt", "completedAt"],
+      "properties": {"startedAt": {"type": "string", "format": "date-time"}, "completedAt": {"type": "string", "format": "date-time"}}
+    },
+    "baseSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "changedPaths": {"$ref": "#/$defs/strings"},
+    "patchDigest": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "commandsExecuted": {"$ref": "#/$defs/strings"},
+    "testOutcomes": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "status", "command"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "status": {"enum": ["PASS", "FAIL", "SKIPPED"]},
+          "command": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "branch": {"type": ["string", "null"]},
+    "commitSha": {"anyOf": [{"type": "string", "pattern": "^[0-9a-f]{40}$"}, {"type": "null"}]},
+    "draftPr": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["number", "url", "isDraft"],
+          "properties": {"number": {"type": "integer", "minimum": 1}, "url": {"type": "string", "minLength": 1}, "isDraft": {"const": true}}
+        }
+      ]
+    },
+    "evidenceReferences": {"$ref": "#/$defs/strings"},
+    "failureClassification": {"type": "string", "minLength": 1},
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runtimeName", "runtimeVersion", "model", "launcherVersion", "profileFingerprint"],
+      "properties": {
+        "runtimeName": {"type": "string", "minLength": 1},
+        "runtimeVersion": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "launcherVersion": {"type": "string", "minLength": 1},
+        "profileFingerprint": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "auditProvenanceId": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "strings": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sandiva.example/schemas/normalized-execution-request-v1.schema.json",
+  "title": "EXEC-01 Normalized Execution Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "taskId", "taskVersion", "taskFingerprint",
+    "originatingPmInstructionRef", "originatingPmInstructionFingerprint",
+    "specificationRef", "specificationVersion", "specificationHash",
+    "acceptanceContractRef", "acceptanceContractVersion", "acceptanceContractHash",
+    "repository", "baseSha", "permittedRepositoryAreas", "prohibitedRepositoryAreas",
+    "approvedCommands", "executorProfile", "attemptId", "lease", "retryPolicy",
+    "fallbackPolicy", "riskLevel", "permissionEnvelopeRef", "networkPolicyRef",
+    "resourcePolicyRef", "publisherPolicyRef", "auditProvenanceId"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "taskId": {"type": "string", "minLength": 1},
+    "taskVersion": {"type": "integer", "minimum": 1},
+    "taskFingerprint": {"$ref": "#/$defs/sha256"},
+    "originatingPmInstructionRef": {"type": "string", "minLength": 1},
+    "originatingPmInstructionFingerprint": {"$ref": "#/$defs/sha256"},
+    "specificationRef": {"type": "string", "minLength": 1},
+    "specificationVersion": {"type": "string", "minLength": 1},
+    "specificationHash": {"$ref": "#/$defs/sha256"},
+    "acceptanceContractRef": {"type": "string", "minLength": 1},
+    "acceptanceContractVersion": {"type": "string", "minLength": 1},
+    "acceptanceContractHash": {"$ref": "#/$defs/sha256"},
+    "repository": {"type": "string", "minLength": 1},
+    "baseSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "permittedRepositoryAreas": {"$ref": "#/$defs/strings"},
+    "prohibitedRepositoryAreas": {"$ref": "#/$defs/strings"},
+    "approvedCommands": {"$ref": "#/$defs/strings"},
+    "executorProfile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profileId", "profileFingerprint", "provider"],
+      "properties": {
+        "profileId": {"type": "string", "minLength": 1},
+        "profileFingerprint": {"$ref": "#/$defs/sha256"},
+        "provider": {"enum": ["codex", "claude-code"]}
+      }
+    },
+    "attemptId": {"type": "string", "minLength": 1},
+    "lease": {
+      "type": "object", "additionalProperties": false,
+      "required": ["leaseId", "fencingToken"],
+      "properties": {
+        "leaseId": {"type": "string", "minLength": 1},
+        "fencingToken": {"type": "integer", "minimum": 1}
+      }
+    },
+    "retryPolicy": {"type": "object"},
+    "fallbackPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "noDowngrade", "permittedProfiles"],
+      "properties": {
+        "mode": {"enum": ["NONE", "ORDERED"]},
+        "noDowngrade": {"const": true},
+        "permittedProfiles": {"type": "array"}
+      }
+    },
+    "riskLevel": {"type": "string", "minLength": 1},
+    "permissionEnvelopeRef": {"type": "string", "minLength": 1},
+    "networkPolicyRef": {"type": "string", "minLength": 1},
+    "resourcePolicyRef": {"type": "string", "minLength": 1},
+    "publisherPolicyRef": {"type": "string", "minLength": 1},
+    "auditProvenanceId": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "strings": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  }
+}
