@@ -5,8 +5,10 @@ import argparse
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 from hermes_steward.cli import _production_coordinator, _read_json
 from hermes_steward.contracts import validate_build_task, validate_reference_hashes
@@ -104,6 +106,21 @@ print(json.dumps({{'secretIsolation': secret is None, 'certificateIsolation': ce
 """.strip()
 
 
+@contextmanager
+def container_readable_synthetic_workspace(workspace: str, input_file: Path) -> Iterator[None]:
+    """Expose only the synthetic fixture to the fixed non-root container user."""
+    workspace_path = Path(workspace)
+    input_file.chmod(0o644)
+    workspace_path.chmod(0o755)
+    try:
+        yield
+    finally:
+        try:
+            input_file.chmod(0o600)
+        finally:
+            workspace_path.chmod(0o700)
+
+
 def prepare(arguments) -> int:
     task, specification, acceptance = load_task(arguments)
     coordinator = _production_coordinator(arguments.config)
@@ -112,8 +129,10 @@ def prepare(arguments) -> int:
     coordinator.begin_verification(task["taskId"], task["taskVersion"], lease.lease_id, lease.fencing_token)
     runner = BoundedProcessRunner(policy(arguments.image, 1))
     with tempfile.TemporaryDirectory(prefix="hermes-synthetic-input-") as workspace:
-        Path(workspace, "runaway.py").write_text("while True: pass\n", encoding="utf-8")
-        result = runner.run_verification(task, workspace, ["python", "runaway.py"])
+        runaway_script = Path(workspace, "runaway.py")
+        runaway_script.write_text("while True: pass\n", encoding="utf-8")
+        with container_readable_synthetic_workspace(workspace, runaway_script):
+            result = runner.run_verification(task, workspace, ["python", "runaway.py"])
     checks = {
         "VMQ-RUNAWAY-TERMINATION": result.terminated,
         "VMQ-CONTAINER-CLEANUP": result.container_cleanup in {"REMOVED", "ALREADY_REMOVED"},
@@ -205,11 +224,13 @@ def recover(arguments) -> int:
     probe = isolation_probe_script()
     os.environ["COORDINATOR_SECRET_SENTINEL"] = "HOST-ONLY-SENTINEL"
     with tempfile.TemporaryDirectory(prefix="hermes-synthetic-input-") as workspace:
-        Path(workspace, "probe.py").write_text(probe + "\n", encoding="utf-8")
-        job = BoundedProcessRunner(policy(arguments.image, 20)).run_verification(
-            task, workspace, ["python", "probe.py"],
-            approved_job_environment={"HERMES_TASK_ID": task["taskId"]},
-        )
+        probe_script = Path(workspace, "probe.py")
+        probe_script.write_text(probe + "\n", encoding="utf-8")
+        with container_readable_synthetic_workspace(workspace, probe_script):
+            job = BoundedProcessRunner(policy(arguments.image, 20)).run_verification(
+                task, workspace, ["python", "probe.py"],
+                approved_job_environment={"HERMES_TASK_ID": task["taskId"]},
+            )
     if job.terminated or job.return_code != 0:
         print(json.dumps({"error": "normal isolated job failed", "terminationReason": job.termination_reason}, sort_keys=True))
         return 3
