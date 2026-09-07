@@ -1615,28 +1615,10 @@ func executeProvider(args []string) error {
 			result.ErrorTypeC = errorType
 		}
 	}
-	markerInfo, markerErr := os.Stat(denialMarker)
-	if markerErr == nil && markerInfo.Size() > 0 {
-		markerDigest, digestErr := fileDigest(denialMarker)
-		if digestErr != nil {
-			return errors.New("pre-tool denial provenance cannot be read")
-		}
-		denialReference := fmt.Sprintf(
-			"audit://exec01/%s/%s/pretool-policy-denial/%s",
-			request.TaskFingerprint, request.AttemptID, markerDigest,
-		)
-		if args[0] == "codex" {
-			result.Status = "blocked"
-			result.ErrorType = "policy_denied"
-			result.LogRefs = append(result.LogRefs, denialReference)
-		} else {
-			result.StopReason = "blocked"
-			result.ErrorTypeC = "policy_denied"
-			result.EvidenceRefs = append(result.EvidenceRefs, denialReference)
-		}
-	} else if !errors.Is(markerErr, os.ErrNotExist) {
-		return errors.New("pre-tool authorization state cannot be read")
-	}
+	// Provider-hook output is defense-in-depth only. It is deliberately not
+	// promoted into trusted result evidence: only broker occurrences can prove
+	// that an exact action was denied, executed, or failed. This also prevents a
+	// provider-controlled hook marker from masquerading as coordinator evidence.
 	ledgerRaw, ledgerErr := os.ReadFile(brokerLedger)
 	if ledgerErr != nil && !errors.Is(ledgerErr, os.ErrNotExist) {
 		return errors.New("action broker provenance cannot be read")
