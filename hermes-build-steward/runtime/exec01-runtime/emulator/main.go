@@ -97,11 +97,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "missing bounded build instruction")
 		os.Exit(2)
 	}
-	_ = os.MkdirAll("/workspace/hermes-build-steward", 0700)
-	if err := os.WriteFile("/workspace/hermes-build-steward/provider-prompt.json", prompt, 0600); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
-	}
 	command := ""
 	provider := filepath.Base(os.Args[0])
 	if _, err := os.Stat("/workspace/q16-build.sh"); err == nil {
@@ -127,6 +122,11 @@ func main() {
 			os.Exit(3)
 		}
 		_ = os.WriteFile("/workspace/hermes-build-steward/noexec-probe.txt", []byte("direct-denied;trusted-interpreter-succeeded\n"), 0600)
+	}
+	_ = os.MkdirAll("/workspace/hermes-build-steward", 0700)
+	if err := os.WriteFile("/workspace/hermes-build-steward/provider-prompt.json", prompt, 0600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
 	}
 	if err := probeGateway(provider, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "trusted gateway probe failed")
