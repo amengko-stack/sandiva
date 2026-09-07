@@ -46,9 +46,27 @@ class PrepublicationInspector:
 
     @staticmethod
     def _git(root: Path, *args: str, text: bool = False) -> bytes | str:
+        environment = {
+            "PATH": os.defpath,
+            "LANG": "C.UTF-8",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_ATTR_NOSYSTEM": "1",
+            "GIT_PROTOCOL_FROM_USER": "0",
+        }
+        if os.name == "nt" and "SYSTEMROOT" in os.environ:
+            environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
         try:
             return subprocess.check_output(
-                ["git", "-C", str(root), *args], stderr=subprocess.PIPE, text=text
+                [
+                    "git", "-C", str(root),
+                    "-c", f"core.hooksPath={os.devnull}",
+                    "-c", "credential.helper=",
+                    "-c", "core.fsmonitor=false",
+                    *args,
+                ],
+                stderr=subprocess.PIPE, text=text, env=environment,
             )
         except (OSError, subprocess.CalledProcessError) as error:
             raise PrepublicationError("workspace is not an inspectable Git workspace") from error

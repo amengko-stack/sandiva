@@ -40,7 +40,9 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 - an explicit Canonical Build Task v2.0 dispatch contract while accepted v1.0 remains non-dispatch;
 - fingerprinted Codex and Claude Code profiles behind one normalized `ExecutionAdapter` boundary;
 - exact-base attempt workspaces, executor/control-plane credential separation, explicit network/resource containment, and complete pre-publication enforcement;
-- deterministic task-bound draft-PR publication through a separate least-privilege publisher; and
+- a concrete `exec-dispatch`/`exec-resume`/`exec-cancel` production composition path with external CAS execution/result stores, exact trusted-source origin verification and task-bound forced container removal;
+- no-host-mount, non-root, quota-backed container execution through one attested internal-network gateway, with host-created Git metadata preserved across export;
+- deterministic task-bound draft-PR publication through a separate repository-scoped publisher that disables repository hooks/config injection; and
 - CAS-shaped execution checkpoints, duplicate idempotency, stale-fence denial, bounded retry/fallback, crash reconciliation and bounded provenance.
 
 ## Deliberate exclusions
@@ -61,11 +63,13 @@ The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A d
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
 
-EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
+EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`; R1–R8 rework regressions are distributed across the `test_exec01_*`, runtime, gateway, publisher and recovery suites. The Linux-only Docker runtime tests are mandatory in GitHub Actions: CI explicitly installs Go, asserts a working Docker daemon and therefore cannot silently skip them. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
 
 ## Runtime configuration
 
 `config/production.example.json` documents the schema. Production must explicitly select `vmProvider: hostinger` and `graphAuthentication.provider: entra-certificate`. Before qualification, an authorized infrastructure operator must replace the tenant, application, SharePoint site, and dedicated runtime-list identifiers. The certificate file is external runtime state and must be readable only by the trusted `sandiva-hermes` service account. The dedicated list is runtime state, not the Control Tower, and this build does not provision or modify it.
+
+`config/exec01-production.example.json` separately documents the EXEC-01 composition schema. It is deliberately non-deployable: every executor/gateway image and executable digest is a zero/placeholder value, and the builder refuses to start until an authorized operator replaces them with the exact approved immutable artifacts, supplies the external trusted GitHub askpass helper, configures distinct execution/result SharePoint Lists, and starts the single approved gateway on the internal Docker network. Executor containers receive no Graph, Hermes, provider or GitHub publisher credential.
 
 The list must have these internal column names:
 

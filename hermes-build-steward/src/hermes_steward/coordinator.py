@@ -7,7 +7,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 
 from .audit import sanitize_audit_value
-from .contracts import canonical_json, fingerprint, validate_build_task, validate_reference_hashes
+from .contracts import (
+    canonical_json,
+    fingerprint,
+    validate_build_task,
+    validate_dispatch_build_task,
+    validate_reference_hashes,
+)
 from .evidence import (
     GitHubEvidenceReader,
     TrustedEvidence,
@@ -102,7 +108,11 @@ class Coordinator:
         specification: bytes | None = None,
         acceptance_contract: bytes | None = None,
     ) -> TaskRecord:
-        task = validate_build_task(raw_task)
+        task = (
+            validate_dispatch_build_task(raw_task)
+            if isinstance(raw_task, Mapping) and raw_task.get("schemaVersion") == "2.0"
+            else validate_build_task(raw_task)
+        )
         if self.config.environment_kind == "production":
             if specification is None or acceptance_contract is None:
                 raise ValueError("production submission requires retrieved canonical bytes")

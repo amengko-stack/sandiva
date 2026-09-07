@@ -63,6 +63,10 @@ class _BaseExecutionAdapter:
         evidence_references: Any,
         failure_type: Any = None,
     ) -> dict[str, Any]:
+        # Provider diff claims are never authoritative. The trusted coordinator
+        # replaces these placeholders with a complete post-execution inspection
+        # before any publication or durable successful result.
+        del changed_paths, patch_digest
         failure = "NONE" if disposition == "EXECUTION_SUCCEEDED" else _FAILURE_MAP.get(failure_type, "INTERNAL_ERROR")
         return {
             "schemaVersion": "1.0",
@@ -79,8 +83,8 @@ class _BaseExecutionAdapter:
             },
             "timestamps": {"startedAt": started_at, "completedAt": completed_at},
             "baseSha": request.base_sha,
-            "changedPaths": changed_paths,
-            "patchDigest": patch_digest,
+            "changedPaths": [],
+            "patchDigest": None,
             "commandsExecuted": commands,
             "testOutcomes": tests,
             "branch": None,

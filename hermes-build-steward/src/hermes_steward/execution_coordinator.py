@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .execution_contracts import (
@@ -327,6 +328,8 @@ class ExecutionCoordinator:
         publisher: Any,
         result_sink: Any,
         assert_current_authority: Callable[[], None],
+        *,
+        source_repository: Path,
     ):
         self._store = store
         self._workspace_factory = workspace_factory
@@ -335,6 +338,9 @@ class ExecutionCoordinator:
         self._publisher = publisher
         self._result_sink = result_sink
         self._assert_current_authority = assert_current_authority
+        self._source_repository = source_repository.resolve()
+        if not self._source_repository.is_dir():
+            raise RecoveryError("trusted source repository is unavailable")
 
     @staticmethod
     def _checkpoint(record: ExecutionRecord, stage: ExecutionStage, **changes: Any) -> ExecutionRecord:
@@ -369,7 +375,9 @@ class ExecutionCoordinator:
             ))
         elif current.task_fingerprint != request.task_fingerprint or current.attempt_id != request.attempt_id:
             raise RecoveryError("conflicting duplicate execution identity")
-        return self._run(request, current, crash_after)
+        completed = self._run(request, current, crash_after)
+        self._cleanup_terminal(completed)
+        return completed
 
     def resume(self, request: NormalizedExecutionRequest) -> ExecutionRecord:
         current = self._store.load(execution_identity(request))
@@ -381,8 +389,12 @@ class ExecutionCoordinator:
                 ExecutionStage.FAILED,
                 failure_classification="AMBIGUOUS_EXECUTOR_STATE",
             )
-            return self._save(current, failed)
-        return self._run(request, current, None)
+            completed = self._save(current, failed)
+            self._cleanup_terminal(completed)
+            return completed
+        completed = self._run(request, current, None)
+        self._cleanup_terminal(completed)
+        return completed
 
     def cancel(self, request: NormalizedExecutionRequest) -> ExecutionRecord:
         current = self._store.load(execution_identity(request))
@@ -391,7 +403,16 @@ class ExecutionCoordinator:
         if current.stage in {ExecutionStage.RESULT_PERSISTED, ExecutionStage.FAILED, ExecutionStage.CANCELLED}:
             return current
         self._assert_current_authority()
-        return self._save(current, self._checkpoint(current, ExecutionStage.CANCELLED, failure_classification="CANCELLED"))
+        completed = self._save(current, self._checkpoint(current, ExecutionStage.CANCELLED, failure_classification="CANCELLED"))
+        self._cleanup_terminal(completed)
+        return completed
+
+    def _cleanup_terminal(self, record: ExecutionRecord) -> None:
+        if record.stage not in {ExecutionStage.RESULT_PERSISTED, ExecutionStage.FAILED, ExecutionStage.CANCELLED}:
+            return
+        destroy = getattr(self._workspace_factory, "destroy", None)
+        if callable(destroy) and record.workspace is not None:
+            destroy(record.workspace)
 
     @staticmethod
     def _crash(point: str | None, current: str) -> None:
@@ -411,7 +432,7 @@ class ExecutionCoordinator:
         }:
             if record.stage == ExecutionStage.CREATED:
                 self._assert_current_authority()
-                workspace = self._workspace_factory.create(request)
+                workspace = self._workspace_factory.create(request, self._source_repository)
                 updated = self._checkpoint(record, ExecutionStage.WORKSPACE_READY, workspace=str(workspace.path))
                 record = self._save(record, updated)
                 self._crash(crash_after, "WORKSPACE_READY")
@@ -455,6 +476,10 @@ class ExecutionCoordinator:
 
             if record.stage == ExecutionStage.CHANGESET_APPROVED:
                 assert record.change_set is not None and record.workspace is not None
+                self._assert_current_authority()
+                current_changes = self._inspector.inspect(record.workspace, request)
+                if current_changes != record.change_set:
+                    raise RecoveryError("workspace changed after approval")
                 publication = self._publisher.publish_draft(
                     request, record.change_set, record.workspace, self._assert_current_authority
                 )
@@ -467,6 +492,8 @@ class ExecutionCoordinator:
                 self._assert_current_authority()
                 durable = dict(record.execution_result)
                 durable.update(
+                    changedPaths=list(record.change_set.changed_paths) if record.change_set is not None else [],
+                    patchDigest=record.change_set.patch_digest if record.change_set is not None else None,
                     branch=record.publication.branch,
                     commitSha=record.publication.commit_sha,
                     draftPr={

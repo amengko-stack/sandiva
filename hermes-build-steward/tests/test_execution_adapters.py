@@ -20,6 +20,7 @@ from test_execution_task_contract import dispatch_task
 
 def profile(provider: str) -> ExecutorProfile:
     name = "codex" if provider == "codex" else "claude-code"
+    launcher = "codex" if provider == "codex" else "claude"
     return ExecutorProfile(
         profile_id=f"{name}-hostinger-v1",
         provider=provider,
@@ -28,7 +29,7 @@ def profile(provider: str) -> ExecutorProfile:
         model="synthetic-conformance-model",
         launcher_version="exec-01.1",
         executable_digest=("c" if provider == "codex" else "d") * 64,
-        fixed_argv=(name, "--non-interactive"),
+        fixed_argv=(launcher, "--non-interactive", "--model", "synthetic-conformance-model"),
         image="registry.example/sandiva/executor@sha256:" + ("e" if provider == "codex" else "f") * 64,
         credential_mode="trusted-egress-gateway",
         gateway_endpoint="executor-gateway.sandiva.internal:8443",
@@ -76,10 +77,13 @@ class ExecutorProfileTests(unittest.TestCase):
         baseline = profile("codex")
         mutations = {
             "runtime": {"runtime_version": "changed"},
-            "model": {"model": "changed"},
+            "model": {
+                "model": "changed",
+                "fixed_argv": ("codex", "--non-interactive", "--model", "changed"),
+            },
             "launcher": {"launcher_version": "changed"},
             "executable": {"executable_digest": "1" * 64},
-            "argv": {"fixed_argv": ("codex", "exec", "--dangerously-bypass")},
+            "argv": {"fixed_argv": ("codex", "exec", "--dangerously-bypass", baseline.model)},
             "image": {"image": "registry.example/x@sha256:" + "2" * 64},
             "network": {"allowed_endpoints": ("executor-gateway.sandiva.internal:8443", "attacker.example:443")},
             "gateway": {
@@ -144,6 +148,33 @@ class NormalizedContractTests(unittest.TestCase):
         self.assertNotIn("stop_reason", second)
         self.assertEqual(first["provenance"]["runtimeVersion"], "synthetic-1.0.0")
         self.assertEqual(second["provenance"]["runtimeVersion"], "synthetic-1.0.0")
+
+    def test_provider_diff_claims_are_discarded_until_trusted_inspection(self):
+        """Catches omitted, understated, overstated, or forged provider diff provenance."""
+        executor_profile = profile("codex")
+        request = request_for(executor_profile)
+        variants = (
+            {},
+            {"changed_paths": [], "patch_digest": None},
+            {"changed_paths": ["hermes-build-steward/README.md"], "patch_digest": "0" * 64},
+            {"changed_paths": [".github/workflows/hostile.yml"], "patch_digest": "not-a-digest"},
+        )
+        common = {
+            "status": "completed",
+            "started_at": "2026-09-06T10:00:00+00:00",
+            "completed_at": "2026-09-06T10:00:01+00:00",
+            "commands": [],
+            "tests": [],
+            "log_refs": [],
+        }
+        for claims in variants:
+            with self.subTest(claims=claims):
+                normalized = CodexExecutionAdapter(
+                    executor_profile,
+                    SyntheticRunner("codex", {**common, **claims}),
+                ).execute(request, "/workspace")
+                self.assertEqual(normalized["changedPaths"], [])
+                self.assertIsNone(normalized["patchDigest"])
 
     def test_result_rejects_provider_shapes_malformed_identity_and_self_acceptance(self):
         codex = profile("codex")

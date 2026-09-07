@@ -32,7 +32,8 @@ class WorkspaceFactory:
     def __init__(self):
         self.calls = 0
 
-    def create(self, request):
+    def create(self, request, source_repository):
+        del source_repository
         self.calls += 1
         return SimpleNamespace(path=f"/workspace/{request.attempt_id}")
 
@@ -117,6 +118,7 @@ class RecoveryTests(unittest.TestCase):
         return ExecutionCoordinator(
             self.store, self.workspace, self.adapter, self.inspector,
             self.publisher, self.sink, self.authority,
+            source_repository=__import__("pathlib").Path(__file__).parents[1],
         )
 
     def test_duplicate_delivery_creates_one_run_commit_branch_pr_and_result(self):
@@ -253,7 +255,7 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RecoveryError, "taskFingerprint"):
             execution_record_from_dict(encoded)
 
-    def test_execution_checkpoints_recover_through_external_sharepoint_cas_binding(self):
+    def test_r7_new_coordinator_resumes_through_external_sharepoint_cas_without_duplicate_side_effects(self):
         transport = FakeGraphTransport()
         options = {
             "transport": transport,
@@ -271,8 +273,11 @@ class RecoveryTests(unittest.TestCase):
             "https://graph.microsoft.com/v1.0/sites/site/lists/exec-state",
             "prod.executions", "hermes-prod-vm", lambda: "graph-token", **options,
         )
-        recovered = CasExecutionRecordStore(restarted).load(completed.identity)
+        self.store = CasExecutionRecordStore(restarted)
+        recovered = self.coordinator().resume(self.request)
         self.assertEqual(recovered, completed)
+        self.assertEqual(self.adapter.calls, 1)
+        self.assertEqual((self.gateway.commit_calls, self.gateway.push_calls, self.gateway.pr_calls), (1, 1, 1))
 
 
 if __name__ == "__main__":

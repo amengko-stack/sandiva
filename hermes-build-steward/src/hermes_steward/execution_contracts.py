@@ -16,7 +16,7 @@ class ExecutionContractError(ValueError):
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _PROFILE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
-_IMAGE = re.compile(r"^[a-z0-9][a-z0-9._/:~-]*@sha256:[0-9a-f]{64}$")
+_IMAGE = re.compile(r"^(?:[a-z0-9][a-z0-9._/:~-]*@)?sha256:[0-9a-f]{64}$")
 EXECUTION_DISPOSITIONS = frozenset({
     "EXECUTION_SUCCEEDED", "EXECUTION_FAILED", "EXECUTION_BLOCKED",
     "EXECUTION_CANCELLED", "EXECUTION_TIMED_OUT",
@@ -71,6 +71,11 @@ class ExecutorProfile:
             raise ExecutionContractError("executableDigest must be a lowercase SHA-256 digest")
         if not self.fixed_argv or any(not isinstance(item, str) or not item for item in self.fixed_argv):
             raise ExecutionContractError("fixed_argv must be a non-empty argument vector")
+        expected_launcher = "codex" if self.provider == "codex" else "claude"
+        if self.fixed_argv[0] != expected_launcher:
+            raise ExecutionContractError("fixed_argv must use the provider's approved launcher")
+        if self.model not in self.fixed_argv:
+            raise ExecutionContractError("fixed_argv must bind the fingerprinted model explicitly")
         if not _IMAGE.fullmatch(self.image):
             raise ExecutionContractError("executor image must be pinned by SHA-256 digest")
         if self.credential_mode != "trusted-egress-gateway":
