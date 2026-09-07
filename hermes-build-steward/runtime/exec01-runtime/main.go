@@ -465,7 +465,9 @@ func main() {
 	case "attest":
 		err = attest(os.Args[2:])
 	case "sleep":
-		select {}
+		for {
+			time.Sleep(time.Hour)
+		}
 	default:
 		err = errors.New("unsupported runtime operation")
 	}
