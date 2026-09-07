@@ -249,7 +249,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                    "networkPolicyFingerprint":"3"*64,"credentialMode":"trusted-header-injection"}
             value["gatewayPolicyFingerprint"]=GatewayPolicy.fingerprint_manifest(value)
             manifest[key]=value
-        environment=["--env",f"EXEC01_PROFILE_MANIFEST={json.dumps(manifest,separators=(',',':'))}","--env","EXEC01_SESSION_SIGNING_KEY=q3-source-gateway-signing-key-material"]
+        environment=["--env",f"EXEC01_PROFILE_MANIFEST={json.dumps(manifest,separators=(',',':'))}","--env","EXEC01_SESSION_SIGNING_KEY=q3-source-gateway-signing-key-material","--env","EXEC01_GATEWAY_RUNTIME_MODE=CODE_QA"]
         health=json.loads(subprocess.check_output(["docker","run","--rm",*environment,self.gateway_image,"health"],text=True))
         self.assertEqual(set(health["profiles"]),set(manifest))
         token=subprocess.check_output(["docker","run","--rm",*environment,self.gateway_image,"issue","--task-fingerprint","4"*64,"--attempt-id","attempt-q3","--profile-fingerprint","1"*64],text=True).strip()
@@ -388,6 +388,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                 "--label", f"sandiva.exec.gateway-policy={self.policy_fingerprint}",
                 "--env", f"EXEC01_PROFILE_MANIFEST={json.dumps(manifest,separators=(',',':'))}",
                 "--env", "EXEC01_SESSION_SIGNING_KEY=q24-gateway-signing-key-material-0001",
+                "--env", "EXEC01_GATEWAY_RUNTIME_MODE=CODE_QA",
                 "--env", f"OPENAI_API_KEY={credential}", "--env", f"ANTHROPIC_API_KEY={credential}",
                 self.gateway_image, "serve",
             ], check=True, stdout=subprocess.DEVNULL)
@@ -404,7 +405,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                 time.sleep(0.1)
             self.assertTrue(ready, "source gateway or isolated upstream emulator did not become ready")
             binding = GatewayNetworkBinding(self.network, self.gateway, self.gateway_image, self.policy_fingerprint)
-            controller = DockerExecutorGatewayController(binding)
+            controller = DockerExecutorGatewayController(binding, expected_runtime_mode="CODE_QA")
             observations, normalized_results = {}, {}
             for provider in ("codex", "claude-code"):
                 profile = profiles[provider]

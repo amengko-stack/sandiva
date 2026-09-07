@@ -105,6 +105,28 @@ class _BaseExecutionAdapter:
             "auditProvenanceId": request.audit_provenance_id,
         }
 
+    def _command_policy_denial(
+        self, request: NormalizedExecutionRequest, commands: Any, *,
+        started_at: Any, completed_at: Any,
+    ) -> dict[str, Any] | None:
+        approved = set(request.approved_commands)
+        malformed = not isinstance(commands, list) or any(
+            not isinstance(command, str) or not command for command in commands
+        )
+        unauthorized = not malformed and any(command not in approved for command in commands)
+        if not malformed and not unauthorized:
+            return None
+        digest = __import__("hashlib").sha256(
+            __import__("json").dumps(commands, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        return self._common_result(
+            request, disposition="EXECUTION_FAILED", started_at=started_at,
+            completed_at=completed_at, commands=[], tests=[], changed_paths=[],
+            patch_digest=None,
+            evidence_references=[f"audit://{request.audit_provenance_id}/command-policy-denial/{digest}"],
+            failure_type="policy_denied",
+        )
+
     def _normalize_provider_result(
         self, raw: Mapping[str, Any], request: NormalizedExecutionRequest
     ) -> dict[str, Any]:
@@ -128,6 +150,12 @@ class CodexExecutionAdapter(_BaseExecutionAdapter):
             or raw.get("status") not in self._DISPOSITIONS
         ):
             raise ExecutionContractError("malformed Codex execution result")
+        denied = self._command_policy_denial(
+            request, raw.get("commands"), started_at=raw.get("started_at"),
+            completed_at=raw.get("completed_at"),
+        )
+        if denied is not None:
+            return denied
         return self._common_result(
             request, disposition=self._DISPOSITIONS[raw["status"]],
             started_at=raw.get("started_at"), completed_at=raw.get("completed_at"),
@@ -152,6 +180,12 @@ class ClaudeCodeExecutionAdapter(_BaseExecutionAdapter):
             or raw.get("stop_reason") not in self._DISPOSITIONS
         ):
             raise ExecutionContractError("malformed Claude Code execution result")
+        denied = self._command_policy_denial(
+            request, raw.get("commandsExecuted"), started_at=raw.get("startedAt"),
+            completed_at=raw.get("completedAt"),
+        )
+        if denied is not None:
+            return denied
         return self._common_result(
             request, disposition=self._DISPOSITIONS[raw["stop_reason"]],
             started_at=raw.get("startedAt"), completed_at=raw.get("completedAt"),

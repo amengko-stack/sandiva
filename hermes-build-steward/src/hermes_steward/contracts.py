@@ -287,6 +287,23 @@ def validate_dispatch_build_task(raw: Mapping[str, Any]) -> dict[str, Any]:
     return task
 
 
+def validate_versioned_build_task(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Decode a persisted Canonical Build Task through its closed version contract.
+
+    The version discriminator is read only to select a validator.  Each selected
+    validator still enforces its exact field set, so mixed-version payloads and
+    unknown versions fail closed.
+    """
+    if not isinstance(raw, Mapping):
+        raise ContractValidationError("Build Task must be an object")
+    version = raw.get("schemaVersion")
+    if version == "1.0":
+        return validate_build_task(raw)
+    if version == "2.0":
+        return validate_dispatch_build_task(raw)
+    raise ContractValidationError("unsupported Canonical Build Task schemaVersion")
+
+
 def validate_reference_hashes(task: Mapping[str, Any], specification: bytes, acceptance_contract: bytes) -> None:
     specification_hash = hashlib.sha256(specification).hexdigest()
     acceptance_hash = hashlib.sha256(acceptance_contract).hexdigest()

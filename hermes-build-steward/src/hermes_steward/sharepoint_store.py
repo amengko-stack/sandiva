@@ -4,7 +4,7 @@ import hashlib
 import json
 from typing import Any, Callable, Mapping, Protocol
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from .codec import record_from_dict, record_to_dict
@@ -44,6 +44,17 @@ class SharePointListStateStore:
         record_decoder: Callable[[Mapping[str, object]], Any] = record_from_dict,
         status_getter: Callable[[Any], str] | None = None,
     ):
+        parsed_endpoint = urlsplit(list_endpoint if isinstance(list_endpoint, str) else "")
+        endpoint_parts = parsed_endpoint.path.strip("/").split("/")
+        if (
+            parsed_endpoint.scheme != "https" or parsed_endpoint.netloc != "graph.microsoft.com"
+            or parsed_endpoint.username is not None or parsed_endpoint.password is not None
+            or parsed_endpoint.port is not None or parsed_endpoint.query or parsed_endpoint.fragment
+            or len(endpoint_parts) != 5 or endpoint_parts[0] != "v1.0"
+            or endpoint_parts[1] != "sites" or endpoint_parts[3] != "lists"
+            or any(not part or "{" in part or "}" in part for part in endpoint_parts)
+        ):
+            raise ValueError("SharePoint state endpoint must identify one exact approved Microsoft Graph list")
         self.list_endpoint = list_endpoint.rstrip("/")
         self.task_namespace = task_namespace
         self.environment_id = environment_id
@@ -63,7 +74,14 @@ class SharePointListStateStore:
         return headers
 
     def _fields(self, key: str, record: Any) -> dict[str, str]:
-        payload = canonical_json(self.record_encoder(record)).decode("utf-8")
+        encoded = self.record_encoder(record)
+        # Prove the configured production codec can reconstruct the exact value
+        # before any external create/update mutation is attempted.  This catches
+        # version-routing and malformed-payload defects on the trusted side.
+        decoded = self.record_decoder(json.loads(canonical_json(encoded)))
+        if canonical_json(self.record_encoder(decoded)) != canonical_json(encoded):
+            raise ValueError("durable record codec round-trip is not canonical")
+        payload = canonical_json(encoded).decode("utf-8")
         if len(payload) > SHAREPOINT_PAYLOAD_LIMIT_CHARS:
             raise ValueError(f"durable task record exceeds the {SHAREPOINT_PAYLOAD_LIMIT_CHARS}-character Payload limit")
         return {
@@ -90,6 +108,23 @@ class SharePointListStateStore:
         query = f"{expand}&$filter=fields/TaskKey eq '{escaped}'"
         encoded_query = quote(query, safe="$=(),&'")
         return f"{self.list_endpoint}/items?{encoded_query}"
+
+    def _validate_pagination_url(self, url: object) -> str:
+        if not isinstance(url, str):
+            raise RuntimeError("SharePoint pagination URL is malformed")
+        configured = urlsplit(self.list_endpoint)
+        candidate = urlsplit(url)
+        if (
+            candidate.scheme != "https"
+            or candidate.netloc != "graph.microsoft.com"
+            or candidate.username is not None
+            or candidate.password is not None
+            or candidate.port is not None
+            or candidate.path != configured.path.rstrip("/") + "/items"
+            or candidate.fragment
+        ):
+            raise RuntimeError("SharePoint pagination escaped the configured Graph list")
+        return url
 
     def _get_item(self, key: str) -> tuple[str, VersionedRecord[TaskRecord]]:
         status, _, raw = self.transport.request("GET", self._query_url(key), self._headers())
@@ -136,6 +171,7 @@ class SharePointListStateStore:
         url = self._query_url()
         records = []
         while url:
+            url = self._validate_pagination_url(url)
             status, _, raw = self.transport.request("GET", url, self._headers())
             if status != 200:
                 raise RuntimeError(f"SharePoint state list failed with HTTP {status}")

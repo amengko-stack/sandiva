@@ -59,6 +59,54 @@ REQUIRED_CHECKS = (
 )
 
 
+def validate_authoritative_hermes_evidence(
+    raw: Mapping[str, Any], task: Mapping[str, Any], criteria: list[str],
+    execution_record_fingerprints: list[str],
+) -> dict[str, Any]:
+    required = {
+        "schemaVersion", "origin", "evidenceIdentity", "task", "criteriaResults",
+        "executionRecordFingerprints", "originPolicyFingerprint", "disposition",
+        "resultFingerprint",
+    }
+    if not isinstance(raw, Mapping) or set(raw) != required:
+        _fail("qualification Hermes evidence is incomplete or malformed")
+    value = json.loads(json.dumps(dict(raw)))
+    results = value["criteriaResults"]
+    if (
+        value["schemaVersion"] != "1.0"
+        or value["origin"] != "trusted-hermes-independent"
+        or not isinstance(value["evidenceIdentity"], str)
+        or not value["evidenceIdentity"].startswith("hermes://")
+        or value["task"] != dict(task)
+        or value["disposition"] != "PASS"
+        or not re.fullmatch(r"[0-9a-f]{64}", str(value["originPolicyFingerprint"]))
+        or not isinstance(results, list)
+        or len(results) != len(criteria)
+    ):
+        _fail("qualification Hermes evidence identity or disposition is invalid")
+    observed_criteria: list[str] = []
+    for item in results:
+        if (
+            not isinstance(item, Mapping)
+            or set(item) != {"criterion", "disposition", "evidenceReferences"}
+            or item["disposition"] != "PASS"
+            or not isinstance(item["criterion"], str)
+            or not isinstance(item["evidenceReferences"], list)
+            or not item["evidenceReferences"]
+            or any(not isinstance(ref, str) or not ref for ref in item["evidenceReferences"])
+        ):
+            _fail("qualification Hermes criterion result is incomplete or non-PASS")
+        observed_criteria.append(item["criterion"])
+    if observed_criteria != criteria or len(set(observed_criteria)) != len(observed_criteria):
+        _fail("qualification Hermes criterion authority is incomplete or duplicated")
+    if sorted(value["executionRecordFingerprints"]) != sorted(execution_record_fingerprints):
+        _fail("qualification Hermes evidence is not bound to the exact execution records")
+    unsigned = {key: item for key, item in value.items() if key != "resultFingerprint"}
+    if value["resultFingerprint"] != fingerprint(unsigned):
+        _fail("qualification Hermes result fingerprint is invalid")
+    return value
+
+
 def _read(path: str) -> dict:
     value = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -217,6 +265,7 @@ class DurableQualificationEvidenceCollector:
         implementation_head_loader: Callable[[], str],
         profiles: Mapping[str, ExecutorProfile], artifact_resolver: Any,
         required_contract_sha256: str | None = None,
+        qualification_context: Mapping[str, Any] | None = None,
     ):
         self.task_store = task_store
         self.task_key = task_key
@@ -230,8 +279,10 @@ class DurableQualificationEvidenceCollector:
         self.profiles = dict(profiles)
         self.artifact_resolver = artifact_resolver
         self.required_contract_sha256 = required_contract_sha256
+        self.qualification_context = dict(qualification_context or {})
         if set(self.profiles) != {"codex", "claude-code"}:
             _fail("qualification collector requires exact Codex and Claude profiles")
+        _validate_qualification_context(self.qualification_context, observed_head=None)
 
     @staticmethod
     def _values(store: StateStore[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -303,6 +354,7 @@ class DurableQualificationEvidenceCollector:
         head_sha = self.implementation_head_loader()
         if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
             _fail("qualification implementation head is invalid")
+        _validate_qualification_context(self.qualification_context, observed_head=head_sha)
         records, pull_requests = [], []
         covered_providers: set[str] = set()
         for execution in execution_values:
@@ -407,25 +459,67 @@ class DurableQualificationEvidenceCollector:
         if len(execution_values) != 2 or len(results) != 2 or len(audits) != 2 or covered_providers != set(self.profiles):
             _fail("qualification requires exactly one complete execution/result/audit record per provider")
 
-        probes = [item for item in self._values(self.probe_store) if item.get("taskFingerprint") == task_fingerprint]
+        raw_probes = [item for item in self._values(self.probe_store) if item.get("taskFingerprint") == task_fingerprint]
+        probes = []
         probe_identities: set[tuple[Any, Any]] = set()
-        for probe in probes:
+        required_observations = {
+            "providerCredentialReadable": False, "publisherCredentialReadable": False,
+            "hermesCredentialReadable": False, "coordinatorSecretsReadable": False,
+            "networkPolicyEnforced": True, "resourcePolicyEnforced": True,
+            "workspaceBoundaryEnforced": True,
+        }
+        for probe in raw_probes:
+            if set(probe) != {
+                "provider", "attemptId", "taskFingerprint", "profileFingerprint", "origin",
+                "sourceIdentity", "observations", "evidenceFingerprint",
+            }:
+                _fail("qualification containment probe authority record is malformed")
+            unsigned_probe = {key: value for key, value in probe.items() if key != "evidenceFingerprint"}
+            if (
+                probe.get("origin") != "trusted-runtime-probe"
+                or not isinstance(probe.get("sourceIdentity"), str)
+                or not probe["sourceIdentity"].startswith("runtime-probe://")
+                or probe.get("observations") != required_observations
+                or probe.get("evidenceFingerprint") != fingerprint(unsigned_probe)
+            ):
+                _fail("qualification containment probe evidence is asserted or unbound")
             identity = (probe.get("provider"), probe.get("attemptId"))
             if identity in probe_identities:
                 _fail("qualification contains a duplicate containment probe identity")
             probe_identities.add(identity)
+            probes.append({key: probe[key] for key in (
+                "provider", "attemptId", "taskFingerprint", "profileFingerprint", "origin", "evidenceFingerprint"
+            )})
         hermes_values = [
             item for item in self._values(self.hermes_evidence_store)
-            if item.get("taskFingerprint") == task_fingerprint
+            if isinstance(item.get("task"), Mapping)
+            and item["task"].get("fingerprint") == task_fingerprint
         ]
         if len(hermes_values) != 1:
             _fail("qualification requires exactly one independently acquired Hermes disposition")
+        hermes_evidence = validate_authoritative_hermes_evidence(
+            hermes_values[0], task_identity, list(task["acceptanceCriteria"]),
+            [item["recordFingerprint"] for item in records],
+        )
         checks: dict[str, Any] = {}
         for item in self._values(self.check_store):
             if item.get("taskFingerprint") != task_fingerprint:
                 continue
-            if set(item) != {"taskFingerprint", "name", "origin", "evidenceFingerprint"}:
+            if set(item) != {
+                "taskFingerprint", "name", "origin", "sourceIdentity",
+                "supportingEvidenceFingerprints", "evidenceFingerprint",
+            }:
                 _fail("qualification check authority record is malformed")
+            unsigned_check = {key: value for key, value in item.items() if key != "evidenceFingerprint"}
+            if (
+                item.get("origin") not in {"trusted-runtime-probe", "trusted-github-readback", "trusted-hermes-independent"}
+                or not isinstance(item.get("sourceIdentity"), str) or "://" not in item["sourceIdentity"]
+                or not isinstance(item.get("supportingEvidenceFingerprints"), list)
+                or not item["supportingEvidenceFingerprints"]
+                or any(not re.fullmatch(r"[0-9a-f]{64}", str(value)) for value in item["supportingEvidenceFingerprints"])
+                or item.get("evidenceFingerprint") != fingerprint(unsigned_check)
+            ):
+                _fail("qualification check evidence is asserted or unbound")
             if item["name"] in checks:
                 _fail("qualification check authority contains duplicates")
             checks[str(item["name"])] = {
@@ -435,9 +529,10 @@ class DurableQualificationEvidenceCollector:
             "buildId": "EXEC-01", "contractSha256": CONTRACT_SHA256,
             "classification": "synthetic-non-client", "repository": task["repository"],
             "baseSha": task["baseRef"], "headSha": head_sha, "task": task_identity,
+            "qualificationContext": {**self.qualification_context, "observedHeadSha": head_sha},
             "profileFingerprints": {}, "executionRecords": records,
             "pullRequestReadback": pull_requests, "containmentProbeEvidence": probes,
-            "checks": checks, "hermesEvidence": hermes_values[0],
+            "checks": checks, "hermesEvidence": hermes_evidence,
             "restrictions": {"draftPrOnly": True, "merged": False, "deployment": False,
                              "productionActivation": False, "clientDocuments": False},
         }
@@ -452,6 +547,43 @@ def _fail(message: str) -> None:
     raise SystemExit(message)
 
 
+def _validate_qualification_context(raw: Mapping[str, Any], observed_head: str | None) -> None:
+    required = {
+        "mode", "environmentId", "runId", "expectedHeadSha", "profileClass", "signingPurpose",
+        "taskStoreIdentity", "executionStoreIdentity", "resultStoreIdentity", "probeStoreIdentity",
+        "checkStoreIdentity", "hermesStoreIdentity",
+    }
+    if not isinstance(raw, Mapping) or set(raw) != required:
+        _fail("qualification context is incomplete or malformed")
+    mode = raw["mode"]
+    expected = {
+        "CODE_QA": ("deterministic-emulator", "EXEC01_CODE_QA_EVIDENCE"),
+        "LIVE_HOSTINGER": ("production-allowlisted", "EXEC01_HOSTINGER_QUALIFICATION"),
+    }
+    if mode not in expected or (raw["profileClass"], raw["signingPurpose"]) != expected[mode]:
+        _fail("qualification mode, profile class, or signing purpose is invalid")
+    if any(not isinstance(raw[field], str) or not raw[field] for field in required - {"mode", "expectedHeadSha"}):
+        _fail("qualification context identities are invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(raw["expectedHeadSha"])):
+        _fail("qualification expected implementation head is invalid")
+    store_fields = (
+        "taskStoreIdentity", "executionStoreIdentity", "resultStoreIdentity",
+        "probeStoreIdentity", "checkStoreIdentity", "hermesStoreIdentity",
+    )
+    if mode == "CODE_QA" and (
+        raw["environmentId"] != "exec01-code-qa"
+        or any(not raw[field].startswith("file:") for field in store_fields)
+    ):
+        _fail("code-QA evidence cannot claim live Hostinger authority")
+    if mode == "LIVE_HOSTINGER" and (
+        raw["environmentId"] != "hostinger-production"
+        or any(not raw[field].startswith("sharepoint:") for field in store_fields)
+    ):
+        _fail("live Hostinger qualification requires authoritative SharePoint store identities")
+    if observed_head is not None and observed_head != raw["expectedHeadSha"]:
+        _fail("qualification observed implementation head does not match the approved expected head")
+
+
 def verify_evidence(
     profiles: dict[str, ExecutorProfile], evidence: dict, *, attestation_key: bytes,
     trusted_resolver: TrustedQualificationResolver | None = None,
@@ -459,7 +591,7 @@ def verify_evidence(
     if not isinstance(evidence, dict) or set(evidence) != {
         "buildId", "contractSha256", "classification", "repository", "baseSha", "headSha", "task",
         "profileFingerprints", "executionRecords", "pullRequestReadback", "containmentProbeEvidence",
-        "checks", "hermesEvidence", "restrictions", "attestation",
+        "checks", "hermesEvidence", "restrictions", "qualificationContext", "attestation",
     }:
         _fail("qualification evidence fields are invalid")
     attestation = evidence.get("attestation")
@@ -485,6 +617,22 @@ def verify_evidence(
         _fail("qualification repository or immutable base mismatch")
     if not re.fullmatch(r"[0-9a-f]{40}", str(evidence.get("headSha", ""))):
         _fail("qualified implementation head is invalid")
+    context = evidence.get("qualificationContext")
+    if not isinstance(context, Mapping) or set(context) != {
+        "mode", "environmentId", "runId", "expectedHeadSha", "observedHeadSha", "profileClass",
+        "signingPurpose", "taskStoreIdentity", "executionStoreIdentity", "resultStoreIdentity",
+        "probeStoreIdentity", "checkStoreIdentity", "hermesStoreIdentity",
+    }:
+        _fail("qualification context evidence is malformed")
+    configured_context = {key: value for key, value in context.items() if key != "observedHeadSha"}
+    _validate_qualification_context(configured_context, observed_head=context.get("observedHeadSha"))
+    if context["observedHeadSha"] != evidence["headSha"]:
+        _fail("qualification context head does not match acquired implementation head")
+    if context["mode"] == "LIVE_HOSTINGER" and any(
+        "synthetic" in (profile.model + profile.runtime_name + profile.runtime_version + profile.image).lower()
+        for profile in profiles.values()
+    ):
+        _fail("live Hostinger qualification rejects synthetic executor profiles")
     task = evidence.get("task")
     if (
         not isinstance(task, dict) or set(task) != {"id", "version", "fingerprint"}
@@ -579,22 +727,20 @@ def verify_evidence(
             _fail("containment probe evidence is not bound to the qualified attempts")
 
     hermes = evidence.get("hermesEvidence")
-    if (
-        not isinstance(hermes, dict)
-        or set(hermes) != {"origin", "evidenceIdentity", "taskFingerprint", "disposition"}
-        or hermes["origin"] != "trusted-hermes-independent"
-        or not isinstance(hermes["evidenceIdentity"], str) or not hermes["evidenceIdentity"].startswith("hermes://")
-        or hermes["taskFingerprint"] != task["fingerprint"]
-        or hermes["disposition"] != "PASS"
-    ):
-        _fail("qualification requires independently sourced Hermes evidence")
+    criteria = [
+        item.get("criterion") for item in hermes.get("criteriaResults", [])
+    ] if isinstance(hermes, Mapping) else []
+    validate_authoritative_hermes_evidence(
+        hermes, task, criteria, [item["recordFingerprint"] for item in records]
+    )
     if evidence.get("restrictions") != {
         "draftPrOnly": True, "merged": False, "deployment": False,
         "productionActivation": False, "clientDocuments": False,
     }:
         _fail("qualification restrictions are invalid")
     return {
-        "status": "QUALIFIED", "taskFingerprint": task["fingerprint"],
+        "status": "QUALIFIED" if context["mode"] == "LIVE_HOSTINGER" else "CODE_QA_EVIDENCE_VERIFIED",
+        "qualificationMode": context["mode"], "taskFingerprint": task["fingerprint"],
         "headSha": evidence["headSha"], "profiles": expected,
         "recordFingerprints": [record["recordFingerprint"] for record in records],
     }
@@ -696,6 +842,13 @@ def _store_from_config(
     token_name = raw["tokenEnvironment"]
     if not isinstance(token_name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", token_name):
         _fail("SharePoint qualification token environment is invalid")
+    if production and (
+        token_name != "EXEC01_GRAPH_TOKEN"
+        or raw.get("environmentId") != "hostinger-production"
+        or not isinstance(raw.get("namespace"), str)
+        or not raw["namespace"].startswith("prod.")
+    ):
+        _fail("production SharePoint qualification authority binding is invalid")
     return SharePointListStateStore(
         raw["endpoint"], raw["namespace"], raw["environmentId"],
         lambda name=token_name: os.environ.get(name, ""), record_encoder=lambda value: dict(value),
@@ -710,6 +863,7 @@ def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationE
         "schemaVersion", "classification", "profilesFile", "attestationKeyFile",
         "implementationRepositoryPath", "taskStore", "executionStore", "resultStore",
         "probeStore", "checkStore", "hermesEvidenceStore", "artifacts", "githubReadback",
+        "qualificationContext",
     }
     if set(raw) != expected or raw["schemaVersion"] != "1.0" or raw["classification"] not in {
         "synthetic-code-qa", "production-hostinger-qualification",
@@ -717,8 +871,27 @@ def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationE
         _fail("qualification runtime configuration fields are invalid")
     base = path.parent
     production = raw["classification"] == "production-hostinger-qualification"
+    context = raw["qualificationContext"]
+    _validate_qualification_context(context, observed_head=None)
+    if (production and context["mode"] != "LIVE_HOSTINGER") or (
+        not production and context["mode"] != "CODE_QA"
+    ):
+        _fail("qualification environment classification and mode conflict")
     profiles = load_profiles(str(_resolved_path(base, raw["profilesFile"], "profiles")))
+    if production and any(
+        "synthetic" in (profile.model + profile.runtime_name + profile.runtime_version + profile.image).lower()
+        for profile in profiles.values()
+    ):
+        _fail("live Hostinger qualification rejects synthetic executor profiles")
     task_raw = raw["taskStore"]
+    for context_field, store_field in (
+        ("taskStoreIdentity", "taskStore"), ("executionStoreIdentity", "executionStore"),
+        ("resultStoreIdentity", "resultStore"), ("probeStoreIdentity", "probeStore"),
+        ("checkStoreIdentity", "checkStore"), ("hermesStoreIdentity", "hermesEvidenceStore"),
+    ):
+        configured_store = raw[store_field]
+        if production and context[context_field] != f"sharepoint:{configured_store.get('namespace')}":
+            _fail("qualification context store identity does not match configured SharePoint authority")
     task_store = _store_from_config(task_raw, base, record_from_dict if production else lambda value: dict(value), production=production)
     task_key = task_raw.get("key") if isinstance(task_raw, Mapping) else None
     if not isinstance(task_key, str) or not task_key:
@@ -755,6 +928,8 @@ def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationE
         )
     elif github_raw.get("kind") == "github" and production and set(github_raw) == {"kind", "repository", "tokenEnvironment"}:
         token_name = github_raw["tokenEnvironment"]
+        if token_name != "EXEC01_GITHUB_READ_TOKEN":
+            _fail("qualification GitHub read credential source is invalid")
         github_transport = UrlLibGitHubTransport(
             github_raw["repository"], lambda name=token_name: os.environ.get(name, "")
         )
@@ -777,6 +952,7 @@ def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationE
         github_reader=TrustedGitHubQualificationReadPath("amengko-stack/sandiva", github_transport),
         implementation_head_loader=load_head, profiles=profiles, artifact_resolver=artifact_resolver,
         required_contract_sha256=CONTRACT_SHA256 if production else None,
+        qualification_context=context,
     )
     key = _read_attestation_key(str(_resolved_path(base, raw["attestationKeyFile"], "attestation key")))
     return collector, profiles, key

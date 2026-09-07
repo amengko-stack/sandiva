@@ -4,6 +4,20 @@
   "profilesFile": "/etc/sandiva-hermes/exec01-profiles.json",
   "attestationKeyFile": "/etc/sandiva-hermes/credentials/exec01-qualification.key",
   "implementationRepositoryPath": "/opt/sandiva/hermes-build-steward",
+  "qualificationContext": {
+    "mode": "LIVE_HOSTINGER",
+    "environmentId": "hostinger-production",
+    "runId": "replace-with-pm-authorized-ac28-run-id",
+    "expectedHeadSha": "0000000000000000000000000000000000000000",
+    "profileClass": "production-allowlisted",
+    "signingPurpose": "EXEC01_HOSTINGER_QUALIFICATION",
+    "taskStoreIdentity": "sharepoint:prod.exec01.tasks",
+    "executionStoreIdentity": "sharepoint:prod.exec01.executions",
+    "resultStoreIdentity": "sharepoint:prod.exec01.results",
+    "probeStoreIdentity": "sharepoint:prod.exec01.probes",
+    "checkStoreIdentity": "sharepoint:prod.exec01.checks",
+    "hermesStoreIdentity": "sharepoint:prod.hermes.evidence"
+  },
   "taskStore": {
     "kind": "sharepoint",
     "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/exec01-tasks",

@@ -32,7 +32,9 @@ def main() -> int:
     args = parser.parse_args()
     key = os.environ["EXEC01_SESSION_SIGNING_KEY"].encode()
     codec = GatewaySessionCodec(key)
-    gateway=MultiProfileGatewayApplication(applications(codec),codec)
+    mode=os.environ.get("EXEC01_GATEWAY_RUNTIME_MODE")
+    if mode not in {"PRODUCTION","CODE_QA"}: raise SystemExit("explicit gateway runtime mode is required")
+    gateway=MultiProfileGatewayApplication(applications(codec),codec,runtime_mode=mode)
     if args.command == "health": print(json.dumps(gateway.health())); return 0
     if args.command == "issue":
         if not args.task_fingerprint or not args.attempt_id or not args.profile_fingerprint: raise SystemExit("issue identity required")

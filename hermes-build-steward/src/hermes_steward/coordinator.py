@@ -61,6 +61,8 @@ class TaskRecord:
     pending_fallback_profile_id: str | None = None
     pending_fallback_profile_fingerprint: str | None = None
     primary_failure_attempt_id: str | None = None
+    active_executor_profile_id: str | None = None
+    active_executor_profile_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -191,6 +193,10 @@ class Coordinator:
                 lease_expires_at=now + timedelta(seconds=ttl_seconds), fencing_token=record.fencing_counter,
             )
             record.active_lease = lease
+            policy = record.task.get("dispatchPolicy")
+            primary = policy.get("executorProfile") if isinstance(policy, Mapping) else None
+            record.active_executor_profile_id = primary.get("profileId") if isinstance(primary, Mapping) else None
+            record.active_executor_profile_fingerprint = primary.get("profileFingerprint") if isinstance(primary, Mapping) else None
             self._transition(record, TaskStatus.LEASED, "exclusive lease acquired")
             self._event(record, "LEASE_ACQUIRED", attemptId=attempt_id, leaseId=lease.lease_id, workerId=worker_id, fencingToken=lease.fencing_token, expiresAt=lease.lease_expires_at.isoformat())
             return lease
@@ -249,6 +255,12 @@ class Coordinator:
             ), None)
             if current_index is None or profile_fingerprint in record.unavailable_profile_fingerprints:
                 raise CoordinatorError("unavailable executor profile is not the current authorized selection")
+            if (
+                record.active_executor_profile_id is not None
+                and (record.active_executor_profile_id, record.active_executor_profile_fingerprint)
+                != (profile_id, profile_fingerprint)
+            ):
+                raise CoordinatorError("unavailable executor profile does not own the active lease")
             record.failure_history.append({
                 "attemptId": lease.attempt_id,
                 "disposition": "PROVIDER_UNAVAILABLE",
@@ -267,7 +279,10 @@ class Coordinator:
             ), None) if policy.get("fallbackMode") == "ORDERED" else None
             record.pending_fallback_profile_id = pending.get("profileId") if pending else None
             record.pending_fallback_profile_fingerprint = pending.get("profileFingerprint") if pending else None
-            self._transition(record, TaskStatus.REWORK_REQUIRED, "trusted executor profile unavailable")
+            self._transition(
+                record, TaskStatus.REWORK_REQUIRED if pending is not None else TaskStatus.FAILED,
+                "trusted executor profile unavailable",
+            )
             self._event(
                 record, "EXECUTOR_PROFILE_UNAVAILABLE", attemptId=lease.attempt_id,
                 profileId=profile_id, profileFingerprint=profile_fingerprint,
@@ -280,6 +295,8 @@ class Coordinator:
                     profileFingerprint=record.pending_fallback_profile_fingerprint,
                 )
             record.active_lease = None
+            record.active_executor_profile_id = None
+            record.active_executor_profile_fingerprint = None
             return record
 
         return self._mutate(key, mutation)
@@ -314,13 +331,19 @@ class Coordinator:
                 lease_id="lease-" + str(uuid.uuid4()), lease_started_at=now,
                 lease_expires_at=now + timedelta(seconds=ttl_seconds), fencing_token=record.fencing_counter,
             )
+            selected_id = record.pending_fallback_profile_id
+            selected_fingerprint = record.pending_fallback_profile_fingerprint
             record.active_lease = lease
+            record.active_executor_profile_id = selected_id
+            record.active_executor_profile_fingerprint = selected_fingerprint
+            record.pending_fallback_profile_id = None
+            record.pending_fallback_profile_fingerprint = None
             self._transition(record, TaskStatus.READY, "durable fallback made ready")
             self._transition(record, TaskStatus.LEASED, "exact authorized fallback lease acquired")
             self._event(
                 record, "FALLBACK_ATTEMPT_CLAIMED", attemptId=attempt_id, leaseId=lease.lease_id,
-                fencingToken=lease.fencing_token, profileId=record.pending_fallback_profile_id,
-                profileFingerprint=record.pending_fallback_profile_fingerprint,
+                fencingToken=lease.fencing_token, profileId=selected_id,
+                profileFingerprint=selected_fingerprint,
                 primaryFailureAttemptId=record.primary_failure_attempt_id,
             )
             return lease
@@ -471,6 +494,8 @@ class Coordinator:
             self._transition(record, target, f"validated normalized result: {disposition}")
             self._event(record, "RESULT_INGESTED", attemptId=lease.attempt_id, result=disposition, resultFingerprint=fingerprint(normalized))
             record.active_lease = None
+            record.active_executor_profile_id = None
+            record.active_executor_profile_fingerprint = None
             return record
 
         return self._mutate(key, mutation)
@@ -529,6 +554,8 @@ class Coordinator:
                 result="PARTNER_DECISION_REQUIRED", resultFingerprint=fingerprint(normalized),
             )
             record.active_lease = None
+            record.active_executor_profile_id = None
+            record.active_executor_profile_fingerprint = None
             return record
 
         return self._mutate(key, mutation)
@@ -542,14 +569,47 @@ class Coordinator:
                 self._event(record, "RECOVERY_INSPECTED", outcome="no expired lease")
                 return record
             if record.status == TaskStatus.LEASED:
-                self._transition(record, TaskStatus.READY, "expired lease recovered before verification")
+                policy = record.task.get("dispatchPolicy")
+                primary = policy.get("executorProfile") if isinstance(policy, Mapping) else None
+                is_fallback = (
+                    record.active_executor_profile_fingerprint is not None
+                    and isinstance(primary, Mapping)
+                    and record.active_executor_profile_fingerprint != primary.get("profileFingerprint")
+                )
+                if is_fallback:
+                    record.pending_fallback_profile_id = record.active_executor_profile_id
+                    record.pending_fallback_profile_fingerprint = record.active_executor_profile_fingerprint
+                    self._transition(record, TaskStatus.REWORK_REQUIRED, "expired fallback lease recovered for exact retry")
+                    self._event(
+                        record, "FALLBACK_RECOVERY_PENDING", priorAttemptId=lease.attempt_id,
+                        profileId=record.pending_fallback_profile_id,
+                        profileFingerprint=record.pending_fallback_profile_fingerprint,
+                    )
+                else:
+                    self._transition(record, TaskStatus.READY, "expired lease recovered before verification")
             elif record.status == TaskStatus.VERIFYING:
                 self._transition(record, TaskStatus.REWORK_REQUIRED, "ambiguous partial verification requires reconciliation")
                 record.failure_history.append({"attemptId": lease.attempt_id, "disposition": "AMBIGUOUS_PARTIAL_STATE", "at": self.clock().isoformat()})
+                policy = record.task.get("dispatchPolicy")
+                primary = policy.get("executorProfile") if isinstance(policy, Mapping) else None
+                if (
+                    record.active_executor_profile_fingerprint is not None
+                    and isinstance(primary, Mapping)
+                    and record.active_executor_profile_fingerprint != primary.get("profileFingerprint")
+                ):
+                    record.pending_fallback_profile_id = record.active_executor_profile_id
+                    record.pending_fallback_profile_fingerprint = record.active_executor_profile_fingerprint
+                    self._event(
+                        record, "FALLBACK_RECOVERY_PENDING", priorAttemptId=lease.attempt_id,
+                        profileId=record.pending_fallback_profile_id,
+                        profileFingerprint=record.pending_fallback_profile_fingerprint,
+                    )
             else:
                 raise CoordinatorError(f"expired active lease is inconsistent with {record.status.value}")
             self._event(record, "LEASE_EXPIRED", leaseId=lease.lease_id, fencingToken=lease.fencing_token)
             record.active_lease = None
+            record.active_executor_profile_id = None
+            record.active_executor_profile_fingerprint = None
             return record
 
         return self._mutate(key, mutation)

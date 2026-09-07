@@ -88,6 +88,19 @@ class CasExecutionRecordStore:
     def attempt_count(self, task_fingerprint: str) -> int:
         return sum(item.value.task_fingerprint == task_fingerprint for item in self._store.list_records())
 
+    def fail_nonterminal(self, identity: str, classification: str) -> ExecutionRecord:
+        current = self.load(identity)
+        if current is None:
+            raise RecoveryError("execution record does not exist")
+        if current.stage in {ExecutionStage.RESULT_PERSISTED, ExecutionStage.FAILED, ExecutionStage.CANCELLED}:
+            return current
+        failed = replace(
+            current, stage=ExecutionStage.FAILED,
+            failure_classification=classification,
+            audit=(*current.audit, ExecutionStage.FAILED.value),
+        )
+        return self.save(failed, current.revision)
+
 
 class InMemoryExecutionRecordStore(CasExecutionRecordStore):
     """Thread-safe in-memory CAS binding for deterministic tests only."""

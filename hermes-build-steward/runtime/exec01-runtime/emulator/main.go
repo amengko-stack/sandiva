@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -46,8 +47,13 @@ func probeGateway(provider string, args []string) error {
 	if err != nil || len(raw) > 65536 || response.StatusCode != http.StatusOK {
 		return fmt.Errorf("gateway probe rejected")
 	}
-	var value map[string]interface{}
-	if json.Unmarshal(raw, &value) != nil || value["credentialAccepted"] != true {
+	contentType := strings.Split(response.Header.Get("Content-Type"), ";")[0]
+	if contentType == "application/json" {
+		var value map[string]interface{}
+		if json.Unmarshal(raw, &value) != nil || value["credentialAccepted"] != true {
+			return fmt.Errorf("gateway response is not trusted emulator evidence")
+		}
+	} else if contentType != "text/event-stream" || !bytes.Contains(raw, []byte("\"credentialAccepted\":true")) {
 		return fmt.Errorf("gateway response is not trusted emulator evidence")
 	}
 	return nil

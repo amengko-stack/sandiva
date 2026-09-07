@@ -67,22 +67,37 @@ class Exec01QualificationTests(unittest.TestCase):
             "baseSha": "9ef9143479090bedc698b77fa7bf2cbc70b37b16",
             "headSha": "a" * 40,
             "task": task,
+            "qualificationContext": {
+                "mode":"CODE_QA","environmentId":"exec01-code-qa","runId":"unit-run",
+                "expectedHeadSha":"a"*40,"observedHeadSha":"a"*40,
+                "profileClass":"deterministic-emulator","signingPurpose":"EXEC01_CODE_QA_EVIDENCE",
+                "taskStoreIdentity":"file:task","executionStoreIdentity":"file:execution",
+                "resultStoreIdentity":"file:result","probeStoreIdentity":"file:probe",
+                "checkStoreIdentity":"file:check","hermesStoreIdentity":"file:hermes",
+            },
             "profileFingerprints": {name: value.fingerprint for name, value in self.profiles.items()},
             "executionRecords": records,
             "pullRequestReadback": pull_requests,
             "containmentProbeEvidence": probes,
             "checks": {name: {"origin": "trusted-runtime-probe", "evidenceFingerprint": "f" * 64} for name in REQUIRED_CHECKS},
-            "hermesEvidence": {
-                "origin": "trusted-hermes-independent",
-                "evidenceIdentity": "hermes://exec-01/qualification/final",
-                "taskFingerprint": task["fingerprint"],
-                "disposition": "PASS",
-            },
+            "hermesEvidence": {},
             "restrictions": {
                 "draftPrOnly": True, "merged": False, "deployment": False,
                 "productionActivation": False, "clientDocuments": False,
             },
         }
+        hermes = {
+            "schemaVersion": "1.0", "origin": "trusted-hermes-independent",
+            "evidenceIdentity": "hermes://exec-01/qualification/final", "task": task,
+            "criteriaResults": [
+                {"criterion": "AC-01", "disposition": "PASS", "evidenceReferences": ["hermes://exec-01/AC-01"]},
+                {"criterion": "AC-28", "disposition": "PASS", "evidenceReferences": ["hermes://exec-01/AC-28"]},
+            ],
+            "executionRecordFingerprints": [item["recordFingerprint"] for item in records],
+            "originPolicyFingerprint": "9" * 64, "disposition": "PASS",
+        }
+        hermes["resultFingerprint"] = fingerprint(hermes)
+        unsigned["hermesEvidence"] = hermes
         return sign_evidence(unsigned, self.key)
 
     @staticmethod
@@ -108,7 +123,7 @@ class Exec01QualificationTests(unittest.TestCase):
         self.assertEqual(verify_evidence(
             self.profiles, evidence, attestation_key=self.key,
             trusted_resolver=self._resolver(evidence),
-        )["status"], "QUALIFIED")
+        )["status"], "CODE_QA_EVIDENCE_VERIFIED")
 
         mutations = {
             "invented PR": lambda value: value["pullRequestReadback"].__setitem__(0, {**value["pullRequestReadback"][0], "number": 999}),
@@ -144,7 +159,7 @@ class Exec01QualificationTests(unittest.TestCase):
             "FAIL": lambda value: value["hermesEvidence"].update(disposition="FAIL"),
             "unresolved": lambda value: value["hermesEvidence"].update(disposition="UNRESOLVED"),
             "missing": lambda value: value.pop("hermesEvidence"),
-            "wrong task": lambda value: value["hermesEvidence"].update(taskFingerprint="0" * 64),
+            "wrong task": lambda value: value["hermesEvidence"]["task"].update(fingerprint="0" * 64),
             "executor supplied": lambda value: value["hermesEvidence"].update(origin="executor-self-assertion"),
         }
         for label, mutate in mutations.items():

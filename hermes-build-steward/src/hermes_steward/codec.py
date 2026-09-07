@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from .coordinator import Lease, TaskRecord
-from .contracts import fingerprint, validate_build_task
+from .contracts import fingerprint, validate_versioned_build_task
 from .state import TaskStatus
 
 
@@ -41,6 +41,8 @@ def record_to_dict(record: TaskRecord) -> dict[str, Any]:
         "pendingFallbackProfileId": record.pending_fallback_profile_id,
         "pendingFallbackProfileFingerprint": record.pending_fallback_profile_fingerprint,
         "primaryFailureAttemptId": record.primary_failure_attempt_id,
+        "activeExecutorProfileId": record.active_executor_profile_id,
+        "activeExecutorProfileFingerprint": record.active_executor_profile_fingerprint,
     }
 
 
@@ -60,9 +62,12 @@ def record_from_dict(raw: Mapping[str, Any]) -> TaskRecord:
         "unavailableProfileFingerprints", "nextFallbackIndex", "pendingFallbackProfileId",
         "pendingFallbackProfileFingerprint", "primaryFailureAttemptId",
     }
-    if frozenset(raw) not in {frozenset(legacy), frozenset(legacy | added)} or raw["schemaVersion"] != "1.0":
+    selection = {"activeExecutorProfileId", "activeExecutorProfileFingerprint"}
+    if frozenset(raw) not in {
+        frozenset(legacy), frozenset(legacy | added), frozenset(legacy | added | selection)
+    } or raw["schemaVersion"] != "1.0":
         raise ValueError("persisted task record schema is invalid")
-    task = validate_build_task(raw["task"])
+    task = validate_versioned_build_task(raw["task"])
     if raw["taskFingerprint"] != fingerprint(task):
         raise ValueError("persisted task fingerprint does not match task payload")
     expected_key_suffix = f":{task['taskId']}:{task['taskVersion']}"
@@ -108,6 +113,8 @@ def record_from_dict(raw: Mapping[str, Any]) -> TaskRecord:
     pending_id = raw.get("pendingFallbackProfileId")
     pending_fingerprint = raw.get("pendingFallbackProfileFingerprint")
     primary_attempt = raw.get("primaryFailureAttemptId")
+    active_profile_id = raw.get("activeExecutorProfileId")
+    active_profile_fingerprint = raw.get("activeExecutorProfileFingerprint")
     if (
         not isinstance(unavailable, list) or len(unavailable) != len(set(unavailable))
         or any(not isinstance(item, str) or len(item) != 64 for item in unavailable)
@@ -116,10 +123,28 @@ def record_from_dict(raw: Mapping[str, Any]) -> TaskRecord:
         or (pending_id is not None and (not isinstance(pending_id, str) or not pending_id))
         or (pending_fingerprint is not None and (not isinstance(pending_fingerprint, str) or len(pending_fingerprint) != 64))
         or (primary_attempt is not None and (not isinstance(primary_attempt, str) or not primary_attempt))
+        or (active_profile_id is None) != (active_profile_fingerprint is None)
+        or (active_profile_id is not None and (not isinstance(active_profile_id, str) or not active_profile_id))
+        or (active_profile_fingerprint is not None and (not isinstance(active_profile_fingerprint, str) or len(active_profile_fingerprint) != 64))
     ):
         raise ValueError("persisted fallback state is invalid")
-    if pending_fingerprint is not None and status != TaskStatus.LEASED and status != TaskStatus.REWORK_REQUIRED:
+    if pending_fingerprint is not None and status != TaskStatus.REWORK_REQUIRED and not (
+        status == TaskStatus.LEASED and lease is not None and active_profile_fingerprint is None
+    ):
         raise ValueError("persisted pending fallback state is inconsistent")
+    if active_profile_fingerprint is not None and lease is None:
+        raise ValueError("persisted active executor selection lacks its lease")
+    if task["schemaVersion"] == "2.0" and lease is not None and active_profile_fingerprint is None:
+        references = [task["dispatchPolicy"]["executorProfile"], *task["dispatchPolicy"]["permittedFallbackProfiles"]]
+        if pending_fingerprint is not None:
+            selected = {"profileId": pending_id, "profileFingerprint": pending_fingerprint}
+            pending_id = pending_fingerprint = None
+        else:
+            selected = next((item for item in references if item["profileFingerprint"] not in unavailable), None)
+        if selected is None:
+            raise ValueError("persisted lease has no authorized executor selection")
+        active_profile_id = selected["profileId"]
+        active_profile_fingerprint = selected["profileFingerprint"]
     return TaskRecord(
         key=raw["key"], task=task,
         task_fingerprint=raw["taskFingerprint"], status=status,
@@ -130,4 +155,6 @@ def record_from_dict(raw: Mapping[str, Any]) -> TaskRecord:
         pending_fallback_profile_id=pending_id,
         pending_fallback_profile_fingerprint=pending_fingerprint,
         primary_failure_attempt_id=primary_attempt,
+        active_executor_profile_id=active_profile_id,
+        active_executor_profile_fingerprint=active_profile_fingerprint,
     )

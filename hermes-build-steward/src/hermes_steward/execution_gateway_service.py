@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Mapping
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -178,6 +178,12 @@ class GatewayPolicy:
         ):
             raise GatewayServiceDenied("gateway canonical policy does not match ExecutorProfile")
 
+    def assert_runtime_mode(self, mode: str) -> None:
+        if mode not in {"PRODUCTION", "CODE_QA"}:
+            raise GatewayServiceDenied("gateway runtime mode is invalid")
+        if mode == "PRODUCTION" and self.credential_mode != "trusted-header-injection":
+            raise GatewayServiceDenied("gateway production mode rejects synthetic policy")
+
 
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
@@ -255,10 +261,26 @@ class BoundProviderProxy:
 
     @staticmethod
     def _read_bounded(stream: Any, limit: int) -> bytes:
-        value = stream.read(limit + 1)
-        if len(value) > limit:
-            raise GatewayServiceDenied("provider response exceeds gateway bound")
-        return value
+        chunks: list[bytes] = []
+        observed = 0
+        while True:
+            requested = min(65536, limit - observed + 1)
+            chunk = stream.read(requested)
+            if not isinstance(chunk, (bytes, bytearray)):
+                raise GatewayServiceDenied("provider response rejected")
+            if not chunk:
+                break
+            observed += len(chunk)
+            if observed > limit:
+                chunks.clear()
+                raise GatewayServiceDenied("provider response exceeds gateway bound")
+            chunks.append(bytes(chunk))
+            # http.client.HTTPResponse.read(amt) fills amt unless EOF.  Treat a
+            # short bounded read as EOF while retaining cumulative enforcement
+            # for responses larger than the fixed read window.
+            if len(chunk) < requested:
+                break
+        return b"".join(chunks)
 
     @staticmethod
     def _reject_reflection(raw: bytes, credential: str) -> None:
@@ -267,14 +289,37 @@ class BoundProviderProxy:
         if any(value and value in raw for value in reflected_headers):
             raise GatewayServiceDenied("provider response rejected")
 
-    @staticmethod
-    def _require_json_response(raw: bytes) -> None:
+    @classmethod
+    def _reject_header_reflection(cls, headers: Any, credential: str) -> None:
         try:
-            value = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            rendered = b"\n".join(
+                str(key).encode("utf-8", "replace") + b":" + str(value).encode("utf-8", "replace")
+                for key, value in headers.items()
+            )
+        except Exception as error:
             raise GatewayServiceDenied("provider response rejected") from error
-        if not isinstance(value, Mapping):
-            raise GatewayServiceDenied("provider response rejected")
+        cls._reject_reflection(rendered, credential)
+
+    @staticmethod
+    def _require_provider_response(raw: bytes, content_type: str) -> str:
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if media_type == "application/json":
+            try:
+                value = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise GatewayServiceDenied("provider response rejected") from error
+            if not isinstance(value, Mapping):
+                raise GatewayServiceDenied("provider response rejected")
+        elif media_type == "text/event-stream":
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise GatewayServiceDenied("provider response rejected") from error
+            if "\x00" in text or not any(line.startswith("data:") for line in text.splitlines()):
+                raise GatewayServiceDenied("provider response rejected")
+        else:
+            raise GatewayServiceDenied("provider response content type is not approved")
+        return media_type
 
     def forward(self, body: Mapping[str, Any], timeout_seconds: int | None = None) -> tuple[int, bytes, Mapping[str, str]]:
         if not isinstance(body, Mapping):
@@ -304,20 +349,27 @@ class BoundProviderProxy:
             with self._opener(request, timeout=effective_timeout) as response:
                 if response.status in range(300, 400) or getattr(response, "geturl", lambda: self.policy.upstream_url)() != self.policy.upstream_url:
                     raise GatewayServiceDenied("provider response rejected")
+                self._reject_header_reflection(response.headers, credential)
                 raw = self._read_bounded(response, self.policy.max_response_bytes)
                 self._reject_reflection(raw, credential)
-                self._require_json_response(raw)
-                return response.status, raw, {"Content-Type": response.headers.get("Content-Type", "application/json")}
+                media_type = self._require_provider_response(raw, response.headers.get("Content-Type", ""))
+                return response.status, raw, {"Content-Type": media_type}
         except HTTPError as error:
             try:
                 if error.code in range(300, 400):
                     raise GatewayServiceDenied("provider response rejected")
+                self._reject_header_reflection(error.headers or {}, credential)
                 raw = self._read_bounded(error, self.policy.max_response_bytes)
                 self._reject_reflection(raw, credential)
-                self._require_json_response(raw)
-                return error.code, raw, {"Content-Type": "application/json"}
+                content_type = error.headers.get("Content-Type", "application/json") if error.headers is not None else "application/json"
+                media_type = self._require_provider_response(raw, content_type)
+                return error.code, raw, {"Content-Type": media_type}
             finally:
                 error.close()
+        except GatewayServiceDenied:
+            raise
+        except (TimeoutError, URLError, OSError) as error:
+            raise GatewayServiceDenied("provider response transport failed") from error
 
 
 class GatewayApplication:
@@ -409,16 +461,19 @@ class GatewayControlPlane:
 class MultiProfileGatewayApplication:
     """One reviewed gateway container serving exact preconfigured Codex and Claude profiles."""
 
-    def __init__(self, applications: Mapping[str, GatewayApplication], codec: GatewaySessionCodec):
+    def __init__(self, applications: Mapping[str, GatewayApplication], codec: GatewaySessionCodec, *, runtime_mode: str):
         if len(applications) != 2 or {item.policy.provider for item in applications.values()} != {"codex", "claude-code"}:
             raise ValueError("gateway requires exact Codex and Claude profile applications")
         if any(key != item.policy.profile_fingerprint for key, item in applications.items()):
             raise ValueError("gateway profile map is malformed")
+        for item in applications.values():
+            item.policy.assert_runtime_mode(runtime_mode)
         self.applications = dict(applications)
         self.codec = codec
+        self.runtime_mode = runtime_mode
 
     def health(self) -> dict[str, Any]:
-        return {"status":"READY", "profiles":{
+        return {"status":"READY", "runtimeMode":self.runtime_mode, "profiles":{
             key:{
                 "policyFingerprint":item.policy.policy_fingerprint,
                 "implementationDigest":item.policy.implementation_digest,

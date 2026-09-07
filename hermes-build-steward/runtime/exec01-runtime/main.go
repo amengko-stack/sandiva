@@ -22,6 +22,15 @@ const workspace = "/workspace"
 const outputLimit = 4 * 1024 * 1024
 const launcherVersion = "exec01-runtime-v1.0.0"
 
+var errCommandPolicy = errors.New("executor command policy denied")
+
+func protocolErrorType(err error) string {
+	if errors.Is(err, errCommandPolicy) {
+		return "policy_denied"
+	}
+	return "malformed_provider_result"
+}
+
 type requestEnvelope struct {
 	TaskID                      string                  `json:"taskId"`
 	TaskFingerprint             string                  `json:"taskFingerprint"`
@@ -303,7 +312,13 @@ func parseCodex(raw []byte, request requestEnvelope, started, completed string, 
 			command, _ := item["command"].(string)
 			exitCode, exitCodeOK := item["exit_code"].(float64)
 			status, statusOK := item["status"].(string)
-			if item["type"] == "command_execution" && approved(command, request.ApprovedCommands) && exitCodeOK && statusOK {
+			if item["type"] == "command_execution" {
+				if command == "" || !exitCodeOK || !statusOK {
+					return result, fmt.Errorf("%w: Codex command observation is malformed", errCommandPolicy)
+				}
+				if !approved(command, request.ApprovedCommands) {
+					return result, fmt.Errorf("%w: Codex observed command is not authorized", errCommandPolicy)
+				}
 				result.Commands = append(result.Commands, command)
 				testStatus := "FAIL"
 				if exitCode == 0 && status == "completed" {
@@ -371,7 +386,13 @@ func parseClaude(raw []byte, request requestEnvelope, started, completed string,
 					if _, exists := toolUses[toolID]; exists {
 						return result, errors.New("Claude protocol reused a tool-use identity")
 					}
-					if item["name"] == "Bash" && approved(command, request.ApprovedCommands) {
+					if item["name"] == "Bash" {
+						if command == "" {
+							return result, fmt.Errorf("%w: Claude Bash command observation is malformed", errCommandPolicy)
+						}
+						if !approved(command, request.ApprovedCommands) {
+							return result, fmt.Errorf("%w: Claude observed Bash command is not authorized", errCommandPolicy)
+						}
 						toolUses[toolID] = command
 					} else {
 						toolUses[toolID] = ""
@@ -472,10 +493,11 @@ func executeProvider(args []string) error {
 		result, err = parseClaude(stdout.buffer.Bytes(), request, started, completed, exitCode)
 	}
 	if err != nil {
+		errorType := protocolErrorType(err)
 		if args[0] == "codex" {
-			result = observation{Protocol: "codex-exec-jsonl-v1", Status: "failed", StartedAt: started, CompletedAt: completed, Commands: []string{}, Tests: []map[string]interface{}{}, ChangedPaths: []string{}, LogRefs: []string{}, ErrorType: "malformed_provider_result"}
+			result = observation{Protocol: "codex-exec-jsonl-v1", Status: "failed", StartedAt: started, CompletedAt: completed, Commands: []string{}, Tests: []map[string]interface{}{}, ChangedPaths: []string{}, LogRefs: []string{}, ErrorType: errorType}
 		} else {
-			result = observation{Protocol: "claude-code-stream-json-v1", StopReason: "error", StartedAtC: started, CompletedAtC: completed, CommandsC: []string{}, TestsC: []map[string]interface{}{}, ChangedPathsC: []string{}, EvidenceRefs: []string{}, ErrorTypeC: "malformed_provider_result"}
+			result = observation{Protocol: "claude-code-stream-json-v1", StopReason: "error", StartedAtC: started, CompletedAtC: completed, CommandsC: []string{}, TestsC: []map[string]interface{}{}, ChangedPathsC: []string{}, EvidenceRefs: []string{}, ErrorTypeC: errorType}
 		}
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)

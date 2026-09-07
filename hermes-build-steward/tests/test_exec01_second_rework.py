@@ -370,7 +370,7 @@ class SecondReworkFocusedTests(unittest.TestCase):
         collector, profiles = authoritative_collector_fixture()
         key=b"q12-trusted-collector-signing-key-material"
         signed=collector.collect_and_sign(profiles,key)
-        self.assertEqual(verify_evidence(profiles,signed,attestation_key=key,trusted_resolver=collector)["status"],"QUALIFIED")
+        self.assertEqual(verify_evidence(profiles,signed,attestation_key=key,trusted_resolver=collector)["status"],"CODE_QA_EVIDENCE_VERIFIED")
 
     def test_q13_prior_attempt_publication_conflicts_under_strict_attempt_ownership(self):
         first = request_for(profile("codex")); second = replace(first, attempt_id="attempt-recovery-2", lease_id="lease-recovery-2", fencing_token=8)

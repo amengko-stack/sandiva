@@ -64,8 +64,11 @@ class ExecutorGatewayController(Protocol):
 class DockerExecutorGatewayController:
     """Trusted host control path into the reviewed, pinned gateway container."""
 
-    def __init__(self, binding: GatewayNetworkBinding):
+    def __init__(self, binding: GatewayNetworkBinding, *, expected_runtime_mode: str = "PRODUCTION"):
         self.binding = binding
+        if expected_runtime_mode not in {"PRODUCTION", "CODE_QA"}:
+            raise ExecutionRuntimeConfigurationError("gateway expected runtime mode is invalid")
+        self.expected_runtime_mode = expected_runtime_mode
 
     def _run(self, args: list[str]) -> str:
         try:
@@ -83,7 +86,7 @@ class DockerExecutorGatewayController:
         except json.JSONDecodeError as error:
             raise ExecutionRuntimeConfigurationError("trusted executor gateway health is malformed") from error
         observed = health.get("profiles", {}).get(profile.fingerprint) if isinstance(health.get("profiles"), Mapping) else None
-        if health.get("status") != "READY" or not isinstance(observed, Mapping) or set(observed) != {
+        if health.get("status") != "READY" or health.get("runtimeMode") != self.expected_runtime_mode or not isinstance(observed, Mapping) or set(observed) != {
             "policyFingerprint", "implementationDigest", "policy",
         }:
             raise ExecutionRuntimeConfigurationError("trusted executor gateway identity/policy mismatch")
@@ -92,6 +95,7 @@ class DockerExecutorGatewayController:
             policy_raw["gatewayPolicyFingerprint"] = observed["policyFingerprint"]
             policy = GatewayPolicy.from_manifest(profile.fingerprint, policy_raw)
             policy.assert_profile(profile)
+            policy.assert_runtime_mode(self.expected_runtime_mode)
         except (TypeError, ValueError, GatewayServiceDenied) as error:
             raise ExecutionRuntimeConfigurationError("trusted executor gateway canonical policy mismatch") from error
         if (
@@ -222,6 +226,7 @@ def _graph_list_endpoint(value: Any, field: str) -> str:
     parts = parsed.path.strip("/").split("/")
     if (
         parsed.scheme != "https" or parsed.netloc.lower() != "graph.microsoft.com"
+        or parsed.username is not None or parsed.password is not None or parsed.port is not None
         or len(parts) != 5 or parts[0] != "v1.0" or parts[1] != "sites" or parts[3] != "lists"
         or any(not part or "{" in part or "}" in part for part in parts)
         or parsed.query or parsed.fragment
@@ -413,11 +418,11 @@ class ProductionExecutionService:
         selected = select_executor_profile(task, self.registry, unavailable)
         durable_key = f"{self.hermes.config.task_namespace}:{task['taskId']}:{task['taskVersion']}"
         durable = self.hermes.store.get(durable_key).value
-        if (
-            durable.pending_fallback_profile_fingerprint is not None
-            and selected.fingerprint != durable.pending_fallback_profile_fingerprint
+        if durable.active_executor_profile_fingerprint is not None and (
+            selected.profile_id != durable.active_executor_profile_id
+            or selected.fingerprint != durable.active_executor_profile_fingerprint
         ):
-            raise ExecutionRuntimeConfigurationError("selected executor does not match durable pending fallback")
+            raise ExecutionRuntimeConfigurationError("selected executor does not match durable active lease selection")
         artifacts = self.artifact_resolver.resolve(task)
         observed = (
             self.profile_attestor.attest(selected)
@@ -555,6 +560,47 @@ class ProductionExecutionService:
         if lease is None:
             raise StaleFenceError("task does not have the expected current execution lease")
         existing = self.execution_store.load(f"exec:{record.task_fingerprint}:{lease.attempt_id}")
+        if lease.lease_expires_at <= self.hermes.clock():
+            if existing is not None and existing.stage == ExecutionStage.RESULT_PERSISTED:
+                return self._run_with_authorized_fallback(task, lease, resume=True)
+            if existing is not None and existing.stage == ExecutionStage.PUBLISHED:
+                failed = self.execution_store.fail_nonterminal(
+                    existing.identity, "AMBIGUOUS_PUBLISHED_STATE_REQUIRES_RECONCILIATION"
+                )
+                self.hermes.recover(task["taskId"], task["taskVersion"])
+                return failed
+            if existing is not None:
+                if existing.stage == ExecutionStage.EXECUTOR_STARTED:
+                    active_id = record.active_executor_profile_id
+                    active_fingerprint = record.active_executor_profile_fingerprint
+                    selected = self.registry.resolve(active_id, active_fingerprint)
+                    artifacts = self.artifact_resolver.resolve(task)
+                    observed = (
+                        self.profile_attestor.attest(selected)
+                        if self.profile_attestor is not None
+                        else ObservedExecutorIdentity.from_profile(selected)
+                    )
+                    stale_request = normalize_execution_request(
+                        task, record.task_fingerprint, selected, lease, artifacts, observed
+                    )
+                    self.runner.cancel(stale_request)
+                failed = self.execution_store.fail_nonterminal(
+                    existing.identity, "EXPIRED_ATTEMPT_RECONCILED"
+                )
+                if failed.workspace is not None:
+                    self.workspace_factory.destroy(failed.workspace)
+            recovered = self.hermes.recover(task["taskId"], task["taskVersion"])
+            lease_ttl = max(3600, self.config.containment_policy.wall_time_seconds + 300)
+            lease = (
+                self.hermes.claim_fallback(
+                    task["taskId"], task["taskVersion"], self.hermes.config.worker_identity, lease_ttl
+                )
+                if recovered.pending_fallback_profile_fingerprint is not None else
+                self.hermes.claim(
+                    task["taskId"], task["taskVersion"], self.hermes.config.worker_identity, lease_ttl
+                )
+            )
+            return self._run_with_authorized_fallback(task, lease, resume=False)
         return self._run_with_authorized_fallback(task, lease, resume=existing is not None)
 
 

@@ -81,3 +81,12 @@ PYTHONPATH=src python qualification/run_exec01_vm_qualification.py verify \
 ```
 
 The production configuration shape is documented in `config/exec01-qualification.example.json`. Both `collect` and `verify` instantiate SharePoint-backed task/execution/result/probe/check/Hermes readers, a hash-verifying artifact resolver, repository-scoped GitHub readback, and an exact local implementation-head reader. `collect` signs only after trusted acquisition succeeds. `verify` independently reacquires those sources; there is no evidence-only verification path and no manually asserted boolean can produce `QUALIFIED`.
+
+The qualification context is closed and signed: mode, environment, run identity,
+expected and observed implementation head, profile class, signing purpose, and every
+authoritative store identity must agree. File-backed deterministic fixtures use
+`CODE_QA` and may return only `CODE_QA_EVIDENCE_VERIFIED`. The later PM-authorized
+Hostinger run must use `LIVE_HOSTINGER`, production-allowlisted profiles, the exact
+approved head, and SharePoint-backed authority identities. Synthetic gateway policy,
+emulator profiles, file stores, a code-QA signing purpose, or a mismatched head fail
+before a live qualification disposition is possible.
