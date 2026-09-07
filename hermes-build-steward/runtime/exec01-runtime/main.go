@@ -23,13 +23,19 @@ const outputLimit = 4 * 1024 * 1024
 const launcherVersion = "exec01-runtime-v1.0.0"
 
 type requestEnvelope struct {
-	TaskID                      string                 `json:"taskId"`
-	TaskFingerprint             string                 `json:"taskFingerprint"`
-	AttemptID                   string                 `json:"attemptId"`
-	ExecutorProfileFingerprint  string                 `json:"executorProfileFingerprint"`
-	ExecutionContent            map[string]interface{} `json:"executionContent"`
-	ExecutionContentFingerprint string                 `json:"executionContentFingerprint"`
-	ApprovedCommands            []string               `json:"approvedCommands"`
+	TaskID                      string                  `json:"taskId"`
+	TaskFingerprint             string                  `json:"taskFingerprint"`
+	AttemptID                   string                  `json:"attemptId"`
+	ExecutorProfile             executorProfileIdentity `json:"executorProfile"`
+	ExecutionContent            map[string]interface{}  `json:"executionContent"`
+	ExecutionContentFingerprint string                  `json:"executionContentFingerprint"`
+	ApprovedCommands            []string                `json:"approvedCommands"`
+}
+
+type executorProfileIdentity struct {
+	ProfileID          string `json:"profileId"`
+	ProfileFingerprint string `json:"profileFingerprint"`
+	Provider           string `json:"provider"`
 }
 
 type observation struct {
@@ -84,7 +90,7 @@ func loadRequest() (requestEnvelope, []byte, error) {
 	if err = json.Unmarshal(raw, &request); err != nil {
 		return request, nil, err
 	}
-	if request.TaskID == "" || request.TaskFingerprint == "" || request.AttemptID == "" || request.ExecutorProfileFingerprint == "" || request.ExecutionContentFingerprint == "" || request.ExecutionContent == nil {
+	if request.TaskID == "" || request.TaskFingerprint == "" || request.AttemptID == "" || request.ExecutorProfile.ProfileID == "" || request.ExecutorProfile.ProfileFingerprint == "" || request.ExecutorProfile.Provider == "" || request.ExecutionContentFingerprint == "" || request.ExecutionContent == nil {
 		return request, nil, errors.New("sealed request identity/content is incomplete")
 	}
 	content, err := canonical(request.ExecutionContent)
@@ -437,7 +443,7 @@ func executeProvider(args []string) error {
 		"EXEC_GATEWAY_SESSION_TOKEN=" + session,
 		"EXEC_TASK_FINGERPRINT=" + request.TaskFingerprint,
 		"EXEC_ATTEMPT_ID=" + request.AttemptID,
-		"EXEC_PROFILE_FINGERPRINT=" + request.ExecutorProfileFingerprint,
+		"EXEC_PROFILE_FINGERPRINT=" + request.ExecutorProfile.ProfileFingerprint,
 	}
 	if args[0] == "codex" {
 		command.Env = append(command.Env, "OPENAI_BASE_URL="+gateway+"/v1", "OPENAI_API_KEY="+session)

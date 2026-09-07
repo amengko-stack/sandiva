@@ -14,7 +14,7 @@ func sealedRequest(t *testing.T) requestEnvelope {
 	content := map[string]interface{}{"pmInstruction": "approved", "scope": []interface{}{"hermes-build-steward/**"}}
 	rawContent, _ := json.Marshal(content)
 	digest := sha256.Sum256(rawContent)
-	request := requestEnvelope{TaskID: "Q02", TaskFingerprint: string(make([]byte, 64)), AttemptID: "attempt-q2", ExecutorProfileFingerprint: string(make([]byte, 64)), ExecutionContent: content, ExecutionContentFingerprint: hex.EncodeToString(digest[:]), ApprovedCommands: []string{"sh q16-build.sh"}}
+	request := requestEnvelope{TaskID: "Q02", TaskFingerprint: string(make([]byte, 64)), AttemptID: "attempt-q2", ExecutorProfile: executorProfileIdentity{ProfileID: "codex-source-runtime", ProfileFingerprint: string(make([]byte, 64)), Provider: "codex"}, ExecutionContent: content, ExecutionContentFingerprint: hex.EncodeToString(digest[:]), ApprovedCommands: []string{"sh q16-build.sh"}}
 	raw, _ := json.Marshal(request)
 	t.Setenv("EXEC_REQUEST_B64", base64.StdEncoding.EncodeToString(raw))
 	observed, prompt, err := loadRequest()
