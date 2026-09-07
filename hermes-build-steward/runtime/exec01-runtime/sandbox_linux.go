@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
@@ -86,15 +87,21 @@ func restrictProviderFilesystem(launcher string) error {
 		rule := landlockPathBeneathAttr{AllowedAccess: access, ParentFD: int32(file.Fd())}
 		_, addErrno := rawSyscall(landlockAddRule, uintptr(fd), landlockRulePathBeneath, uintptr(unsafe.Pointer(&rule)))
 		if addErrno != 0 {
-			return errors.New("Landlock path rule creation failed")
+			return fmt.Errorf("Landlock path rule creation failed for %s: %s", path, addErrno)
 		}
 		return nil
 	}
 	readOnly := llReadFile | llReadDir
-	for _, path := range []string{"/opt", "/usr", "/bin", "/lib", "/etc", "/dev/null"} {
+	for _, path := range []string{"/opt", "/usr", "/bin", "/lib", "/etc"} {
 		if err := add(path, readOnly); err != nil {
 			return err
 		}
+	}
+	// Landlock rejects directory-only rights such as READ_DIR on a file. The
+	// provider may use the null device for bounded stdio but receives no device
+	// creation authority.
+	if err := add("/dev/null", llReadFile|llWriteFile); err != nil {
+		return err
 	}
 	for _, path := range []string{launcher, runtimeExecutablePath} {
 		if err := add(path, llReadFile|llExecute); err != nil {

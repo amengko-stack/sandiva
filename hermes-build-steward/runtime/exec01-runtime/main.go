@@ -1265,6 +1265,9 @@ func emitHookDecision(provider string, decision hookDecision) error {
 }
 
 func authorize(provider string) error {
+	if err := os.MkdirAll(filepath.Dir(denialMarker), 0700); err != nil {
+		return errors.New("pre-tool authorization state cannot be initialized")
+	}
 	request, _, err := loadRequest()
 	if err != nil {
 		return emitHookDecision(provider, hookDecision{Reason: "sealed request could not be trusted"})
