@@ -339,7 +339,7 @@ class ThirdReworkFallbackTests(unittest.TestCase):
 
 def authoritative_collector_fixture(
     *, mutate_result=None, duplicate_kind=None, mutate_github_metadata=None,
-    mutate_probe=None, mutate_check=None, mutate_hermes=None, tamper_probe=None,
+    mutate_probe=None, mutate_probe_provider="codex", mutate_check=None, mutate_hermes=None, tamper_probe=None,
 ):
     profiles = {"codex": profile("codex"), "claude-code": profile("claude-code")}
     task = dispatch_task(taskId="Q17-QUALIFICATION")
@@ -449,7 +449,7 @@ def authoritative_collector_fixture(
             "evidenceContext":{"runId":"q17-run","headSha":qualification_head,"evidenceType":"containment-probe","taskFingerprint":task_fingerprint,"attemptIds":[attempt_id],"profileFingerprints":[selected.fingerprint]},
             "observations":{"providerCredentialReadable":False,"publisherCredentialReadable":False,"hermesCredentialReadable":False,"coordinatorSecretsReadable":False,"networkPolicyEnforced":True,"resourcePolicyEnforced":True,"workspaceBoundaryEnforced":True},
         }
-        if mutate_probe is not None and provider == "codex": mutate_probe(probe)
+        if mutate_probe is not None and provider == mutate_probe_provider: mutate_probe(probe)
         probe["evidenceFingerprint"] = fingerprint(probe)
         probe = attest_producer_record(probe, keys["containment-probe"])
         if tamper_probe is not None and provider == "codex": tamper_probe(probe)

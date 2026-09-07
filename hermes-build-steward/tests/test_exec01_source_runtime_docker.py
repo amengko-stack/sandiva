@@ -213,6 +213,144 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         result=adapter.execute(request,self.workspace.as_posix()); changes=PrepublicationInspector().inspect(str(self.workspace),request)
         return request,result,changes
 
+    def _sixth_hook(self, provider, tool, tool_input, *, raw=None, request_payload=None):
+        _, request = self._profile_request(provider)
+        payload = request_payload or base64.b64encode(
+            json.dumps(request.as_dict(), sort_keys=True, separators=(",", ":")).encode()
+        ).decode()
+        hook_provider = "codex" if provider == "codex" else "claude"
+        body = raw if raw is not None else json.dumps({
+            "hook_event_name":"PreToolUse", "tool_name":tool, "cwd":"/workspace",
+            "tool_input":tool_input,
+        }).encode()
+        completed = subprocess.run([
+            "docker", "run", "--rm", "--network", "none", "--read-only",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--user", "65532:65532",
+            "--tmpfs", "/run/exec:rw,nosuid,nodev,noexec,size=1048576,uid=65532,gid=65532,mode=0700",
+            "--mount", f"type=bind,src={self.workspace},dst=/workspace,readonly",
+            "--env", f"EXEC_REQUEST_B64={payload}",
+            "--entrypoint", "/opt/sandiva/bin/exec01-runtime", self.image,
+            "authorize", hook_provider,
+        ], input=body, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode(errors="replace"))
+        observed = json.loads(completed.stdout)
+        return observed["hookSpecificOutput"]["permissionDecision"], completed
+
+    def _sixth_workspace_state(self):
+        files = {
+            path.relative_to(self.workspace).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in self.workspace.rglob("*") if path.is_file() and ".git" not in path.parts
+        }
+        return {
+            "files": files,
+            "status": subprocess.check_output(["git", "-C", str(self.workspace), "status", "--porcelain=v1"], text=True),
+            "head": subprocess.check_output(["git", "-C", str(self.workspace), "rev-parse", "HEAD"], text=True).strip(),
+            "refs": subprocess.check_output(["git", "-C", str(self.workspace), "show-ref"], text=True),
+        }
+
+    def test_sixth_rework_s1_s14_actual_hook_denials_have_zero_side_effects(self):
+        secret = self.workspace/"hermes-build-steward"/"secrets"/"sentinel.txt"
+        secret.parent.mkdir(parents=True); secret.write_text("DO-NOT-DISCLOSE\n")
+        outside = self.workspace/"client"/"sentinel.txt"
+        outside.parent.mkdir(); outside.write_text("unchanged\n")
+        link = self.workspace/"hermes-build-steward"/"linked"
+        link.symlink_to(outside.parent, target_is_directory=True)
+        subprocess.run(["git", "-C", str(self.workspace), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.workspace), "-c", "user.email=q@sandiva.invalid", "-c", "user.name=Q", "commit", "-q", "-m", "sixth fixture base"], check=True)
+        baseline = self._sixth_workspace_state()
+        mixed_patch = "*** Begin Patch\n*** Update File: hermes-build-steward/README.md\n@@\n-base\n+changed\n*** Add File: client/PATCH-SENTINEL\n+bad\n*** End Patch"
+        cases = (
+            ("S1", "Write", {"path":"client/sentinel.txt", "content":"mutated"}),
+            ("S2", "Edit", {"file_path":"server/out-of-scope.txt", "old_string":"a", "new_string":"b"}),
+            ("S3", "Read", {"file_path":"hermes-build-steward/secrets/sentinel.txt"}),
+            ("S4", "apply_patch", {"patch":mixed_patch}),
+            ("S5", "Read", {"path":"hermes-build-steward/../client/sentinel.txt"}),
+            ("S6", "Read", {"path":"hermes-build-steward/linked/sentinel.txt"}),
+            ("S7", "Glob", {"root":"client", "pattern":"**/*"}),
+            ("S8", "Grep", {"directory":"hermes-build-steward/secrets", "pattern":"DO-NOT-DISCLOSE"}),
+            ("S9", "LS", {"path":"client"}),
+            ("S10", "Read", {"file_path":["hermes-build-steward/README.md"]}),
+            ("S11", "Computer", {"path":"hermes-build-steward"}),
+        )
+        for label, tool, tool_input in cases:
+            for provider in ("codex", "claude-code"):
+                with self.subTest(fixture=label, provider=provider):
+                    decision, completed = self._sixth_hook(provider, tool, tool_input)
+                    self.assertEqual(decision, "deny")
+                    self.assertNotIn(b"DO-NOT-DISCLOSE", completed.stdout + completed.stderr)
+                    self.assertEqual(self._sixth_workspace_state(), baseline)
+                    self.assertFalse((self.workspace/"client"/"PATCH-SENTINEL").exists())
+
+        oversized = b'{"hook_event_name":"PreToolUse","tool_name":"Read","cwd":"/workspace","tool_input":{"path":"' + b"x"*65536 + b'"}}'
+        for label, raw, request_payload in (
+            ("S12", oversized, None),
+            ("S13", b'{"hook_event_name":"PreToolUse"', None),
+            ("S14", b'{"hook_event_name":"PreToolUse","tool_name":"Read","cwd":"/workspace","tool_input":{"path":"hermes-build-steward/README.md"}}', "corrupted-sealed-request"),
+        ):
+            for provider in ("codex", "claude-code"):
+                with self.subTest(fixture=label, provider=provider):
+                    decision, _ = self._sixth_hook(provider, "Read", {}, raw=raw, request_payload=request_payload)
+                    self.assertEqual(decision, "deny")
+                    self.assertEqual(self._sixth_workspace_state(), baseline)
+
+    def test_sixth_rework_s15_s17_mandatory_hook_and_provider_configuration_are_immutable(self):
+        for target in ("/opt/sandiva/codex/hooks.json", "/opt/sandiva/claude/settings.json", "/opt/sandiva/bin/exec01-runtime"):
+            mode = subprocess.check_output([
+                "docker", "run", "--rm", "--network", "none", "--entrypoint", "stat",
+                self.image, "-c", "%a:%u:%g", target,
+            ], text=True).strip()
+            self.assertIn(mode.split(":")[0], {"444", "555"})
+            overwrite = subprocess.run([
+                "docker", "run", "--rm", "--network", "none", "--read-only", "--user", "65532:65532",
+                "--entrypoint", "/bin/sh", self.image, "-c", f"printf attacker > {target}",
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.assertNotEqual(overwrite.returncode, 0)
+
+        # S16: writable workspace settings cannot replace immutable CODEX_HOME /
+        # CLAUDE_CONFIG_DIR policy. S17: even direct alternate launcher use in
+        # the emulator traverses the same mandatory authorizer before a tool.
+        (self.workspace/".codex").mkdir(); (self.workspace/".codex"/"config.toml").write_text("hooks=[]\n")
+        (self.workspace/".claude").mkdir(); (self.workspace/".claude"/"settings.json").write_text('{"hooks":{}}')
+        before = self._sixth_workspace_state()
+        for provider in ("codex", "claude-code"):
+            profile, request = self._profile_request(provider, approved_commands=("true",))
+            payload = base64.b64encode(json.dumps(request.as_dict(),sort_keys=True,separators=(",", ":")).encode()).decode()
+            launcher = "codex" if provider == "codex" else "claude"
+            completed = subprocess.run([
+                "docker", "run", "--rm", "--network", "none", "--read-only", "--user", "65532:65532",
+                "--tmpfs", "/run/exec:rw,nosuid,nodev,noexec,size=1048576,uid=65532,gid=65532,mode=0700",
+                "--mount", f"type=bind,src={self.workspace},dst=/workspace",
+                "--env", f"EXEC_REQUEST_B64={payload}", "--env", "HOME=/workspace",
+                "--env", "CODEX_HOME=/opt/sandiva/codex", "--env", "CLAUDE_CONFIG_DIR=/opt/sandiva/claude",
+                "--entrypoint", f"/opt/sandiva/bin/{launcher}", self.image,
+                *profile.fixed_argv[1:],
+            ], input=b"approved prompt\0", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with self.subTest(provider=provider):
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(b"policy_denied", completed.stdout)
+                self.assertEqual(self._sixth_workspace_state(), before)
+
+    def test_sixth_rework_s18_s20_unauthorized_bash_precedes_process_network_git_and_publication(self):
+        malicious = self.workspace/"q16-build.sh"
+        malicious.write_text("#!/bin/sh\nset -eu\n/bin/sh -c 'echo child > client/CHILD'\n/bin/busybox wget -q -O /dev/null http://attacker.invalid/\necho git > .git/SIXTH-GIT\necho publish > SIXTH-PUBLICATION\n")
+        malicious.chmod(0o700)
+        subprocess.run(["git", "-C", str(self.workspace), "add", "q16-build.sh"], check=True)
+        subprocess.run(["git", "-C", str(self.workspace), "-c", "user.email=q@sandiva.invalid", "-c", "user.name=Q", "commit", "-q", "-m", "malicious agent fixture"], check=True)
+        baseline = self._sixth_workspace_state()
+        for provider in ("codex", "claude-code"):
+            with self.subTest(provider=provider):
+                _, result, changes = self._run(provider, approved_commands=("true",))
+                self.assertEqual(result["disposition"], "EXECUTION_BLOCKED")
+                self.assertEqual(result["failureClassification"], "POLICY_DENIED")
+                self.assertEqual(result["commandsExecuted"], [])
+                self.assertTrue(any("pretool-policy-denial" in value for value in result["evidenceReferences"]))
+                self.assertEqual(changes.changed_paths, ())
+                self.assertEqual(self._sixth_workspace_state(), baseline)
+                self.assertFalse((self.workspace/"client"/"CHILD").exists())
+                self.assertFalse((self.workspace/".git"/"SIXTH-GIT").exists())
+                self.assertFalse((self.workspace/"SIXTH-PUBLICATION").exists())
+
     def test_fifth_rework_unauthorized_command_has_zero_sentinel_side_effects(self):
         for provider in ("codex", "claude-code"):
             with self.subTest(provider=provider):

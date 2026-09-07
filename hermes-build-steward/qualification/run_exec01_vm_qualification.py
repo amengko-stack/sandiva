@@ -442,6 +442,7 @@ class DurableQualificationEvidenceCollector:
             _fail("qualification implementation head is invalid")
         _validate_qualification_context(self.qualification_context, observed_head=head_sha)
         records, pull_requests = [], []
+        expected_probe_authority: dict[str, dict[str, str]] = {}
         covered_providers: set[str] = set()
         for execution in execution_values:
             if execution.stage != ExecutionStage.RESULT_PERSISTED:
@@ -531,6 +532,14 @@ class DurableQualificationEvidenceCollector:
             }
             record["recordFingerprint"] = fingerprint(record)
             records.append(record)
+            if execution.attempt_id in expected_probe_authority:
+                _fail("qualification contains conflicting selected-profile authority for an attempt")
+            expected_probe_authority[execution.attempt_id] = {
+                "provider": provider,
+                "profileId": selected.profile_id,
+                "profileFingerprint": selected.fingerprint,
+                "taskFingerprint": task_fingerprint,
+            }
             github_record = {**record, "publicationMetadata": metadata}
             github_readback = self.github_reader.read(provider, github_record)
             if any(
@@ -556,7 +565,7 @@ class DurableQualificationEvidenceCollector:
         resolvable_source_identities: set[str] = set()
         raw_probes = [item for item in self._values(self.probe_store) if item.get("taskFingerprint") == task_fingerprint]
         probes = []
-        probe_identities: set[tuple[Any, Any]] = set()
+        probe_identities: set[tuple[Any, Any, Any, Any, Any, Any]] = set()
         required_observations = {
             "providerCredentialReadable": False, "publisherCredentialReadable": False,
             "hermesCredentialReadable": False, "coordinatorSecretsReadable": False,
@@ -570,12 +579,21 @@ class DurableQualificationEvidenceCollector:
                 "authoritativeStoreIdentity", "evidenceContext", "producerAttestation",
             }:
                 _fail("qualification containment probe authority record is malformed")
+            attempt_id = probe.get("attemptId")
+            expected_authority = expected_probe_authority.get(attempt_id)
+            if (
+                expected_authority is None
+                or probe.get("provider") != expected_authority["provider"]
+                or probe.get("profileFingerprint") != expected_authority["profileFingerprint"]
+                or probe.get("taskFingerprint") != expected_authority["taskFingerprint"]
+            ):
+                _fail("qualification containment probe does not match the authoritative selected executor profile")
             expected_context = {
                 "runId": run_id, "headSha": head_sha, "evidenceType": "containment-probe",
-                "taskFingerprint": task_fingerprint, "attemptIds": [probe.get("attemptId")],
-                "profileFingerprints": [probe.get("profileFingerprint")],
+                "taskFingerprint": task_fingerprint, "attemptIds": [attempt_id],
+                "profileFingerprints": [expected_authority["profileFingerprint"]],
             }
-            expected_source = f"runtime-probe://{run_id}/{head_sha}/{probe.get('attemptId')}/containment"
+            expected_source = f"runtime-probe://{run_id}/{head_sha}/{attempt_id}/containment"
             probe = _validate_producer_record(
                 probe, self.evidence_producers["containment-probe"],
                 context=expected_context, source_identity=expected_source,
@@ -590,19 +608,21 @@ class DurableQualificationEvidenceCollector:
                 or probe.get("evidenceFingerprint") != fingerprint(unsigned_probe)
             ):
                 _fail("qualification containment probe evidence is asserted or unbound")
-            identity = (probe.get("provider"), probe.get("attemptId"))
+            identity = (
+                task_fingerprint, run_id, attempt_id, expected_authority["provider"],
+                expected_authority["profileFingerprint"], "containment-probe",
+            )
             if identity in probe_identities:
                 _fail("qualification contains a duplicate containment probe identity")
             probe_identities.add(identity)
             probes.append(probe)
             authoritative_fingerprints.add(probe["evidenceFingerprint"])
             resolvable_source_identities.add(probe["sourceIdentity"])
-        if len(probes) != 2 or probe_identities != {
-            (provider, record["attemptId"]) for provider, record in (
-                (provider, next(item for item in records if item["profileFingerprint"] == profile.fingerprint))
-                for provider, profile in self.profiles.items()
-            )
-        }:
+        expected_probe_identities = {
+            (task_fingerprint, run_id, attempt_id, authority["provider"], authority["profileFingerprint"], "containment-probe")
+            for attempt_id, authority in expected_probe_authority.items()
+        }
+        if len(probes) != 2 or probe_identities != expected_probe_identities:
             _fail("qualification requires one authenticated containment probe for each exact attempt")
         checks: dict[str, Any] = {}
         for item in self._values(self.check_store):

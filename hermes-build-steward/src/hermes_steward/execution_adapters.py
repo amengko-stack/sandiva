@@ -116,14 +116,22 @@ class _BaseExecutionAdapter:
         unauthorized = not malformed and any(command not in approved for command in commands)
         if not malformed and not unauthorized:
             return None
+        event = (
+            "malformed-command-observation" if malformed
+            else "post-execution-unauthorized-command-observation"
+        )
         digest = __import__("hashlib").sha256(
             __import__("json").dumps(commands, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
+        # commandsExecuted is the contract's authorized-command ledger and may
+        # contain only task-approved commands. A provider protocol claiming an
+        # unauthorized command is therefore preserved as a distinct post-
+        # execution audit observation, never mislabeled as a pre-tool denial.
         return self._common_result(
             request, disposition="EXECUTION_FAILED", started_at=started_at,
             completed_at=completed_at, commands=[], tests=[], changed_paths=[],
             patch_digest=None,
-            evidence_references=[f"audit://{request.audit_provenance_id}/command-policy-denial/{digest}"],
+            evidence_references=[f"audit://{request.audit_provenance_id}/{event}/{digest}"],
             failure_type="policy_denied",
         )
 

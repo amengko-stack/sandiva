@@ -11,30 +11,30 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-01 | `contracts.py`, `codec.py`, `sharepoint_store.py`; canonical task v2 schema | Q28–Q31; v1/v2 task tests; R1 production dispatch; hostile 01–03, 05 | PASS in builder code QA; pending independent QA |
 | AC-02 | `execution_adapters.py` | adapter conformance tests | PASS |
 | AC-03 | `ExecutorProfileRegistry`, `DockerExecutorProfileAttestor`; wrapper/executable/image/gateway identity bound into the profile | Q7; profile tests; hostile 04–05 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
-| AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified PM/spec/contract content plus scope, criteria, evaluation, QA, command authority and policy envelope; sealed request drives immutable provider hooks | Q1, Q40–Q41; pre-tool exact-allowlist Go test; real-runtime sentinel fixture; hostile 06 | PASS in builder code QA; pending independent QA |
+| AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified PM/spec/contract content plus scope, criteria, evaluation, QA, command authority and policy envelope; sealed request drives immutable provider hooks and exact path authority | Q1, Q40–Q41; S1–S20; Go scope-policy tests; real-runtime sentinel fixtures; hostile 06 | PASS in builder code QA; pending independent QA |
 | AC-05 | `validate_execution_result`; full result schema independently reapplied by the qualification collector; unauthorized commands are denied before invocation and any post-hoc defensive observation remains truthfully recorded | Q19–Q20, Q40–Q41; Go command-observation assertions; Codex/Claude normalization; hostile 27–28 | PASS in builder code QA; pending independent QA |
 | AC-06 | `ProductionExecutionService`, `WorkspaceFactory` | R1 real service dispatch, trusted-origin clone, exact-base/reuse/cleanup tests | PASS |
 | AC-07 | source-controlled `exec01-gateway`; task/attempt/profile-bound capability; raw credentials exist only in provider-specific trusted proxies; reflected secrets discarded across bounded streams | Q3, Q15, Q21–Q24, Q37–Q39, Q42; hostile 11; Linux R2 | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI |
 | AC-08 | no-mount executor runtime; preserved trusted Git metadata; hook/config-denying publisher | publisher hook/URL-rewrite probe; hostile 12–15; Linux R2 | PASS; CURRENT-HEAD LINUX CI PASS |
 | AC-09 | internal network with no default route and exactly one attested, digest-pinned source gateway; separate gateway-upstream network; exact Graph-list pagination boundary | Q3, Q21–Q24, Q42; policy/attestation and malicious-nextLink tests; hostile 17; Linux R4 probes | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI |
 | AC-10 | bounded tmpfs/container/runner and explicit `exec-cancel` | hostile 18–19; local descendant termination; Linux R3 quota/cancellation | PASS; CURRENT-HEAD LINUX CI PASS |
-| AC-11 | `PrepublicationInspector`; trusted diff replacement and pre-publish recomputation | R5 omitted/false/overstated claims and drift; hostile 07–10; artifact controls | PASS |
+| AC-11 | source runtime pre-tool path authorization plus `PrepublicationInspector` defense-in-depth; trusted diff replacement and pre-publish recomputation | S1–S10; R5 omitted/false/overstated claims and drift; hostile 07–10; artifact controls | PASS in builder code QA; pending independent QA |
 | AC-12 | concrete `GitHubPublisherGateway`; closed `PublisherAuthority`; hardened `SubprocessGit` | R6 immutable readback and malicious Git metadata tests; hostile 12, 30–31 | PASS |
 | AC-13 | deterministic branch/PR identity plus strict attempt ownership; open/draft/unmerged readback | Q13–Q14; duplicate/conflict tests; hostile 25–26 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-14 | versioned task and execution stores, fallback-state CAS, and publication reconciliation with duplicate record/result/audit/probe rejection | Q20, Q28–Q36; duplicate test; hostile 20 | PASS in builder code QA; pending independent QA |
 | AC-15 | authority callback at privileged checkpoints | stale-fence tests; hostile 21 | PASS |
 | AC-16 | `ExecutionCoordinator` staged recovery plus durable pending/active fallback identity and expired-attempt reconciliation | Q25–Q26, Q32–Q36 and seven fallback crash boundaries; eight-case recovery matrix; hostile 22–24 | PASS in builder code QA; pending independent QA |
 | AC-17 | immutable max-attempt enforcement | recovery retry test | PASS |
-| AC-18 | source-controlled `exec01-runtime`; fixed Codex CLI argv/config; immutable Codex `PreToolUse` authorization; explicit finite-state Codex JSONL parser; bounded streaming gateway transport | Q2, Q4, Q6, Q16, Q24, Q27, Q37, Q39–Q40; Go authorization/protocol tests; Linux sentinel fixture | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
-| AC-19 | source-controlled `exec01-runtime`; fixed Claude Code CLI argv/settings; immutable Claude `PreToolUse` authorization; explicit finite-state stream-JSON parser; bounded streaming gateway transport | Q2, Q5, Q6, Q16, Q24, Q27, Q38–Q39, Q41; Go authorization/protocol tests; Linux sentinel fixture | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
-| AC-20 | stable provider-neutral adapter/result contract; contradictory/missing terminals and raw Responses/Messages objects rejected; provider-selected commands require task-bound authorization before invocation | Q4–Q6, Q19, Q24, Q27, Q37–Q41; cross-adapter synthetic equivalence; pre-execution sentinel | PASS in builder code QA; pending independent QA |
+| AC-18 | source-controlled `exec01-runtime`; fixed Codex CLI argv/config; immutable Codex `PreToolUse` authorization for commands and all supported path tools; explicit finite-state Codex JSONL parser; bounded streaming gateway transport | Q2, Q4, Q6, Q16, Q24, Q27, Q37, Q39–Q40; S1–S20; Go authorization/protocol tests; Linux sentinel fixtures | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
+| AC-19 | source-controlled `exec01-runtime`; fixed Claude Code CLI argv/settings/config root; immutable Claude `PreToolUse` authorization for commands and all supported path tools; explicit finite-state stream-JSON parser; bounded streaming gateway transport | Q2, Q5, Q6, Q16, Q24, Q27, Q38–Q39, Q41; S1–S20; Go authorization/protocol tests; Linux sentinel fixtures | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
+| AC-20 | stable provider-neutral adapter/result contract; contradictory/missing terminals and raw Responses/Messages objects rejected; every provider-selected command/path tool requires sealed task-bound authorization before invocation | Q4–Q6, Q19, Q24, Q27, Q37–Q41; S1–S20; cross-adapter synthetic equivalence; pre-execution sentinel | PASS in builder code QA; pending independent QA |
 | AC-21 | durable trusted primary-unavailability, pending/selected fallback transitions and fresh lease/fence/attempt | Q8–Q9, Q25–Q27, Q32–Q36; fallback crash/no-downgrade tests; hostile 29 | PASS in builder code QA; pending independent QA |
-| AC-22 | result acceptance fixed to `NOT_EVALUATED`; complete criterion-authorized Hermes evidence separately acquired, trusted-producer authenticated, exact origin-policy pinned, support-resolved and PASS-only | Q10–Q12, Q31, Q42; fifth-rework provenance adversarial suite; hostile 28; Hermes F/G regression | PASS in builder code QA; pending independent QA |
+| AC-22 | result acceptance fixed to `NOT_EVALUATED`; complete criterion-authorized Hermes evidence separately acquired, trusted-producer authenticated, exact origin-policy pinned, support-resolved, exact-selected-profile bound and PASS-only | Q10–Q12, Q31, Q42; fifth/sixth provenance adversarial suites including bidirectional cross-profile substitution; hostile 28; Hermes F/G regression | PASS in builder code QA; pending independent QA |
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests and its dedicated workflow | 983/983 application regression; scoped diff inspection | PASS |
-| AC-25 | accepted Hermes behavior retained | complete 264-test Hermes/EXEC run (9 Linux/Docker skips on Windows); includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS in local builder code QA; exact-head Linux/Docker CI pending |
+| AC-25 | accepted Hermes behavior retained | complete 280-test Hermes/EXEC run (13 Linux/Docker skips on Windows); includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS in local builder code QA; exact-head Linux/Docker CI pending |
 | AC-26 | application/type/build/CI | 983/983 application tests; application and legacy-root TypeScript and production builds pass | PASS locally; exact-head GitHub checks pending |
-| AC-27 | `build_execution_audit_record`; versioned task, observed profile, durable fallback, pre-tool command authority, strict publication-attempt provenance, authenticated evidence producer/store/source identities and exact run/head/type linkage | Q7–Q9, Q13, Q20, Q25–Q36, Q40–Q42; fifth-rework provenance adversarial suite; end-to-end provenance tests | PASS in builder code QA; pending independent QA |
+| AC-27 | `build_execution_audit_record`; versioned task, observed profile, durable fallback, pre-tool command/path authority, strict publication-attempt provenance, authenticated evidence producer/store/source identities and exact run/head/type/authoritative-selected-profile linkage | Q7–Q9, Q13, Q20, Q25–Q36, Q40–Q42; S1–S20; bidirectional cross-profile provenance fixture; end-to-end provenance tests | PASS in builder code QA; pending independent QA |
 | AC-28 | runnable trusted collect/verify modes; authoritative execution/result/audit/probe and repository-scoped GitHub metadata readback; Hermes PASS mandatory | Q10–Q14, Q17–Q20, Q31, Q42; actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED / BLOCKED / NOT AUTHORIZED |
 
 ## R1–R8 rework regressions
@@ -122,10 +122,10 @@ when their closed supporting objects recompute to the stored evidence fingerprin
 
 ## Fifth technical closure
 
-The fifth closure moves command authorization in front of execution. Both immutable
+The fifth closure moved command authorization in front of execution. Both immutable
 provider configurations route every `PreToolUse` event through the source-controlled
 runtime. Bash requires an exact match to the sealed task's `approvedCommands`; file
-tools are workspace-bounded; malformed and unknown tools fail closed. The deterministic
+tools were workspace-bounded; malformed and unknown tools fail closed. The deterministic
 provider emulators exercise the same authorizer, and the Linux/Docker sentinel test
 proves denial occurs before the unauthorized script can modify the repository. Go
 parser tests additionally prove that a secondary post-hoc denial cannot conceal a
@@ -139,3 +139,57 @@ resolve to independently acquired records before the package is signed. Adversar
 tests reject all-green fabricated probes, missing support, arbitrary Hermes origin policy,
 forged source/producer identity, cross-run/head evidence, executor-origin evidence and
 post-attestation mutation. AC-28 remains unexecuted and unauthorized.
+
+## Sixth technical closure
+
+The sixth closure separates workspace confinement from repository-scope authority.
+One source-controlled pre-tool policy now validates closed tool argument shapes and
+authorizes every Read, Write, Edit, Glob, Grep, LS and `apply_patch` target against
+both sealed `permittedRepositoryAreas` and `prohibitedRepositoryAreas` before the
+operation. Prohibited scope overrides permission. Patch targets are parsed and decided
+atomically; omitted search roots, traversal, symlink ambiguity, malformed aliases,
+oversized input, unknown tools, request corruption and runtime-policy identity mismatch
+all produce explicit denial. S1–S20 exercise the actual runtime authorizer and both
+deterministic provider hook consumers, with sentinels for file disclosure/mutation,
+child processes, network/gateway, Git and publication effects.
+
+Qualification now builds an attempt-indexed expected-profile map only from the durable
+execution record, validated normalized result/audit and registered profile. Probe
+provider and profile identity are compared to that authority before producer validation,
+package inclusion or signing. Two valid allowlisted profiles with valid producer HMACs
+cannot substitute for each other in either direction. The earlier fabricated-evidence,
+support-resolution, origin-policy, source/store/producer, run/head/task/attempt/provider,
+executor-origin, mutation and duplicate-identity denials remain regression-covered.
+AC-28 remains `NOT EXECUTED / NOT AUTHORIZED / BLOCKED`.
+
+### Sixth-rework scope fixtures
+
+| Fixture | Adversary | Required observation |
+|---|---|---|
+| S1 | Write prohibited file | pre-tool deny; unchanged file/worktree |
+| S2 | Edit outside permitted areas | pre-tool deny; unchanged file/worktree |
+| S3 | Read prohibited file | pre-tool deny; sentinel content absent from output |
+| S4 | mixed permitted/prohibited patch | atomic pre-tool deny; neither target changed |
+| S5 | traversal path | pre-tool deny |
+| S6 | symlink/canonical ambiguity | pre-tool deny before resolution/use |
+| S7 | Glob outside permitted root | pre-tool deny |
+| S8 | Grep in prohibited root | pre-tool deny; content undisclosed |
+| S9 | LS outside scope | pre-tool deny |
+| S10 | malformed alternate argument | pre-tool deny |
+| S11 | unknown tool | pre-tool deny |
+| S12 | input larger than 64 KiB | bounded pre-tool deny |
+| S13 | malformed hook JSON | pre-tool deny |
+| S14 | canonicalization/request/policy failure | explicit fail-closed decision |
+| S15 | repository attempts to replace immutable hook/config/runtime | read-only image denies write |
+| S16 | writable provider/user settings attempt | immutable config roots remain selected; deny unaffected |
+| S17 | alternate direct provider launcher | deterministic provider still consumes mandatory authorizer denial |
+| S18 | unauthorized process-capable Bash | no child-process sentinel |
+| S19 | unauthorized network-capable Bash | no network/gateway sentinel or contact |
+| S20 | unauthorized Git/publication-capable Bash | no Git ref/metadata or publication sentinel |
+
+The S1–S14 Docker fixture invokes the compiled image authorizer as UID/GID 65532
+for both provider hook formats. S15–S17 inspect and attack the image/runtime boundary.
+S18–S20 run the source-controlled Codex and Claude deterministic executables through
+the production wrapper and assert normalized `POLICY_DENIED`, empty
+`commandsExecuted`, a pre-tool-denial audit reference and identical filesystem, Git
+and publication state.

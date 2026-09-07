@@ -341,6 +341,11 @@ class FourthReworkCommandAuthorityTests(unittest.TestCase):
                     self.assertEqual(result["failureClassification"], "POLICY_DENIED")
                     self.assertEqual(result["commandsExecuted"], [])
                     self.assertTrue(result["evidenceReferences"][0].startswith("audit://"))
+                    expected_event = (
+                        "malformed-command-observation" if observed == [123]
+                        else "post-execution-unauthorized-command-observation"
+                    )
+                    self.assertIn(expected_event, result["evidenceReferences"][0])
 
 
 class FourthReworkGraphBoundaryTests(unittest.TestCase):

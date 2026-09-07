@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -20,8 +21,15 @@ import (
 
 const workspace = "/workspace"
 const outputLimit = 4 * 1024 * 1024
-const launcherVersion = "exec01-runtime-v1.1.0"
+const launcherVersion = "exec01-runtime-v1.2.0"
 const denialMarker = "/run/exec/pretool-denied"
+const hookInputLimit = 64 * 1024
+
+// authorizationWorkspaceHost is compile-time fixed to the isolated attempt
+// workspace in production. Tests replace it only inside this package so that
+// canonical-path checks can run on every supported development OS.
+var authorizationWorkspaceHost = workspace
+var runtimeExecutablePath = "/opt/sandiva/bin/exec01-runtime"
 
 var errCommandPolicy = errors.New("executor command policy denied")
 
@@ -36,12 +44,18 @@ type requestEnvelope struct {
 	TaskID                      string                  `json:"taskId"`
 	TaskFingerprint             string                  `json:"taskFingerprint"`
 	AttemptID                   string                  `json:"attemptId"`
+	AuditProvenanceID           string                  `json:"auditProvenanceId"`
 	ExecutorProfile             executorProfileIdentity `json:"executorProfile"`
 	ExecutionContent            map[string]interface{}  `json:"executionContent"`
 	ExecutionContentFingerprint string                  `json:"executionContentFingerprint"`
+	ObservedExecutorIdentity    observedIdentity        `json:"observedExecutorIdentity"`
 	ApprovedCommands            []string                `json:"approvedCommands"`
 	PermittedRepositoryAreas    []string                `json:"permittedRepositoryAreas"`
 	ProhibitedRepositoryAreas   []string                `json:"prohibitedRepositoryAreas"`
+}
+
+type observedIdentity struct {
+	RuntimeWrapperDigest string `json:"runtimeWrapperDigest"`
 }
 
 type executorProfileIdentity struct {
@@ -104,6 +118,29 @@ func loadRequest() (requestEnvelope, []byte, error) {
 	}
 	if request.TaskID == "" || request.TaskFingerprint == "" || request.AttemptID == "" || request.ExecutorProfile.ProfileID == "" || request.ExecutorProfile.ProfileFingerprint == "" || request.ExecutorProfile.Provider == "" || request.ExecutionContentFingerprint == "" || request.ExecutionContent == nil {
 		return request, nil, errors.New("sealed request identity/content is incomplete")
+	}
+	observedRuntimeDigest, digestErr := fileDigest(runtimeExecutablePath)
+	if digestErr != nil || request.ObservedExecutorIdentity.RuntimeWrapperDigest != observedRuntimeDigest {
+		return request, nil, errors.New("sealed request runtime authorization-policy identity mismatch")
+	}
+	if len(request.PermittedRepositoryAreas) == 0 || len(request.ProhibitedRepositoryAreas) == 0 || len(request.ApprovedCommands) == 0 {
+		return request, nil, errors.New("sealed request execution authority is incomplete")
+	}
+	seenCommands := map[string]bool{}
+	for _, command := range request.ApprovedCommands {
+		if command == "" || command != strings.TrimSpace(command) || seenCommands[command] {
+			return request, nil, errors.New("sealed request command authority is malformed")
+		}
+		seenCommands[command] = true
+	}
+	for _, patterns := range [][]string{request.PermittedRepositoryAreas, request.ProhibitedRepositoryAreas} {
+		seenPatterns := map[string]bool{}
+		for _, pattern := range patterns {
+			if !validAuthorityPattern(pattern) || seenPatterns[pattern] {
+				return request, nil, errors.New("sealed request repository authority is malformed")
+			}
+			seenPatterns[pattern] = true
+		}
 	}
 	content, err := canonical(request.ExecutionContent)
 	if err != nil {
@@ -241,57 +278,467 @@ type hookInput struct {
 	ToolInput map[string]interface{} `json:"tool_input"`
 }
 
-func workspacePath(value string) bool {
-	if value == "" {
+func validAuthorityPattern(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || strings.ContainsAny(value, "\\\x00") || strings.HasPrefix(value, "/") {
 		return false
 	}
-	clean := filepath.Clean(value)
-	if filepath.IsAbs(clean) {
-		relative, err := filepath.Rel(workspace, clean)
-		return err == nil && relative != ".." && !strings.HasPrefix(relative, "../")
+	for _, part := range strings.Split(value, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
 	}
-	return clean != ".." && !strings.HasPrefix(clean, "../") && !strings.Contains(clean, `\`)
+	return true
+}
+
+func pathMatches(value, pattern string) bool {
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := strings.TrimSuffix(pattern, "/**")
+		return value == prefix || strings.HasPrefix(value, prefix+"/")
+	}
+	// Python fnmatchcase, used by the canonical task validator and trusted
+	// prepublication inspector, lets '*' match '/'. Replacing the separator
+	// before Go's path.Match preserves that exact authority semantics.
+	matched, err := pathpkg.Match(
+		strings.ReplaceAll(pattern, "/", "\x1f"),
+		strings.ReplaceAll(value, "/", "\x1f"),
+	)
+	return err == nil && matched
+}
+
+func repositoryPath(value string) (string, error) {
+	if value == "" || value != strings.TrimSpace(value) || strings.ContainsAny(value, "\\\x00") {
+		return "", errors.New("repository path is malformed")
+	}
+	original := value
+	if value == workspace {
+		value = "."
+	} else if strings.HasPrefix(value, workspace+"/") {
+		value = strings.TrimPrefix(value, workspace+"/")
+	} else if strings.HasPrefix(value, "/") {
+		return "", errors.New("repository path escapes the execution workspace")
+	}
+	for _, part := range strings.Split(original, "/") {
+		if part == ".." {
+			return "", errors.New("repository path traversal is denied")
+		}
+	}
+	clean := pathpkg.Clean(value)
+	if clean == ".." || strings.HasPrefix(clean, "../") || strings.HasPrefix(clean, "/") {
+		return "", errors.New("repository path escapes the execution workspace")
+	}
+	return clean, nil
+}
+
+func hasAmbiguousSymlink(relative string) (bool, error) {
+	rootInfo, err := os.Lstat(authorizationWorkspaceHost)
+	if err != nil {
+		return false, errors.New("execution workspace cannot be canonically resolved")
+	}
+	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return true, nil
+	}
+	if relative == "." {
+		return false, nil
+	}
+	current := authorizationWorkspaceHost
+	for _, part := range strings.Split(relative, "/") {
+		current = filepath.Join(current, filepath.FromSlash(part))
+		info, statErr := os.Lstat(current)
+		if errors.Is(statErr, os.ErrNotExist) {
+			return false, nil
+		}
+		if statErr != nil {
+			return false, errors.New("repository path cannot be canonically resolved")
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func treeHasAmbiguousSymlink(relative string) (bool, error) {
+	target := authorizationWorkspaceHost
+	if relative != "." {
+		target = filepath.Join(target, filepath.FromSlash(relative))
+	}
+	info, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, errors.New("search root cannot be canonically resolved")
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return true, nil
+	}
+	if !info.IsDir() {
+		return false, nil
+	}
+	entries := 0
+	err = filepath.WalkDir(target, func(_ string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		entries++
+		if entries > 100000 {
+			return errors.New("search root canonicalization exceeds its bound")
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return errAmbiguousSearchSymlink
+		}
+		return nil
+	})
+	if errors.Is(err, errAmbiguousSearchSymlink) {
+		return true, nil
+	}
+	if err != nil {
+		return false, errors.New("search root cannot be canonically resolved")
+	}
+	return false, nil
+}
+
+var errAmbiguousSearchSymlink = errors.New("search root contains a symlink")
+
+func authorizeRepositoryPath(value string, request requestEnvelope) error {
+	relative, err := repositoryPath(value)
+	if err != nil {
+		return err
+	}
+	if len(request.PermittedRepositoryAreas) == 0 {
+		return errors.New("task has no permitted repository area")
+	}
+	for _, pattern := range append(append([]string{}, request.PermittedRepositoryAreas...), request.ProhibitedRepositoryAreas...) {
+		if !validAuthorityPattern(pattern) {
+			return errors.New("task repository authority pattern is malformed")
+		}
+	}
+	for _, pattern := range request.ProhibitedRepositoryAreas {
+		if pathMatches(relative, pattern) {
+			return errors.New("repository path is prohibited by the sealed task")
+		}
+	}
+	permitted := false
+	for _, pattern := range request.PermittedRepositoryAreas {
+		if pathMatches(relative, pattern) {
+			permitted = true
+			break
+		}
+	}
+	if !permitted {
+		return errors.New("repository path is outside the sealed task permission envelope")
+	}
+	ambiguous, err := hasAmbiguousSymlink(relative)
+	if err != nil {
+		return err
+	}
+	if ambiguous {
+		return errors.New("repository path contains a symlink or canonical-path ambiguity")
+	}
+	return nil
+}
+
+func pathValues(input map[string]interface{}, aliases []string, multipleAliases map[string]bool, recognizedAliases ...string) ([]string, error) {
+	allowed := map[string]bool{}
+	if len(recognizedAliases) == 0 {
+		recognizedAliases = aliases
+	}
+	for _, alias := range recognizedAliases {
+		allowed[alias] = true
+	}
+	for key := range input {
+		lower := strings.ToLower(key)
+		if (strings.Contains(lower, "path") || lower == "directory" || lower == "root" || lower == "cwd") && !allowed[key] {
+			return nil, errors.New("file tool contains an unsupported path argument")
+		}
+	}
+	values := []string{}
+	observedAlias := ""
+	for _, alias := range aliases {
+		raw, exists := input[alias]
+		if !exists {
+			continue
+		}
+		if observedAlias != "" {
+			return nil, errors.New("file tool contains ambiguous path aliases")
+		}
+		observedAlias = alias
+		if multipleAliases[alias] {
+			items, ok := raw.([]interface{})
+			if !ok || len(items) == 0 {
+				return nil, errors.New("file tool path list is malformed")
+			}
+			for _, item := range items {
+				value, ok := item.(string)
+				if !ok || value == "" {
+					return nil, errors.New("file tool path list is malformed")
+				}
+				values = append(values, value)
+			}
+		} else {
+			value, ok := raw.(string)
+			if !ok || value == "" {
+				return nil, errors.New("file tool path is malformed")
+			}
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return nil, errors.New("file tool has no explicit bounded repository path")
+	}
+	return values, nil
+}
+
+func validateSearchPattern(tool string, input map[string]interface{}) error {
+	keys := []string{"pattern"}
+	if tool == "Grep" {
+		keys = []string{"glob"}
+	}
+	for _, key := range keys {
+		raw, exists := input[key]
+		if !exists {
+			continue
+		}
+		value, ok := raw.(string)
+		if !ok || value == "" || strings.ContainsAny(value, "\\\x00") || strings.HasPrefix(value, "/") {
+			return errors.New("search pattern is malformed")
+		}
+		for _, part := range strings.Split(value, "/") {
+			if part == ".." {
+				return errors.New("search pattern traversal is denied")
+			}
+		}
+	}
+	return nil
+}
+
+func exactToolKeys(input map[string]interface{}, allowed ...string) error {
+	keys := map[string]bool{}
+	for _, key := range allowed {
+		keys[key] = true
+	}
+	for key := range input {
+		if !keys[key] {
+			return errors.New("tool input contains an unsupported argument")
+		}
+	}
+	return nil
+}
+
+func patchTargets(patch string) ([]string, error) {
+	if patch == "" || strings.ContainsRune(patch, '\x00') {
+		return nil, errors.New("patch input is malformed")
+	}
+	normalizedPatch := strings.ReplaceAll(patch, "\r\n", "\n")
+	lines := strings.Split(normalizedPatch, "\n")
+	targets := []string{}
+	custom := false
+	standard := false
+	standardOld := 0
+	standardNew := 0
+	for _, line := range lines {
+		for _, prefix := range []string{"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "} {
+			if strings.HasPrefix(line, prefix) {
+				custom = true
+				target := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+				if target == "" {
+					return nil, errors.New("patch target is malformed")
+				}
+				targets = append(targets, target)
+			}
+		}
+		if strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") {
+			standard = true
+			if strings.HasPrefix(line, "--- ") {
+				standardOld++
+			} else {
+				standardNew++
+			}
+			target := strings.TrimSpace(line[4:])
+			if tab := strings.IndexByte(target, '\t'); tab >= 0 {
+				target = target[:tab]
+			}
+			if target == "/dev/null" {
+				continue
+			}
+			if strings.HasPrefix(target, "a/") || strings.HasPrefix(target, "b/") {
+				target = target[2:]
+			}
+			if target == "" {
+				return nil, errors.New("patch target is malformed")
+			}
+			targets = append(targets, target)
+		}
+	}
+	if len(targets) == 0 || (custom && (!strings.HasPrefix(normalizedPatch, "*** Begin Patch\n") || !strings.HasSuffix(strings.TrimSpace(normalizedPatch), "*** End Patch"))) || (custom && standard) || (standard && (standardOld == 0 || standardOld != standardNew)) {
+		return nil, errors.New("patch input is malformed")
+	}
+	return targets, nil
 }
 
 func authorizeTool(raw []byte, request requestEnvelope) (hookDecision, error) {
 	var input hookInput
-	if len(raw) == 0 || len(raw) > 64*1024 || json.Unmarshal(raw, &input) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	decodeErr := decoder.Decode(&input)
+	var trailing interface{}
+	trailingErr := decoder.Decode(&trailing)
+	if len(raw) == 0 || len(raw) > hookInputLimit || decodeErr != nil || !errors.Is(trailingErr, io.EOF) {
 		return hookDecision{Reason: "malformed pre-tool authorization request"}, nil
 	}
 	if input.EventName != "PreToolUse" || input.Cwd != workspace || input.ToolName == "" || input.ToolInput == nil {
 		return hookDecision{Reason: "pre-tool request is not bound to the execution workspace"}, nil
 	}
-	if input.ToolName == "Bash" {
-		command, ok := input.ToolInput["command"].(string)
+	if input.ToolName == "Bash" || input.ToolName == "shell" || input.ToolName == "shell_command" {
+		if err := exactToolKeys(input.ToolInput, "command", "cmd", "cwd", "workdir"); err != nil {
+			return hookDecision{Reason: err.Error()}, nil
+		}
+		command := ""
+		observedCommandAlias := false
+		for _, key := range []string{"command", "cmd"} {
+			if rawCommand, exists := input.ToolInput[key]; exists {
+				if observedCommandAlias {
+					return hookDecision{Reason: "shell input contains ambiguous command aliases"}, nil
+				}
+				observedCommandAlias = true
+				var ok bool
+				command, ok = rawCommand.(string)
+				if !ok {
+					return hookDecision{Reason: "shell command is malformed"}, nil
+				}
+			}
+		}
+		observedDirectoryAlias := false
+		for _, key := range []string{"cwd", "workdir"} {
+			if rawDirectory, exists := input.ToolInput[key]; exists {
+				if observedDirectoryAlias {
+					return hookDecision{Reason: "shell input contains ambiguous workspace aliases"}, nil
+				}
+				observedDirectoryAlias = true
+				directory, ok := rawDirectory.(string)
+				if !ok || directory != workspace {
+					return hookDecision{Reason: "shell workdir is outside the execution workspace"}, nil
+				}
+			}
+		}
+		ok := observedCommandAlias
 		if !ok || command == "" || !approved(command, request.ApprovedCommands) {
 			return hookDecision{Reason: "command is not in the task-bound exact allowlist"}, nil
 		}
 		return hookDecision{Allowed: true, Reason: "exact task-bound command authorized"}, nil
 	}
 	if input.ToolName == "apply_patch" {
-		patch, ok := input.ToolInput["command"].(string)
-		if !ok || patch == "" || strings.Contains(patch, "../") || strings.Contains(patch, `..\`) {
-			return hookDecision{Reason: "patch input is malformed or escapes the workspace"}, nil
+		if err := exactToolKeys(input.ToolInput, "patch", "command", "input"); err != nil {
+			return hookDecision{Reason: err.Error()}, nil
 		}
-		return hookDecision{Allowed: true, Reason: "workspace patch authorized; trusted prepublication inspection remains mandatory"}, nil
+		var patch string
+		observedPatchAlias := false
+		for _, key := range []string{"patch", "command", "input"} {
+			if rawPatch, exists := input.ToolInput[key]; exists {
+				if observedPatchAlias {
+					return hookDecision{Reason: "patch input contains ambiguous aliases"}, nil
+				}
+				observedPatchAlias = true
+				var ok bool
+				patch, ok = rawPatch.(string)
+				if !ok {
+					return hookDecision{Reason: "patch input is malformed"}, nil
+				}
+			}
+		}
+		targets, err := patchTargets(patch)
+		if err != nil {
+			return hookDecision{Reason: err.Error()}, nil
+		}
+		for _, target := range targets {
+			if err := authorizeRepositoryPath(target, request); err != nil {
+				return hookDecision{Reason: "patch target denied: " + err.Error()}, nil
+			}
+		}
+		return hookDecision{Allowed: true, Reason: "every patch target is authorized by the sealed task"}, nil
 	}
-	allowedFileTools := map[string]bool{"Read": true, "Edit": true, "Write": true, "Glob": true, "Grep": true, "LS": true}
-	if allowedFileTools[input.ToolName] {
-		observedPath := false
-		for key, value := range input.ToolInput {
-			if !strings.Contains(strings.ToLower(key), "path") {
-				continue
-			}
-			path, ok := value.(string)
-			if !ok || !workspacePath(path) {
-				return hookDecision{Reason: "file tool path escapes the execution workspace"}, nil
-			}
-			observedPath = true
+	toolAliases := map[string][]string{
+		"Read": {"file_path", "path", "filePath"}, "Write": {"file_path", "path", "filePath"},
+		"Edit": {"file_path", "path", "filePath"}, "Glob": {"path", "directory", "root"},
+		"Grep": {"path", "paths", "directory", "root", "include_path", "include_paths"},
+		"LS":   {"path", "directory", "root"},
+	}
+	aliases, fileTool := toolAliases[input.ToolName]
+	if fileTool {
+		allowedKeys := map[string][]string{
+			"Read":  {"file_path", "path", "filePath", "offset", "limit"},
+			"Write": {"file_path", "path", "filePath", "content"},
+			"Edit":  {"file_path", "path", "filePath", "old_string", "new_string", "replace_all"},
+			"Glob":  {"path", "directory", "root", "pattern"},
+			"Grep":  {"path", "paths", "directory", "root", "include_path", "include_paths", "pattern", "glob", "output_mode", "head_limit"},
+			"LS":    {"path", "directory", "root"},
 		}
-		if !observedPath && input.ToolName != "Grep" {
-			return hookDecision{Reason: "file tool has no bounded workspace path"}, nil
+		if err := exactToolKeys(input.ToolInput, allowedKeys[input.ToolName]...); err != nil {
+			return hookDecision{Reason: err.Error()}, nil
 		}
-		return hookDecision{Allowed: true, Reason: "workspace-confined file tool authorized"}, nil
+		if input.ToolName == "Write" {
+			if _, ok := input.ToolInput["content"].(string); !ok {
+				return hookDecision{Reason: "Write content is malformed"}, nil
+			}
+		}
+		if input.ToolName == "Edit" {
+			if _, ok := input.ToolInput["old_string"].(string); !ok {
+				return hookDecision{Reason: "Edit old_string is malformed"}, nil
+			}
+			if _, ok := input.ToolInput["new_string"].(string); !ok {
+				return hookDecision{Reason: "Edit new_string is malformed"}, nil
+			}
+		}
+		if input.ToolName == "Grep" {
+			if pattern, ok := input.ToolInput["pattern"].(string); !ok || pattern == "" {
+				return hookDecision{Reason: "Grep pattern is malformed"}, nil
+			}
+		}
+		recognized := aliases
+		if input.ToolName == "Grep" {
+			recognized = append(append([]string{}, aliases...), "include_path", "include_paths")
+			aliases = []string{"path", "paths", "directory", "root"}
+		}
+		values, err := pathValues(input.ToolInput, aliases, map[string]bool{"paths": true}, recognized...)
+		if err != nil {
+			return hookDecision{Reason: err.Error()}, nil
+		}
+		if input.ToolName == "Grep" {
+			supplemental := map[string]interface{}{}
+			for _, key := range []string{"include_path", "include_paths"} {
+				if value, exists := input.ToolInput[key]; exists {
+					supplemental[key] = value
+				}
+			}
+			if len(supplemental) != 0 {
+				additional, supplementalErr := pathValues(
+					supplemental, []string{"include_path", "include_paths"},
+					map[string]bool{"include_paths": true},
+				)
+				if supplementalErr != nil {
+					return hookDecision{Reason: supplementalErr.Error()}, nil
+				}
+				values = append(values, additional...)
+			}
+		}
+		if input.ToolName == "Glob" || input.ToolName == "Grep" {
+			if err := validateSearchPattern(input.ToolName, input.ToolInput); err != nil {
+				return hookDecision{Reason: err.Error()}, nil
+			}
+		}
+		for _, value := range values {
+			if err := authorizeRepositoryPath(value, request); err != nil {
+				return hookDecision{Reason: "file tool path denied: " + err.Error()}, nil
+			}
+			if input.ToolName == "Glob" || input.ToolName == "Grep" || input.ToolName == "LS" {
+				relative, _ := repositoryPath(value)
+				ambiguous, treeErr := treeHasAmbiguousSymlink(relative)
+				if treeErr != nil || ambiguous {
+					return hookDecision{Reason: "search/list root contains a symlink or canonical-path ambiguity"}, nil
+				}
+			}
+		}
+		return hookDecision{Allowed: true, Reason: "every file tool path is authorized by the sealed task"}, nil
 	}
 	return hookDecision{Reason: "tool is not allowlisted for EXEC-01"}, nil
 }
@@ -301,33 +748,45 @@ func emitHookDecision(provider string, decision hookDecision) error {
 		return errors.New("hook provider is not allowlisted")
 	}
 	permission := "deny"
+	var markerErr error
 	if decision.Allowed {
 		permission = "allow"
 	} else {
-		if err := os.WriteFile(denialMarker, []byte(decision.Reason+"\n"), 0600); err != nil {
-			return errors.New("pre-tool denial could not be durably recorded")
+		denial, err := json.Marshal(map[string]interface{}{
+			"classification": "POLICY_DENIED", "phase": "PRE_TOOL_USE",
+			"executed": false, "reason": decision.Reason,
+		})
+		if err != nil {
+			return errors.New("pre-tool denial could not be encoded")
 		}
+		markerErr = os.WriteFile(denialMarker, append(denial, '\n'), 0600)
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+	if err := json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
 		"hookSpecificOutput": map[string]interface{}{
 			"hookEventName": "PreToolUse", "permissionDecision": permission,
 			"permissionDecisionReason": decision.Reason,
 		},
-	})
+	}); err != nil {
+		return err
+	}
+	if markerErr != nil {
+		return errors.New("pre-tool denial could not be durably recorded")
+	}
+	return nil
 }
 
 func authorize(provider string) error {
 	request, _, err := loadRequest()
 	if err != nil {
-		return err
+		return emitHookDecision(provider, hookDecision{Reason: "sealed request could not be trusted"})
 	}
-	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 64*1024+1))
-	if err != nil || len(raw) > 64*1024 {
-		return errors.New("pre-tool authorization input exceeds its bound")
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, hookInputLimit+1))
+	if err != nil || len(raw) > hookInputLimit {
+		return emitHookDecision(provider, hookDecision{Reason: "pre-tool authorization input exceeds its bound"})
 	}
 	decision, err := authorizeTool(raw, request)
 	if err != nil {
-		return err
+		return emitHookDecision(provider, hookDecision{Reason: "pre-tool authorizer failed closed"})
 	}
 	return emitHookDecision(provider, decision)
 }
@@ -579,7 +1038,10 @@ func executeProvider(args []string) error {
 	if args[0] == "codex" {
 		command.Env = append(command.Env, "CODEX_HOME=/opt/sandiva/codex", "OPENAI_BASE_URL="+gateway+"/v1", "OPENAI_API_KEY="+session)
 	} else {
-		command.Env = append(command.Env, "ANTHROPIC_BASE_URL="+gateway, "ANTHROPIC_AUTH_TOKEN="+session, "ANTHROPIC_API_KEY=")
+		command.Env = append(
+			command.Env, "CLAUDE_CONFIG_DIR=/opt/sandiva/claude",
+			"ANTHROPIC_BASE_URL="+gateway, "ANTHROPIC_AUTH_TOKEN="+session, "ANTHROPIC_API_KEY=",
+		)
 	}
 	stdout := &boundedBuffer{limit: outputLimit}
 	stderr := &boundedBuffer{limit: 64 * 1024}
@@ -613,12 +1075,22 @@ func executeProvider(args []string) error {
 		}
 	}
 	if _, markerErr := os.Stat(denialMarker); markerErr == nil {
+		markerDigest, digestErr := fileDigest(denialMarker)
+		if digestErr != nil {
+			return errors.New("pre-tool denial provenance cannot be read")
+		}
+		denialReference := fmt.Sprintf(
+			"audit://exec01/%s/%s/pretool-policy-denial/%s",
+			request.TaskFingerprint, request.AttemptID, markerDigest,
+		)
 		if args[0] == "codex" {
 			result.Status = "blocked"
 			result.ErrorType = "policy_denied"
+			result.LogRefs = append(result.LogRefs, denialReference)
 		} else {
 			result.StopReason = "blocked"
 			result.ErrorTypeC = "policy_denied"
+			result.EvidenceRefs = append(result.EvidenceRefs, denialReference)
 		}
 	} else if !errors.Is(markerErr, os.ErrNotExist) {
 		return errors.New("pre-tool authorization state cannot be read")
@@ -652,7 +1124,7 @@ func attest(args []string) error {
 	if err != nil {
 		return err
 	}
-	runtimeDigest, err := fileDigest("/opt/sandiva/bin/exec01-runtime")
+	runtimeDigest, err := fileDigest(runtimeExecutablePath)
 	if err != nil {
 		return err
 	}
