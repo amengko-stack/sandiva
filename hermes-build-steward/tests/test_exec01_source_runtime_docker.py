@@ -66,7 +66,11 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         ).strip()
 
     @staticmethod
-    def _image_identity_fields(image):
+    def _image_identity_fields(image, file_paths=None):
+        if file_paths is None:
+            file_paths = (
+                "/opt/sandiva/bin/exec01-runtime", "/opt/sandiva/bin/codex", "/opt/sandiva/bin/claude",
+            )
         inspected = json.loads(subprocess.check_output(["docker", "image", "inspect", image], text=True))[0]
         saved = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
         saved.close()
@@ -98,7 +102,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             "fileHashes": subprocess.check_output(
                 [
                     "docker", "run", "--rm", "--entrypoint", "sha256sum", image,
-                    "/opt/sandiva/bin/exec01-runtime", "/opt/sandiva/bin/codex", "/opt/sandiva/bin/claude",
+                    *file_paths,
                 ],
                 text=True,
             ).splitlines(),
@@ -149,7 +153,15 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             {"PYTHON_IMAGE": python_image},
         )
         if repeated_gateway != cls.gateway_image:
-            raise RuntimeError(f"gateway image build is not reproducible: {cls.gateway_image} != {repeated_gateway}")
+            gateway_files = (
+                "/opt/sandiva/bin/exec01-gateway",
+                "/opt/sandiva/gateway/hermes_steward/execution_gateway_service.py",
+            )
+            raise RuntimeError(
+                "gateway image build is not reproducible: "
+                f"{cls.gateway_image} {json.dumps(cls._image_identity_fields(cls.gateway_image, gateway_files), sort_keys=True)} != "
+                f"{repeated_gateway} {json.dumps(cls._image_identity_fields(repeated_gateway, gateway_files), sort_keys=True)}"
+            )
         if not cls.gateway_image.startswith("sha256:"): raise RuntimeError("gateway image is not content-addressed")
         print(f"EXEC01_CODE_QA_GATEWAY_IMAGE={cls.gateway_image}")
 
