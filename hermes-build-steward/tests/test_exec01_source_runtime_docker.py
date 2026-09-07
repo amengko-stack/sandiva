@@ -39,6 +39,16 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             ["docker", "image", "inspect", tag, "--format", "{{.Id}}"], text=True
         ).strip()
 
+    @staticmethod
+    def _image_identity_fields(image):
+        inspected = json.loads(subprocess.check_output(["docker", "image", "inspect", image], text=True))[0]
+        return {
+            "created": inspected.get("Created"),
+            "rootfs": inspected.get("RootFS"),
+            "history": inspected.get("History"),
+            "config": inspected.get("Config"),
+        }
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -62,7 +72,11 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             {"BUILD_IMAGE": build_image, "RUNTIME_IMAGE": runtime_image},
         )
         if repeated_runtime != cls.image:
-            raise RuntimeError(f"runtime image build is not reproducible: {cls.image} != {repeated_runtime}")
+            raise RuntimeError(
+                "runtime image build is not reproducible: "
+                f"{cls.image} {json.dumps(cls._image_identity_fields(cls.image), sort_keys=True)} != "
+                f"{repeated_runtime} {json.dumps(cls._image_identity_fields(repeated_runtime), sort_keys=True)}"
+            )
         if not cls.image.startswith("sha256:"): raise RuntimeError("runtime image is not content-addressed")
         print(f"EXEC01_CODE_QA_RUNTIME_IMAGE={cls.image}")
         repository = Path(__file__).parents[1]
