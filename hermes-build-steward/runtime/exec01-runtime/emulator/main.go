@@ -14,6 +14,29 @@ import (
 	"time"
 )
 
+func authorize(provider, command string) (bool, error) {
+	input, _ := json.Marshal(map[string]interface{}{
+		"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/workspace",
+		"tool_input": map[string]string{"command": command},
+	})
+	process := exec.Command("/opt/sandiva/bin/exec01-runtime", "authorize", provider)
+	process.Stdin = bytes.NewReader(input)
+	process.Env = os.Environ()
+	raw, err := process.Output()
+	if err != nil {
+		return false, err
+	}
+	var result struct {
+		Output struct {
+			PermissionDecision string `json:"permissionDecision"`
+		} `json:"hookSpecificOutput"`
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return false, fmt.Errorf("pre-tool authorizer returned malformed output")
+	}
+	return result.Output.PermissionDecision == "allow", nil
+}
+
 func probeGateway(provider string, args []string) error {
 	token := os.Getenv("EXEC_GATEWAY_SESSION_TOKEN")
 	endpoint := os.Getenv("EXECUTOR_GATEWAY_ENDPOINT")
@@ -80,8 +103,19 @@ func main() {
 		os.Exit(2)
 	}
 	command := ""
+	provider := filepath.Base(os.Args[0])
 	if _, err := os.Stat("/workspace/q16-build.sh"); err == nil {
 		command = "sh q16-build.sh"
+		allowed, err := authorize(provider, command)
+		if err != nil || !allowed {
+			if provider == "codex" {
+				emit(map[string]interface{}{"type": "thread.started", "thread_id": "emulator-thread"})
+				emit(map[string]interface{}{"type": "turn.failed", "error": map[string]string{"classification": "policy_denied"}})
+			} else {
+				emit(map[string]interface{}{"type": "result", "subtype": "error_policy", "is_error": true, "session_id": "emulator-session", "num_turns": 1, "error": map[string]string{"classification": "policy_denied"}})
+			}
+			os.Exit(1)
+		}
 		if err := exec.Command("/workspace/q16-build.sh").Run(); err == nil {
 			fmt.Fprintln(os.Stderr, "noexec workspace unexpectedly executed a local binary")
 			os.Exit(3)
@@ -94,7 +128,6 @@ func main() {
 		}
 		_ = os.WriteFile("/workspace/hermes-build-steward/noexec-probe.txt", []byte("direct-denied;trusted-interpreter-succeeded\n"), 0600)
 	}
-	provider := filepath.Base(os.Args[0])
 	if err := probeGateway(provider, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "trusted gateway probe failed")
 		os.Exit(5)

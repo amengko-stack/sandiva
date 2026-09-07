@@ -20,7 +20,8 @@ import (
 
 const workspace = "/workspace"
 const outputLimit = 4 * 1024 * 1024
-const launcherVersion = "exec01-runtime-v1.0.0"
+const launcherVersion = "exec01-runtime-v1.1.0"
+const denialMarker = "/run/exec/pretool-denied"
 
 var errCommandPolicy = errors.New("executor command policy denied")
 
@@ -39,6 +40,8 @@ type requestEnvelope struct {
 	ExecutionContent            map[string]interface{}  `json:"executionContent"`
 	ExecutionContentFingerprint string                  `json:"executionContentFingerprint"`
 	ApprovedCommands            []string                `json:"approvedCommands"`
+	PermittedRepositoryAreas    []string                `json:"permittedRepositoryAreas"`
+	ProhibitedRepositoryAreas   []string                `json:"prohibitedRepositoryAreas"`
 }
 
 type executorProfileIdentity struct {
@@ -226,6 +229,109 @@ func approved(command string, values []string) bool {
 	return false
 }
 
+type hookDecision struct {
+	Allowed bool
+	Reason  string
+}
+
+type hookInput struct {
+	EventName string                 `json:"hook_event_name"`
+	ToolName  string                 `json:"tool_name"`
+	Cwd       string                 `json:"cwd"`
+	ToolInput map[string]interface{} `json:"tool_input"`
+}
+
+func workspacePath(value string) bool {
+	if value == "" {
+		return false
+	}
+	clean := filepath.Clean(value)
+	if filepath.IsAbs(clean) {
+		relative, err := filepath.Rel(workspace, clean)
+		return err == nil && relative != ".." && !strings.HasPrefix(relative, "../")
+	}
+	return clean != ".." && !strings.HasPrefix(clean, "../") && !strings.Contains(clean, `\`)
+}
+
+func authorizeTool(raw []byte, request requestEnvelope) (hookDecision, error) {
+	var input hookInput
+	if len(raw) == 0 || len(raw) > 64*1024 || json.Unmarshal(raw, &input) != nil {
+		return hookDecision{Reason: "malformed pre-tool authorization request"}, nil
+	}
+	if input.EventName != "PreToolUse" || input.Cwd != workspace || input.ToolName == "" || input.ToolInput == nil {
+		return hookDecision{Reason: "pre-tool request is not bound to the execution workspace"}, nil
+	}
+	if input.ToolName == "Bash" {
+		command, ok := input.ToolInput["command"].(string)
+		if !ok || command == "" || !approved(command, request.ApprovedCommands) {
+			return hookDecision{Reason: "command is not in the task-bound exact allowlist"}, nil
+		}
+		return hookDecision{Allowed: true, Reason: "exact task-bound command authorized"}, nil
+	}
+	if input.ToolName == "apply_patch" {
+		patch, ok := input.ToolInput["command"].(string)
+		if !ok || patch == "" || strings.Contains(patch, "../") || strings.Contains(patch, `..\`) {
+			return hookDecision{Reason: "patch input is malformed or escapes the workspace"}, nil
+		}
+		return hookDecision{Allowed: true, Reason: "workspace patch authorized; trusted prepublication inspection remains mandatory"}, nil
+	}
+	allowedFileTools := map[string]bool{"Read": true, "Edit": true, "Write": true, "Glob": true, "Grep": true, "LS": true}
+	if allowedFileTools[input.ToolName] {
+		observedPath := false
+		for key, value := range input.ToolInput {
+			if !strings.Contains(strings.ToLower(key), "path") {
+				continue
+			}
+			path, ok := value.(string)
+			if !ok || !workspacePath(path) {
+				return hookDecision{Reason: "file tool path escapes the execution workspace"}, nil
+			}
+			observedPath = true
+		}
+		if !observedPath && input.ToolName != "Grep" {
+			return hookDecision{Reason: "file tool has no bounded workspace path"}, nil
+		}
+		return hookDecision{Allowed: true, Reason: "workspace-confined file tool authorized"}, nil
+	}
+	return hookDecision{Reason: "tool is not allowlisted for EXEC-01"}, nil
+}
+
+func emitHookDecision(provider string, decision hookDecision) error {
+	if provider != "codex" && provider != "claude" {
+		return errors.New("hook provider is not allowlisted")
+	}
+	permission := "deny"
+	if decision.Allowed {
+		permission = "allow"
+	} else {
+		if err := os.WriteFile(denialMarker, []byte(decision.Reason+"\n"), 0600); err != nil {
+			return errors.New("pre-tool denial could not be durably recorded")
+		}
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+		"hookSpecificOutput": map[string]interface{}{
+			"hookEventName": "PreToolUse", "permissionDecision": permission,
+			"permissionDecisionReason": decision.Reason,
+		},
+	})
+}
+
+func authorize(provider string) error {
+	request, _, err := loadRequest()
+	if err != nil {
+		return err
+	}
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 64*1024+1))
+	if err != nil || len(raw) > 64*1024 {
+		return errors.New("pre-tool authorization input exceeds its bound")
+	}
+	decision, err := authorizeTool(raw, request)
+	if err != nil {
+		return err
+	}
+	return emitHookDecision(provider, decision)
+}
+
 func failureType(value interface{}) string {
 	known := map[string]string{
 		"provider_unavailable":      "provider_unavailable",
@@ -316,9 +422,6 @@ func parseCodex(raw []byte, request requestEnvelope, started, completed string, 
 				if command == "" || !exitCodeOK || !statusOK {
 					return result, fmt.Errorf("%w: Codex command observation is malformed", errCommandPolicy)
 				}
-				if !approved(command, request.ApprovedCommands) {
-					return result, fmt.Errorf("%w: Codex observed command is not authorized", errCommandPolicy)
-				}
 				result.Commands = append(result.Commands, command)
 				testStatus := "FAIL"
 				if exitCode == 0 && status == "completed" {
@@ -327,6 +430,9 @@ func parseCodex(raw []byte, request requestEnvelope, started, completed string, 
 				result.Tests = append(result.Tests, map[string]interface{}{
 					"name": "approved command: " + command, "status": testStatus, "command": command,
 				})
+				if !approved(command, request.ApprovedCommands) {
+					return result, fmt.Errorf("%w: Codex observed command is not authorized", errCommandPolicy)
+				}
 			}
 		}
 	}
@@ -390,9 +496,6 @@ func parseClaude(raw []byte, request requestEnvelope, started, completed string,
 						if command == "" {
 							return result, fmt.Errorf("%w: Claude Bash command observation is malformed", errCommandPolicy)
 						}
-						if !approved(command, request.ApprovedCommands) {
-							return result, fmt.Errorf("%w: Claude observed Bash command is not authorized", errCommandPolicy)
-						}
 						toolUses[toolID] = command
 					} else {
 						toolUses[toolID] = ""
@@ -423,6 +526,9 @@ func parseClaude(raw []byte, request requestEnvelope, started, completed string,
 					result.TestsC = append(result.TestsC, map[string]interface{}{
 						"name": "approved command: " + command, "status": status, "command": command,
 					})
+					if !approved(command, request.ApprovedCommands) {
+						return result, fmt.Errorf("%w: Claude observed Bash command is not authorized", errCommandPolicy)
+					}
 				}
 				delete(toolUses, toolID)
 			}
@@ -452,6 +558,9 @@ func executeProvider(args []string) error {
 		return errors.New("launcher is not allowlisted")
 	}
 	launcher := filepath.Join("/opt/sandiva/bin", args[0])
+	if err := os.Remove(denialMarker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New("pre-tool authorization state cannot be initialized")
+	}
 	command := exec.Command(launcher, args[1:]...)
 	command.Dir = workspace
 	command.Stdin = bytes.NewReader(prompt)
@@ -465,9 +574,10 @@ func executeProvider(args []string) error {
 		"EXEC_TASK_FINGERPRINT=" + request.TaskFingerprint,
 		"EXEC_ATTEMPT_ID=" + request.AttemptID,
 		"EXEC_PROFILE_FINGERPRINT=" + request.ExecutorProfile.ProfileFingerprint,
+		"EXEC_REQUEST_B64=" + os.Getenv("EXEC_REQUEST_B64"),
 	}
 	if args[0] == "codex" {
-		command.Env = append(command.Env, "OPENAI_BASE_URL="+gateway+"/v1", "OPENAI_API_KEY="+session)
+		command.Env = append(command.Env, "CODEX_HOME=/opt/sandiva/codex", "OPENAI_BASE_URL="+gateway+"/v1", "OPENAI_API_KEY="+session)
 	} else {
 		command.Env = append(command.Env, "ANTHROPIC_BASE_URL="+gateway, "ANTHROPIC_AUTH_TOKEN="+session, "ANTHROPIC_API_KEY=")
 	}
@@ -495,10 +605,23 @@ func executeProvider(args []string) error {
 	if err != nil {
 		errorType := protocolErrorType(err)
 		if args[0] == "codex" {
-			result = observation{Protocol: "codex-exec-jsonl-v1", Status: "failed", StartedAt: started, CompletedAt: completed, Commands: []string{}, Tests: []map[string]interface{}{}, ChangedPaths: []string{}, LogRefs: []string{}, ErrorType: errorType}
+			result.Status = "failed"
+			result.ErrorType = errorType
 		} else {
-			result = observation{Protocol: "claude-code-stream-json-v1", StopReason: "error", StartedAtC: started, CompletedAtC: completed, CommandsC: []string{}, TestsC: []map[string]interface{}{}, ChangedPathsC: []string{}, EvidenceRefs: []string{}, ErrorTypeC: errorType}
+			result.StopReason = "error"
+			result.ErrorTypeC = errorType
 		}
+	}
+	if _, markerErr := os.Stat(denialMarker); markerErr == nil {
+		if args[0] == "codex" {
+			result.Status = "failed"
+			result.ErrorType = "policy_denied"
+		} else {
+			result.StopReason = "error"
+			result.ErrorTypeC = "policy_denied"
+		}
+	} else if !errors.Is(markerErr, os.ErrNotExist) {
+		return errors.New("pre-tool authorization state cannot be read")
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
@@ -564,6 +687,12 @@ func main() {
 		err = executeProvider(args)
 	case "attest":
 		err = attest(os.Args[2:])
+	case "authorize":
+		if len(os.Args) != 3 {
+			err = errors.New("authorize requires one provider")
+		} else {
+			err = authorize(os.Args[2])
+		}
 	case "sleep":
 		for {
 			time.Sleep(time.Hour)

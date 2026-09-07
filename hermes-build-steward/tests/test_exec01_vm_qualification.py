@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import unittest
 
-from hermes_steward.contracts import fingerprint
 from qualification.run_exec01_vm_qualification import (
     CONTRACT_SHA256,
     REQUIRED_CHECKS,
@@ -20,85 +19,9 @@ class Exec01QualificationTests(unittest.TestCase):
         self.key = b"trusted-hostinger-qualification-key-material"
 
     def _evidence(self):
-        task = {"id": "EXEC-01-QUALIFICATION", "version": 2, "fingerprint": "1" * 64}
-        records, pull_requests, probes = [], [], []
-        for number, (provider, executor_profile) in enumerate(self.profiles.items(), start=1):
-            attempt = f"attempt-{provider}"
-            commit = str(number) * 40
-            record = {
-                "task": task,
-                "attemptId": attempt,
-                "leaseId": f"lease-{provider}",
-                "fencingToken": number,
-                "profileFingerprint": executor_profile.fingerprint,
-                "baseSha": "9ef9143479090bedc698b77fa7bf2cbc70b37b16",
-                "headSha": "a" * 40,
-                "branch": f"build/exec-01-qualification-{provider}",
-                "commitSha": commit,
-                "draftPrNumber": 80 + number,
-                "disposition": "EXECUTION_SUCCEEDED",
-            }
-            record["recordFingerprint"] = fingerprint(record)
-            records.append(record)
-            pull_requests.append({
-                "provider": provider,
-                "number": 80 + number,
-                "head": record["branch"],
-                "commitSha": commit,
-                "base": "main",
-                "state": "open",
-                "isDraft": True,
-                "merged": False,
-                "checksReadbackFingerprint": ("b" if provider == "codex" else "c") * 64,
-            })
-            probes.append({
-                "provider": provider,
-                "attemptId": attempt,
-                "taskFingerprint": task["fingerprint"],
-                "profileFingerprint": executor_profile.fingerprint,
-                "origin": "trusted-runtime-probe",
-                "evidenceFingerprint": ("d" if provider == "codex" else "e") * 64,
-            })
-        unsigned = {
-            "buildId": "EXEC-01",
-            "contractSha256": CONTRACT_SHA256,
-            "classification": "synthetic-non-client",
-            "repository": "https://github.com/amengko-stack/sandiva",
-            "baseSha": "9ef9143479090bedc698b77fa7bf2cbc70b37b16",
-            "headSha": "a" * 40,
-            "task": task,
-            "qualificationContext": {
-                "mode":"CODE_QA","environmentId":"exec01-code-qa","runId":"unit-run",
-                "expectedHeadSha":"a"*40,"observedHeadSha":"a"*40,
-                "profileClass":"deterministic-emulator","signingPurpose":"EXEC01_CODE_QA_EVIDENCE",
-                "taskStoreIdentity":"file:task","executionStoreIdentity":"file:execution",
-                "resultStoreIdentity":"file:result","probeStoreIdentity":"file:probe",
-                "checkStoreIdentity":"file:check","hermesStoreIdentity":"file:hermes",
-            },
-            "profileFingerprints": {name: value.fingerprint for name, value in self.profiles.items()},
-            "executionRecords": records,
-            "pullRequestReadback": pull_requests,
-            "containmentProbeEvidence": probes,
-            "checks": {name: {"origin": "trusted-runtime-probe", "evidenceFingerprint": "f" * 64} for name in REQUIRED_CHECKS},
-            "hermesEvidence": {},
-            "restrictions": {
-                "draftPrOnly": True, "merged": False, "deployment": False,
-                "productionActivation": False, "clientDocuments": False,
-            },
-        }
-        hermes = {
-            "schemaVersion": "1.0", "origin": "trusted-hermes-independent",
-            "evidenceIdentity": "hermes://exec-01/qualification/final", "task": task,
-            "criteriaResults": [
-                {"criterion": "AC-01", "disposition": "PASS", "evidenceReferences": ["hermes://exec-01/AC-01"]},
-                {"criterion": "AC-28", "disposition": "PASS", "evidenceReferences": ["hermes://exec-01/AC-28"]},
-            ],
-            "executionRecordFingerprints": [item["recordFingerprint"] for item in records],
-            "originPolicyFingerprint": "9" * 64, "disposition": "PASS",
-        }
-        hermes["resultFingerprint"] = fingerprint(hermes)
-        unsigned["hermesEvidence"] = hermes
-        return sign_evidence(unsigned, self.key)
+        from test_exec01_third_rework import authoritative_collector_fixture
+        collector, _ = authoritative_collector_fixture()
+        return collector.collect_and_sign(self.profiles, self.key)
 
     @staticmethod
     def _resolver(evidence):

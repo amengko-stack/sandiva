@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/sandiva/bin/exec01-runtime authorize claude",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

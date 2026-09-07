@@ -18,6 +18,30 @@
     "checkStoreIdentity": "sharepoint:prod.exec01.checks",
     "hermesStoreIdentity": "sharepoint:prod.hermes.evidence"
   },
+  "evidenceAuthority": {
+    "schemaVersion": "1.0",
+    "acceptedHermesOriginPolicyFingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+    "producers": {
+      "containment-probe": {
+        "origin": "trusted-runtime-probe",
+        "producerIdentity": "sandiva-producer://hostinger/exec01-runtime-probe/v1",
+        "storeIdentity": "sharepoint:prod.exec01.probes",
+        "authenticationKeyFile": "/etc/sandiva-hermes/credentials/exec01-probe-producer.key"
+      },
+      "qualification-check": {
+        "origin": "trusted-qualification-check",
+        "producerIdentity": "sandiva-producer://hostinger/exec01-qualification-check/v1",
+        "storeIdentity": "sharepoint:prod.exec01.checks",
+        "authenticationKeyFile": "/etc/sandiva-hermes/credentials/exec01-check-producer.key"
+      },
+      "hermes-result": {
+        "origin": "trusted-hermes-independent",
+        "producerIdentity": "sandiva-producer://hostinger/hermes-independent/v1",
+        "storeIdentity": "sharepoint:prod.hermes.evidence",
+        "authenticationKeyFile": "/etc/sandiva-hermes/credentials/hermes-evidence-producer.key"
+      }
+    }
+  },
   "taskStore": {
     "kind": "sharepoint",
     "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/exec01-tasks",

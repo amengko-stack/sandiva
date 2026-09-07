@@ -191,27 +191,40 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         subprocess.run(["docker","rm","-f",self.gateway],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); subprocess.run(["docker","network","rm",self.network],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         shutil.rmtree(self.workspace.parent,ignore_errors=True)
 
-    def _profile_request(self, provider):
+    def _profile_request(self, provider, approved_commands=("sh q16-build.sh",)):
         launcher="codex" if provider=="codex" else "claude"
         attest=json.loads(subprocess.check_output(["docker","run","--rm","--network","none","--entrypoint","/opt/sandiva/bin/exec01-runtime",self.image,"attest",launcher,"synthetic-conformance-model","a"*64,self.policy_fingerprint],text=True))
-        fixed=("codex","exec","--json","--ephemeral","--ignore-user-config","--model","synthetic-conformance-model","--sandbox","danger-full-access","-") if provider=="codex" else ("claude","--print","--output-format","stream-json","--verbose","--model","synthetic-conformance-model","--permission-mode","bypassPermissions")
+        fixed=("codex","exec","--json","--ephemeral","--strict-config","--dangerously-bypass-hook-trust","--model","synthetic-conformance-model","--sandbox","workspace-write","-") if provider=="codex" else ("claude","--print","--output-format","stream-json","--verbose","--model","synthetic-conformance-model","--permission-mode","dontAsk","--setting-sources","user","--settings","/opt/sandiva/claude/settings.json","--no-session-persistence")
         profile=ExecutorProfile(profile_id=f"{provider}-source-runtime",provider=provider,runtime_name=f"{provider}-cli",runtime_version=attest["executableVersion"],model="synthetic-conformance-model",launcher_version=attest["launcherVersion"],executable_digest=attest["executableDigest"],fixed_argv=fixed,image=self.image,credential_mode="trusted-egress-gateway",gateway_endpoint="executor-gateway.sandiva.internal:8443",allowed_endpoints=("executor-gateway.sandiva.internal:8443",),runtime_wrapper_digest=attest["runtimeWrapperDigest"],gateway_implementation_digest="a"*64,gateway_policy_digest=self.policy_fingerprint)
         task=dispatch_task(taskId=f"Q{provider.upper().replace('-','')}",baseRef=subprocess.check_output(["git","-C",str(self.workspace),"rev-parse","HEAD"],text=True).strip())
-        task["executorPolicy"]["approvedCommands"]=["sh q16-build.sh"]
+        task["executorPolicy"]["approvedCommands"]=list(approved_commands)
         task["dispatchPolicy"].update(executorProfile={"profileId":profile.profile_id,"profileFingerprint":profile.fingerprint},permittedFallbackProfiles=[],fallbackMode="NONE")
         task=validate_dispatch_build_task(task)
         lease=type("Lease",(),{"attempt_id":f"attempt-{provider}","lease_id":f"lease-{provider}","fencing_token":1})()
         request=normalize_execution_request(task,fingerprint(task),profile,lease,ResolvedExecutionArtifacts(PM_BYTES,SPEC_BYTES,AC_BYTES))
         return profile,request
 
-    def _run(self, provider):
-        profile,request=self._profile_request(provider)
+    def _run(self, provider, approved_commands=("sh q16-build.sh",)):
+        profile,request=self._profile_request(provider, approved_commands)
         policy=ContainmentPolicy(cpu_limit="1.0",memory_limit="128m",pids_limit=32,workspace_limit_bytes=16*1024*1024,wall_time_seconds=30,output_limit_bytes=65536,network_name=self.network,allowed_endpoints=profile.allowed_endpoints)
         job=DockerContainerJobRunner(policy,network_attestor=DockerNetworkAttestor(GatewayNetworkBinding(self.network,self.gateway,self.image,self.policy_fingerprint)))
         runner=ContainerProviderRunner(policy,self.workspace.parent/"requests",runner=job)
         adapter=CodexExecutionAdapter(profile,runner) if provider=="codex" else ClaudeCodeExecutionAdapter(profile,runner)
         result=adapter.execute(request,self.workspace.as_posix()); changes=PrepublicationInspector().inspect(str(self.workspace),request)
         return request,result,changes
+
+    def test_fifth_rework_unauthorized_command_has_zero_sentinel_side_effects(self):
+        for provider in ("codex", "claude-code"):
+            with self.subTest(provider=provider):
+                original = (self.workspace/"hermes-build-steward"/"README.md").read_text()
+                _, result, changes = self._run(provider, approved_commands=("true",))
+                self.assertEqual(result["disposition"], "EXECUTION_BLOCKED")
+                self.assertEqual(result["failureClassification"], "POLICY_DENIED")
+                self.assertEqual(result["commandsExecuted"], [])
+                self.assertEqual((self.workspace/"hermes-build-steward"/"README.md").read_text(), original)
+                self.assertFalse((self.workspace/"hermes-build-steward"/"generated"/"result.txt").exists())
+                self.assertFalse((self.workspace/"hermes-build-steward"/"UNAUTHORIZED").exists())
+                self.assertEqual(changes.changed_paths, ())
 
     def test_q2_q4_codex_source_runtime_processes_sealed_request_and_real_task(self):
         request,result,changes=self._run("codex")
@@ -283,11 +296,13 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                 "attest", launcher, "synthetic-conformance-model", implementation, policy_digest,
             ], text=True))
             fixed = (
-                ("codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "--model",
-                 "synthetic-conformance-model", "--sandbox", "danger-full-access", "-")
+                ("codex", "exec", "--json", "--ephemeral", "--strict-config",
+                 "--dangerously-bypass-hook-trust", "--model", "synthetic-conformance-model",
+                 "--sandbox", "workspace-write", "-")
                 if provider == "codex" else
                 ("claude", "--print", "--output-format", "stream-json", "--verbose", "--model",
-                 "synthetic-conformance-model", "--permission-mode", "bypassPermissions")
+                 "synthetic-conformance-model", "--permission-mode", "dontAsk", "--setting-sources",
+                 "user", "--settings", "/opt/sandiva/claude/settings.json", "--no-session-persistence")
             )
             profile = ExecutorProfile(
                 profile_id=policy["profileId"], provider=provider,

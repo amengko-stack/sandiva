@@ -40,7 +40,8 @@ from hermes_steward.prepublication import ChangeSet
 from hermes_steward.store import InMemoryStateStore
 from hermes_steward.contracts import fingerprint, validate_dispatch_build_task
 from qualification.run_exec01_vm_qualification import (
-    DurableQualificationEvidenceCollector, REQUIRED_CHECKS, TrustedGitHubQualificationReadPath,
+    DurableQualificationEvidenceCollector, REQUIRED_CHECKS, TrustedEvidenceProducer,
+    TrustedGitHubQualificationReadPath, attest_producer_record,
 )
 from helpers import AC_BYTES, PM_BYTES, SPEC_BYTES
 
@@ -336,7 +337,10 @@ class ThirdReworkFallbackTests(unittest.TestCase):
             shutil.rmtree(root, ignore_errors=True)
 
 
-def authoritative_collector_fixture(*, mutate_result=None, duplicate_kind=None, mutate_github_metadata=None):
+def authoritative_collector_fixture(
+    *, mutate_result=None, duplicate_kind=None, mutate_github_metadata=None,
+    mutate_probe=None, mutate_check=None, mutate_hermes=None, tamper_probe=None,
+):
     profiles = {"codex": profile("codex"), "claude-code": profile("claude-code")}
     task = dispatch_task(taskId="Q17-QUALIFICATION")
     task["dispatchPolicy"].update(
@@ -354,6 +358,25 @@ def authoritative_collector_fixture(*, mutate_result=None, duplicate_kind=None, 
     qualification_head = subprocess.check_output(
         ["git", "-C", str(Path.cwd().parent), "rev-parse", "HEAD"], text=True
     ).strip()
+    context = {
+        "mode":"CODE_QA","environmentId":"exec01-code-qa","runId":"q17-run",
+        "expectedHeadSha":qualification_head,"profileClass":"deterministic-emulator",
+        "signingPurpose":"EXEC01_CODE_QA_EVIDENCE","taskStoreIdentity":"file:task",
+        "executionStoreIdentity":"file:execution","resultStoreIdentity":"file:result",
+        "probeStoreIdentity":"file:probe","checkStoreIdentity":"file:check",
+        "hermesStoreIdentity":"file:hermes",
+    }
+    keys = {
+        "containment-probe": b"q17-runtime-probe-producer-key-material",
+        "qualification-check": b"q17-qualification-check-producer-key",
+        "hermes-result": b"q17-hermes-result-producer-key-material",
+    }
+    producers = {
+        "containment-probe": TrustedEvidenceProducer("containment-probe", "trusted-runtime-probe", "producer://q17/runtime-probe/v1", context["probeStoreIdentity"], keys["containment-probe"]),
+        "qualification-check": TrustedEvidenceProducer("qualification-check", "trusted-qualification-check", "producer://q17/qualification-check/v1", context["checkStoreIdentity"], keys["qualification-check"]),
+        "hermes-result": TrustedEvidenceProducer("hermes-result", "trusted-hermes-independent", "producer://q17/hermes/v1", context["hermesStoreIdentity"], keys["hermes-result"]),
+    }
+    attempts = []
     for number, (provider, selected) in enumerate(profiles.items(), 1):
         lease = type("Lease", (), {
             "attempt_id":f"attempt-{provider}", "lease_id":f"lease-{provider}", "fencing_token":number,
@@ -361,10 +384,7 @@ def authoritative_collector_fixture(*, mutate_result=None, duplicate_kind=None, 
         request = normalize_execution_request(
             task, task_fingerprint, selected, lease, ResolvedExecutionArtifacts(PM_BYTES, SPEC_BYTES, AC_BYTES),
             ObservedExecutorIdentity.from_profile(selected),
-            None if provider == "codex" else {
-                "primaryAttemptId":"attempt-codex", "unavailableProfileId":profiles["codex"].profile_id,
-                "failureClassification":"PROVIDER_UNAVAILABLE",
-            },
+            None if provider == "codex" else {"primaryAttemptId":"attempt-codex", "unavailableProfileId":profiles["codex"].profile_id, "failureClassification":"PROVIDER_UNAVAILABLE"},
         )
         raw = (
             {"protocol":"codex-exec-jsonl-v1","status":"completed","started_at":"2026-09-07T00:00:00Z","completed_at":"2026-09-07T00:00:01Z","commands":[],"tests":[],"log_refs":[]}
@@ -379,18 +399,13 @@ def authoritative_collector_fixture(*, mutate_result=None, duplicate_kind=None, 
         pr_number = 81 if duplicate_kind == "pr" else 80 + number
         draft_pr = {"number":pr_number,"url":f"https://github.com/amengko-stack/sandiva/pull/{pr_number}","isDraft":True}
         result.update(changedPaths=list(changes.changed_paths),patchDigest=changes.patch_digest,branch=branch,commitSha=commit,draftPr=draft_pr)
-        if mutate_result is not None and provider == "codex":
-            mutate_result(result)
+        if mutate_result is not None and provider == "codex": mutate_result(result)
         publication = PublicationRecord(branch, commit, draft_pr, pr_identity)
         execution = ExecutionRecord(
             identity=f"exec:{task_fingerprint}:{lease.attempt_id}", task_fingerprint=task_fingerprint,
             attempt_id=lease.attempt_id, stage=ExecutionStage.RESULT_PERSISTED, revision=7,
             execution_result=copy.deepcopy(result), change_set=changes, publication=publication,
-            audit=tuple(stage.value for stage in (
-                ExecutionStage.CREATED, ExecutionStage.WORKSPACE_READY, ExecutionStage.EXECUTOR_STARTED,
-                ExecutionStage.IMPLEMENTED, ExecutionStage.CHANGESET_APPROVED, ExecutionStage.PUBLISHED,
-                ExecutionStage.RESULT_PERSISTED,
-            )),
+            audit=tuple(stage.value for stage in (ExecutionStage.CREATED, ExecutionStage.WORKSPACE_READY, ExecutionStage.EXECUTOR_STARTED, ExecutionStage.IMPLEMENTED, ExecutionStage.CHANGESET_APPROVED, ExecutionStage.PUBLISHED, ExecutionStage.RESULT_PERSISTED)),
         )
         audit = build_execution_audit_record(request, execution)
         execution_store.create(f"execution-{provider}", execution)
@@ -399,26 +414,11 @@ def authoritative_collector_fixture(*, mutate_result=None, duplicate_kind=None, 
         if duplicate_kind == "execution" and provider == "codex": execution_store.create("duplicate-execution", execution)
         if duplicate_kind == "result" and provider == "codex": result_store.create("duplicate-result", result)
         if duplicate_kind == "audit" and provider == "codex": result_store.create("duplicate-audit", audit)
-        probe = {
-            "provider":provider,"attemptId":lease.attempt_id,"taskFingerprint":task_fingerprint,
-            "profileFingerprint":selected.fingerprint,"origin":"trusted-runtime-probe",
-            "sourceIdentity":f"runtime-probe://q17/{lease.attempt_id}",
-            "observations":{
-                "providerCredentialReadable":False,"publisherCredentialReadable":False,
-                "hermesCredentialReadable":False,"coordinatorSecretsReadable":False,
-                "networkPolicyEnforced":True,"resourcePolicyEnforced":True,
-                "workspaceBoundaryEnforced":True,
-            },
-        }
-        probe["evidenceFingerprint"] = fingerprint(probe)
-        probe_store.create(f"probe-{provider}", probe)
-        if duplicate_kind == "probe" and provider == "codex": probe_store.create("duplicate-probe", probe)
         metadata = {
             "taskFingerprint":task_fingerprint,"baseSha":task["baseRef"],"patchDigest":changes.patch_digest,
             "attemptId":lease.attempt_id,"leaseId":lease.lease_id,"fencingToken":lease.fencing_token,
             "prIdentity":pr_identity,"specificationHash":task["specificationHash"],
-            "acceptanceContractHash":task["acceptanceContractHash"],
-            "executorProfileFingerprint":selected.fingerprint,
+            "acceptanceContractHash":task["acceptanceContractHash"],"executorProfileFingerprint":selected.fingerprint,
             "branch":branch,
         }
         if mutate_github_metadata is not None and provider == "codex": mutate_github_metadata(metadata)
@@ -432,28 +432,54 @@ def authoritative_collector_fixture(*, mutate_result=None, duplicate_kind=None, 
             "task":{"id":task["taskId"],"version":task["taskVersion"],"fingerprint":task_fingerprint},
             "attemptId":lease.attempt_id,"leaseId":lease.lease_id,"fencingToken":lease.fencing_token,
             "profileFingerprint":selected.fingerprint,"baseSha":task["baseRef"],"headSha":qualification_head,
-            "branch":branch,"commitSha":commit,"draftPrNumber":pr_number,
-            "disposition":result.get("disposition"),
+            "branch":branch,"commitSha":commit,"draftPrNumber":pr_number,"disposition":result.get("disposition"),
         }
-        qualification_record_fingerprints.append(fingerprint(qualification_record))
+        record_fingerprint = fingerprint(qualification_record)
+        qualification_record_fingerprints.append(record_fingerprint)
+        attempts.append((provider, selected, lease.attempt_id))
+    attempt_ids = sorted(item[2] for item in attempts)
+    profile_fingerprints = sorted(item[1].fingerprint for item in attempts)
+    for provider, selected, attempt_id in attempts:
+        probe = {
+            "provider":provider,"attemptId":attempt_id,"taskFingerprint":task_fingerprint,
+            "profileFingerprint":selected.fingerprint,"origin":"trusted-runtime-probe",
+            "sourceIdentity":f"runtime-probe://q17-run/{qualification_head}/{attempt_id}/containment",
+            "producerIdentity":producers["containment-probe"].producer_identity,
+            "authoritativeStoreIdentity":context["probeStoreIdentity"],
+            "evidenceContext":{"runId":"q17-run","headSha":qualification_head,"evidenceType":"containment-probe","taskFingerprint":task_fingerprint,"attemptIds":[attempt_id],"profileFingerprints":[selected.fingerprint]},
+            "observations":{"providerCredentialReadable":False,"publisherCredentialReadable":False,"hermesCredentialReadable":False,"coordinatorSecretsReadable":False,"networkPolicyEnforced":True,"resourcePolicyEnforced":True,"workspaceBoundaryEnforced":True},
+        }
+        if mutate_probe is not None and provider == "codex": mutate_probe(probe)
+        probe["evidenceFingerprint"] = fingerprint(probe)
+        probe = attest_producer_record(probe, keys["containment-probe"])
+        if tamper_probe is not None and provider == "codex": tamper_probe(probe)
+        probe_store.create(f"probe-{provider}", probe)
+        if duplicate_kind == "probe" and provider == "codex": probe_store.create("duplicate-probe", probe)
     for index, name in enumerate(REQUIRED_CHECKS):
         check = {
-            "taskFingerprint":task_fingerprint,"name":name,"origin":"trusted-runtime-probe",
-            "sourceIdentity":f"runtime-probe://q17/check/{name}",
+            "taskFingerprint":task_fingerprint,"name":name,"origin":"trusted-qualification-check",
+            "sourceIdentity":f"qualification-check://q17-run/{qualification_head}/{name}",
+            "producerIdentity":producers["qualification-check"].producer_identity,
+            "authoritativeStoreIdentity":context["checkStoreIdentity"],
+            "evidenceContext":{"runId":"q17-run","headSha":qualification_head,"evidenceType":"qualification-check","taskFingerprint":task_fingerprint,"attemptIds":attempt_ids,"profileFingerprints":profile_fingerprints},
             "supportingEvidenceFingerprints":list(qualification_record_fingerprints),
         }
+        if mutate_check is not None and index == 0: mutate_check(check)
         check["evidenceFingerprint"] = fingerprint(check)
-        check_store.create(str(index),check)
+        check_store.create(str(index),attest_producer_record(check, keys["qualification-check"]))
     hermes = {
         "schemaVersion":"1.0","origin":"trusted-hermes-independent",
-        "evidenceIdentity":"hermes://q17/pass",
+        "evidenceIdentity":f"hermes://q17-run/{qualification_head}/final",
+        "producerIdentity":producers["hermes-result"].producer_identity,
+        "authoritativeStoreIdentity":context["hermesStoreIdentity"],
+        "evidenceContext":{"runId":"q17-run","headSha":qualification_head,"evidenceType":"hermes-result","taskFingerprint":task_fingerprint,"attemptIds":attempt_ids,"profileFingerprints":profile_fingerprints},
         "task":{"id":task["taskId"],"version":task["taskVersion"],"fingerprint":task_fingerprint},
-        "criteriaResults":[{"criterion":criterion,"disposition":"PASS","evidenceReferences":[f"hermes://q17/{criterion}"]} for criterion in task["acceptanceCriteria"]],
-        "executionRecordFingerprints":qualification_record_fingerprints,
-        "originPolicyFingerprint":"9"*64,"disposition":"PASS",
+        "criteriaResults":[{"criterion":criterion,"disposition":"PASS","evidenceReferences":[f"qualification-check://q17-run/{qualification_head}/{REQUIRED_CHECKS[index % len(REQUIRED_CHECKS)]}"]} for index, criterion in enumerate(task["acceptanceCriteria"])],
+        "executionRecordFingerprints":qualification_record_fingerprints,"originPolicyFingerprint":"9"*64,"disposition":"PASS",
     }
+    if mutate_hermes is not None: mutate_hermes(hermes)
     hermes["resultFingerprint"] = fingerprint(hermes)
-    hermes_store.create("pass",hermes)
+    hermes_store.create("pass",attest_producer_record(hermes, keys["hermes-result"]))
     class Transport:
         def __init__(self): self.github = github
         def request(self, method, path, body=None):
@@ -464,26 +490,14 @@ def authoritative_collector_fixture(*, mutate_result=None, duplicate_kind=None, 
             if path.endswith("/check-runs"): return 200, self.github[("checks",path.split("/")[2])]
             if path.startswith("/commits/"): return 200, self.github[("commit",path.split("/")[2])]
             return 404, {}
-    resolver = BoundArtifactResolver(
-        pm_ref=task["originatingPmInstructionRef"],pm_instruction=PM_BYTES,
-        specification_ref=task["specificationRef"],specification=SPEC_BYTES,
-        acceptance_contract_ref=task["acceptanceContractRef"],acceptance_contract=AC_BYTES,
-    )
+    resolver = BoundArtifactResolver(pm_ref=task["originatingPmInstructionRef"],pm_instruction=PM_BYTES,specification_ref=task["specificationRef"],specification=SPEC_BYTES,acceptance_contract_ref=task["acceptanceContractRef"],acceptance_contract=AC_BYTES)
     collector = DurableQualificationEvidenceCollector(
         task_store=task_store,task_key="task",execution_store=execution_store,
         result_store=result_store,probe_store=probe_store,check_store=check_store,
         hermes_evidence_store=hermes_store,github_reader=TrustedGitHubQualificationReadPath("amengko-stack/sandiva",Transport()),
-        implementation_head_loader=lambda:subprocess.check_output(
-            ["git","-C",str(Path.cwd().parent),"rev-parse","HEAD"], text=True
-        ).strip(),profiles=profiles,artifact_resolver=resolver,
-        qualification_context={
-            "mode":"CODE_QA","environmentId":"exec01-code-qa","runId":"q17-run",
-            "expectedHeadSha":qualification_head,"profileClass":"deterministic-emulator",
-            "signingPurpose":"EXEC01_CODE_QA_EVIDENCE","taskStoreIdentity":"file:task",
-            "executionStoreIdentity":"file:execution","resultStoreIdentity":"file:result",
-            "probeStoreIdentity":"file:probe","checkStoreIdentity":"file:check",
-            "hermesStoreIdentity":"file:hermes",
-        },
+        implementation_head_loader=lambda:subprocess.check_output(["git","-C",str(Path.cwd().parent),"rev-parse","HEAD"], text=True).strip(),
+        profiles=profiles,artifact_resolver=resolver,qualification_context=context,
+        evidence_producers=producers,accepted_hermes_origin_policy_fingerprint="9"*64,
     )
     return collector, profiles
 
@@ -505,6 +519,12 @@ class ThirdReworkQualificationTests(unittest.TestCase):
             profiles_path=root/"profiles.json"; profiles_path.write_text(json.dumps({k:v.as_dict() for k,v in profiles.items()}))
             key_path=root/"attestation.key"; key_path.write_bytes(b"q17-authoritative-attestation-key-material")
             key_path.chmod(0o600)
+            producer_key_paths = {}
+            for evidence_type, producer in collector.evidence_producers.items():
+                producer_path = root/f"{evidence_type}.key"
+                producer_path.write_bytes(producer.authentication_key)
+                producer_path.chmod(0o600)
+                producer_key_paths[evidence_type] = producer_path
             (root/"pm.md").write_bytes(PM_BYTES); (root/"spec.md").write_bytes(SPEC_BYTES); (root/"contract.md").write_bytes(AC_BYTES)
             self._write_store(root/"task.json", [collector.task_store.get("task")], first_key="task")
             self._write_store(root/"executions.json", collector.execution_store.list_records(), execution_record_to_dict)
@@ -538,6 +558,17 @@ class ThirdReworkQualificationTests(unittest.TestCase):
                     "taskStoreIdentity":"file:task","executionStoreIdentity":"file:execution",
                     "resultStoreIdentity":"file:result","probeStoreIdentity":"file:probe",
                     "checkStoreIdentity":"file:check","hermesStoreIdentity":"file:hermes",
+                },
+                "evidenceAuthority":{
+                    "schemaVersion":"1.0","acceptedHermesOriginPolicyFingerprint":"9"*64,
+                    "producers":{
+                        evidence_type:{
+                            "origin":producer.origin,"producerIdentity":producer.producer_identity,
+                            "storeIdentity":producer.store_identity,
+                            "authenticationKeyFile":str(producer_key_paths[evidence_type]),
+                        }
+                        for evidence_type, producer in collector.evidence_producers.items()
+                    },
                 },
             }
             config_path=root/"config.json"; config_path.write_text(json.dumps(config))

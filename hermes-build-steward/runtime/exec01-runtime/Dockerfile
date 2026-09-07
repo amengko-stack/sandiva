@@ -13,5 +13,7 @@ ARG SOURCE_DATE_EPOCH
 RUN mkdir -p /opt/sandiva/bin \
  && touch -d "@${SOURCE_DATE_EPOCH}" /opt /opt/sandiva /opt/sandiva/bin
 COPY --from=build --chmod=0555 /out/exec01-runtime /opt/sandiva/bin/exec01-runtime
+COPY --chmod=0444 policy/codex/hooks.json /opt/sandiva/codex/hooks.json
+COPY --chmod=0444 policy/claude/settings.json /opt/sandiva/claude/settings.json
 USER 65532:65532
 ENTRYPOINT ["/opt/sandiva/bin/exec01-runtime"]

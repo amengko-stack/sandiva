@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/sandiva/bin/exec01-runtime authorize codex",
+            "timeout": 5,
+            "statusMessage": "Enforcing task-bound EXEC-01 tool policy"
+          }
+        ]
+      }
+    ]
+  }
+}

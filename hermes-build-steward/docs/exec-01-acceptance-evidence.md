@@ -11,8 +11,8 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-01 | `contracts.py`, `codec.py`, `sharepoint_store.py`; canonical task v2 schema | Q28–Q31; v1/v2 task tests; R1 production dispatch; hostile 01–03, 05 | PASS in builder code QA; pending independent QA |
 | AC-02 | `execution_adapters.py` | adapter conformance tests | PASS |
 | AC-03 | `ExecutorProfileRegistry`, `DockerExecutorProfileAttestor`; wrapper/executable/image/gateway identity bound into the profile | Q7; profile tests; hostile 04–05 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
-| AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified PM/spec/contract content plus scope, criteria, evaluation, QA, command authority and policy envelope | Q1, Q40–Q41; request fingerprint/content tests; hostile 06 | PASS in builder code QA; pending independent QA |
-| AC-05 | `validate_execution_result`; full result schema independently reapplied by the qualification collector; command-policy violations cannot normalize as success | Q19–Q20, Q40–Q41; Codex/Claude normalization; hostile 27–28 | PASS in builder code QA; pending independent QA |
+| AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified PM/spec/contract content plus scope, criteria, evaluation, QA, command authority and policy envelope; sealed request drives immutable provider hooks | Q1, Q40–Q41; pre-tool exact-allowlist Go test; real-runtime sentinel fixture; hostile 06 | PASS in builder code QA; pending independent QA |
+| AC-05 | `validate_execution_result`; full result schema independently reapplied by the qualification collector; unauthorized commands are denied before invocation and any post-hoc defensive observation remains truthfully recorded | Q19–Q20, Q40–Q41; Go command-observation assertions; Codex/Claude normalization; hostile 27–28 | PASS in builder code QA; pending independent QA |
 | AC-06 | `ProductionExecutionService`, `WorkspaceFactory` | R1 real service dispatch, trusted-origin clone, exact-base/reuse/cleanup tests | PASS |
 | AC-07 | source-controlled `exec01-gateway`; task/attempt/profile-bound capability; raw credentials exist only in provider-specific trusted proxies; reflected secrets discarded across bounded streams | Q3, Q15, Q21–Q24, Q37–Q39, Q42; hostile 11; Linux R2 | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI |
 | AC-08 | no-mount executor runtime; preserved trusted Git metadata; hook/config-denying publisher | publisher hook/URL-rewrite probe; hostile 12–15; Linux R2 | PASS; CURRENT-HEAD LINUX CI PASS |
@@ -25,16 +25,16 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-15 | authority callback at privileged checkpoints | stale-fence tests; hostile 21 | PASS |
 | AC-16 | `ExecutionCoordinator` staged recovery plus durable pending/active fallback identity and expired-attempt reconciliation | Q25–Q26, Q32–Q36 and seven fallback crash boundaries; eight-case recovery matrix; hostile 22–24 | PASS in builder code QA; pending independent QA |
 | AC-17 | immutable max-attempt enforcement | recovery retry test | PASS |
-| AC-18 | source-controlled `exec01-runtime`; fixed Codex CLI argv; explicit finite-state Codex JSONL parser; bounded streaming gateway transport | Q2, Q4, Q6, Q16, Q24, Q27, Q37, Q39–Q40; Go protocol tests | PASS in builder code QA; pending independent QA; external backend deferred to AC-28 |
-| AC-19 | source-controlled `exec01-runtime`; fixed Claude Code CLI argv; explicit finite-state stream-JSON parser; bounded streaming gateway transport | Q2, Q5, Q6, Q16, Q24, Q27, Q38–Q39, Q41; Go protocol tests | PASS in builder code QA; pending independent QA; external backend deferred to AC-28 |
-| AC-20 | stable provider-neutral adapter/result contract; contradictory/missing terminals, unauthorized commands, and raw Responses/Messages objects rejected | Q4–Q6, Q19, Q24, Q27, Q37–Q41; cross-adapter synthetic equivalence | PASS in builder code QA; pending independent QA |
+| AC-18 | source-controlled `exec01-runtime`; fixed Codex CLI argv/config; immutable Codex `PreToolUse` authorization; explicit finite-state Codex JSONL parser; bounded streaming gateway transport | Q2, Q4, Q6, Q16, Q24, Q27, Q37, Q39–Q40; Go authorization/protocol tests; Linux sentinel fixture | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
+| AC-19 | source-controlled `exec01-runtime`; fixed Claude Code CLI argv/settings; immutable Claude `PreToolUse` authorization; explicit finite-state stream-JSON parser; bounded streaming gateway transport | Q2, Q5, Q6, Q16, Q24, Q27, Q38–Q39, Q41; Go authorization/protocol tests; Linux sentinel fixture | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
+| AC-20 | stable provider-neutral adapter/result contract; contradictory/missing terminals and raw Responses/Messages objects rejected; provider-selected commands require task-bound authorization before invocation | Q4–Q6, Q19, Q24, Q27, Q37–Q41; cross-adapter synthetic equivalence; pre-execution sentinel | PASS in builder code QA; pending independent QA |
 | AC-21 | durable trusted primary-unavailability, pending/selected fallback transitions and fresh lease/fence/attempt | Q8–Q9, Q25–Q27, Q32–Q36; fallback crash/no-downgrade tests; hostile 29 | PASS in builder code QA; pending independent QA |
-| AC-22 | result acceptance fixed to `NOT_EVALUATED`; complete criterion-authorized Hermes evidence separately acquired, fingerprinted and PASS-only | Q10–Q12, Q31, Q42; hostile 28; Hermes F/G regression | PASS in builder code QA; pending independent QA |
+| AC-22 | result acceptance fixed to `NOT_EVALUATED`; complete criterion-authorized Hermes evidence separately acquired, trusted-producer authenticated, exact origin-policy pinned, support-resolved and PASS-only | Q10–Q12, Q31, Q42; fifth-rework provenance adversarial suite; hostile 28; Hermes F/G regression | PASS in builder code QA; pending independent QA |
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests and its dedicated workflow | 983/983 application regression; scoped diff inspection | PASS |
 | AC-25 | accepted Hermes behavior retained | complete 264-test Hermes/EXEC run (9 Linux/Docker skips on Windows); includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS in local builder code QA; exact-head Linux/Docker CI pending |
 | AC-26 | application/type/build/CI | 983/983 application tests; application and legacy-root TypeScript and production builds pass | PASS locally; exact-head GitHub checks pending |
-| AC-27 | `build_execution_audit_record`; versioned task, observed profile, durable fallback, command authority, strict publication-attempt and qualification-mode provenance | Q7–Q9, Q13, Q20, Q25–Q36, Q40–Q42; end-to-end provenance tests | PASS in builder code QA; pending independent QA |
+| AC-27 | `build_execution_audit_record`; versioned task, observed profile, durable fallback, pre-tool command authority, strict publication-attempt provenance, authenticated evidence producer/store/source identities and exact run/head/type linkage | Q7–Q9, Q13, Q20, Q25–Q36, Q40–Q42; fifth-rework provenance adversarial suite; end-to-end provenance tests | PASS in builder code QA; pending independent QA |
 | AC-28 | runnable trusted collect/verify modes; authoritative execution/result/audit/probe and repository-scoped GitHub metadata readback; Hermes PASS mandatory | Q10–Q14, Q17–Q20, Q31, Q42; actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED / BLOCKED / NOT AUTHORIZED |
 
 ## R1–R8 rework regressions
@@ -119,3 +119,23 @@ The closure implementation also binds Hermes evidence to the exact task, complet
 criterion results, both execution-record fingerprints, an origin-policy fingerprint,
 and a recomputed result fingerprint. Containment and check rows are accepted only
 when their closed supporting objects recompute to the stored evidence fingerprints.
+
+## Fifth technical closure
+
+The fifth closure moves command authorization in front of execution. Both immutable
+provider configurations route every `PreToolUse` event through the source-controlled
+runtime. Bash requires an exact match to the sealed task's `approvedCommands`; file
+tools are workspace-bounded; malformed and unknown tools fail closed. The deterministic
+provider emulators exercise the same authorizer, and the Linux/Docker sentinel test
+proves denial occurs before the unauthorized script can modify the repository. Go
+parser tests additionally prove that a secondary post-hoc denial cannot conceal a
+command that the provider protocol says already ran.
+
+Qualification provenance no longer treats labels plus ordinary SHA-256 as authority.
+Probe, check and Hermes rows require the exact configured trusted producer, authoritative
+store and evidence source, an external-key HMAC, and closed run/head/task/attempt/profile/
+type context. Every check support fingerprint and every Hermes criterion reference must
+resolve to independently acquired records before the package is signed. Adversarial
+tests reject all-green fabricated probes, missing support, arbitrary Hermes origin policy,
+forged source/producer identity, cross-run/head evidence, executor-origin evidence and
+post-attestation mutation. AC-28 remains unexecuted and unauthorized.
