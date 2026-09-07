@@ -366,7 +366,8 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             ], input=b"approved prompt\0", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             with self.subTest(provider=provider):
                 self.assertNotEqual(completed.returncode, 0)
-                self.assertIn(b"policy_denied", completed.stdout)
+                self.assertNotIn(b"turn.completed", completed.stdout)
+                self.assertNotIn(b'"subtype":"success"', completed.stdout)
                 self.assertEqual(self._sixth_workspace_state(), before)
 
     def test_sixth_rework_s18_s20_unauthorized_bash_precedes_process_network_git_and_publication(self):
