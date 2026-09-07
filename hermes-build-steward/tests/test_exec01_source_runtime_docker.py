@@ -263,8 +263,12 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                         provider, approved_commands=("true",),
                         pm_instruction=(marker + "\n").encode(),
                     )
-                    self.assertEqual(result["disposition"], "EXECUTION_FAILED")
-                    self.assertEqual(result["failureClassification"], "INTERNAL_ERROR")
+                    if marker == "SEVENTH_UNKNOWN_SURFACE":
+                        self.assertEqual(result["disposition"], "EXECUTION_BLOCKED")
+                        self.assertEqual(result["failureClassification"], "POLICY_DENIED")
+                    else:
+                        self.assertEqual(result["disposition"], "EXECUTION_FAILED")
+                        self.assertEqual(result["failureClassification"], "INTERNAL_ERROR")
                     self.assertEqual(result["commandsExecuted"], [])
                     self.assertEqual(changes.changed_paths, ())
                     self.assertEqual(self._sixth_workspace_state(), baseline)
@@ -407,7 +411,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                 self.assertEqual(result["disposition"], "EXECUTION_BLOCKED")
                 self.assertEqual(result["failureClassification"], "POLICY_DENIED")
                 self.assertEqual(result["commandsExecuted"], [])
-                self.assertTrue(any("pretool-policy-denial" in value for value in result["evidenceReferences"]))
+                self.assertTrue(any("sandiva-action-broker" in value for value in result["evidenceReferences"]))
                 self.assertEqual(changes.changed_paths, ())
                 self.assertEqual(self._sixth_workspace_state(), baseline)
                 self.assertFalse((self.workspace/"client"/"CHILD").exists())
