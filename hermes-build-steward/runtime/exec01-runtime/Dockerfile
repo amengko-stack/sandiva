@@ -9,6 +9,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /out/exec01-r
  && touch -d "@${SOURCE_DATE_EPOCH}" /out /out/exec01-runtime
 
 FROM ${EXECUTOR_IMAGE}
+ARG SOURCE_DATE_EPOCH
+RUN mkdir -p /opt/sandiva/bin \
+ && touch -d "@${SOURCE_DATE_EPOCH}" /opt /opt/sandiva /opt/sandiva/bin
 COPY --from=build --chmod=0555 /out/exec01-runtime /opt/sandiva/bin/exec01-runtime
 USER 65532:65532
 ENTRYPOINT ["/opt/sandiva/bin/exec01-runtime"]
