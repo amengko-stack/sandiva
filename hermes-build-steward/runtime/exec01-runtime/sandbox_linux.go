@@ -112,6 +112,13 @@ func restrictProviderFilesystem(launcher string) error {
 	if err := add("/run/exec/provider", scratchAccess); err != nil {
 		return err
 	}
+	// The wrapper and provider-side MCP process must be able to traverse and
+	// inspect the immutable authority artifacts after confinement. Directory
+	// access is read-only; the specific denial marker below is the sole writable
+	// child and the broker ledger remains non-writable.
+	if err := add("/run/exec/authority", readOnly); err != nil {
+		return err
+	}
 	for _, path := range []string{brokerLedger, brokerReady} {
 		if err := add(path, llReadFile); err != nil {
 			return err
