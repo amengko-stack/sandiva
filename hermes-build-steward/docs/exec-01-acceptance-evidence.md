@@ -14,10 +14,10 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified PM/spec/contract content plus scope, criteria, evaluation, QA and policy envelope | Q1; request fingerprint/content tests; hostile 06 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-05 | `validate_execution_result`; result schema | Codex/Claude normalization; hostile 27–28 | PASS |
 | AC-06 | `ProductionExecutionService`, `WorkspaceFactory` | R1 real service dispatch, trusted-origin clone, exact-base/reuse/cleanup tests | PASS |
-| AC-07 | source-controlled `exec01-gateway`; attempt-bound HMAC capability; raw credentials exist only in provider-specific trusted proxies | Q3, Q15; gateway task/profile/replay/cross-task tests; hostile 11; Linux R2 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW AND CURRENT-HEAD LINUX CI |
-| AC-08 | no-mount executor runtime; preserved trusted Git metadata; hook/config-denying publisher | publisher hook/URL-rewrite probe; hostile 12–15; Linux R2 | PASS subject to current-head Linux CI |
-| AC-09 | internal network with no default route and exactly one attested, digest-pinned source gateway | Q3; policy/attestation tests; hostile 17; Linux R4 probes | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW AND CURRENT-HEAD LINUX CI |
-| AC-10 | bounded tmpfs/container/runner and explicit `exec-cancel` | hostile 18–19; local descendant termination; Linux R3 quota/cancellation | PASS subject to current-head Linux CI |
+| AC-07 | source-controlled `exec01-gateway`; attempt-bound HMAC capability; raw credentials exist only in provider-specific trusted proxies | Q3, Q15; gateway task/profile/replay/cross-task tests; hostile 11; Linux R2 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW; CURRENT-HEAD LINUX CI PASS |
+| AC-08 | no-mount executor runtime; preserved trusted Git metadata; hook/config-denying publisher | publisher hook/URL-rewrite probe; hostile 12–15; Linux R2 | PASS; CURRENT-HEAD LINUX CI PASS |
+| AC-09 | internal network with no default route and exactly one attested, digest-pinned source gateway | Q3; policy/attestation tests; hostile 17; Linux R4 probes | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW; CURRENT-HEAD LINUX CI PASS |
+| AC-10 | bounded tmpfs/container/runner and explicit `exec-cancel` | hostile 18–19; local descendant termination; Linux R3 quota/cancellation | PASS; CURRENT-HEAD LINUX CI PASS |
 | AC-11 | `PrepublicationInspector`; trusted diff replacement and pre-publish recomputation | R5 omitted/false/overstated claims and drift; hostile 07–10; artifact controls | PASS |
 | AC-12 | concrete `GitHubPublisherGateway`; closed `PublisherAuthority`; hardened `SubprocessGit` | R6 immutable readback and malicious Git metadata tests; hostile 12, 30–31 | PASS |
 | AC-13 | deterministic branch/PR identity plus strict attempt ownership; open/draft/unmerged readback | Q13–Q14; duplicate/conflict tests; hostile 25–26 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
@@ -32,8 +32,8 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-22 | result acceptance fixed to `NOT_EVALUATED`; Hermes evidence separately acquired and PASS-only for qualification | Q10–Q12; hostile 28; Hermes F/G regression | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests and its dedicated workflow | 983/983 application regression; scoped diff inspection | PASS |
-| AC-25 | accepted Hermes behavior retained | complete 214-test local Hermes/EXEC run: 210 pass, four Linux/Docker tests skipped locally; includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS subject to current-head Linux CI |
-| AC-26 | application/type/build/CI | 983/983 application tests; TypeScript and production build pass; CI workflow requires Go and a working Docker daemon | PASS locally; current-head GitHub checks are authoritative for CI |
+| AC-25 | accepted Hermes behavior retained | complete 231-test Hermes/EXEC run; includes A–X, F1–F7, G1–G9, HA-01–HA-10, qualification regression and mandatory Linux/Docker runtime fixtures | PASS locally and in current-head Linux CI |
+| AC-26 | application/type/build/CI | 983/983 application tests; TypeScript and production build pass; current-head GitHub workflow requires Go and a working Docker daemon | PASS locally and in current-head GitHub checks |
 | AC-27 | `build_execution_audit_record`; observed profile, fallback and strict publication-attempt provenance | Q7–Q9, Q13; end-to-end provenance tests | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-28 | durable-authority collector plus repository-scoped GitHub readback; signing only after acquisition; Hermes disposition must be PASS | Q10–Q12, Q14; actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED / NOT AUTHORIZED |
 
@@ -42,9 +42,9 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | Regression | Evidence | Local observation |
 |---|---|---|
 | R1 | `test_r1_production_service_checkout_exact_base_and_reaches_real_adapter` | PASS: v2 Hermes submission reached the selected adapter from an exact-base real clone and cleaned the terminal workspace |
-| R2 | `test_r2_non_root_container_reads_request_writes_only_tmpfs_workspace_and_leaves_no_broad_permission` | Linux/Docker only; mandatory in CI, skipped on Windows |
-| R3 | quota and cancellation tests in `test_exec01_docker_runtime.py`; local timeout/output tests | local policy/process tests PASS; Linux/Docker tests mandatory in CI |
-| R4 | network attestation unit test and direct-egress Docker probe | attestation PASS locally; direct-egress probe mandatory in CI |
+| R2 | `test_r2_non_root_container_reads_request_writes_only_tmpfs_workspace_and_leaves_no_broad_permission` | PASS in Linux/Docker CI; skipped only on the Windows builder |
+| R3 | quota and cancellation tests in `test_exec01_docker_runtime.py`; local timeout/output tests | PASS in Linux/Docker CI and local policy/process tests |
+| R4 | network attestation unit test and direct-egress Docker probe | PASS in Linux/Docker CI and local policy/attestation tests |
 | R5 | adapter diff-discard and runtime trusted-recomputation/drift tests | PASS for omitted, empty, false, overstated and post-inspection drift cases |
 | R6 | concrete publisher readback plus malicious hook/URL-rewrite test | PASS; task branch/draft PR metadata is read back and publisher subprocess refuses repository-controlled Git execution config |
 | R7 | new coordinator plus external SharePoint CAS recovery test | PASS with no duplicate adapter run, commit, push or PR |
@@ -59,10 +59,10 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | Fixture | Evidence | Local observation |
 |---|---|---|
 | Q1 | exact task content and identity mutation test | PASS |
-| Q2 | source runtime sealed-request Go test and Linux container test | Go PASS; Linux container mandatory in CI |
-| Q3 | production composition to source gateway control plane and source gateway image test | composition PASS; Linux image test mandatory in CI |
-| Q4 | Codex JSONL parser plus representative source-runtime container task | Go PASS; Linux container mandatory in CI |
-| Q5 | Claude Code stream-JSON parser plus equivalent container task | Go PASS; Linux container mandatory in CI |
+| Q2 | source runtime sealed-request Go test and Linux container test | PASS locally in Go and in Linux/Docker CI |
+| Q3 | production composition to source gateway control plane and source gateway image test | PASS locally and in Linux/Docker CI |
+| Q4 | Codex JSONL parser plus representative source-runtime container task | PASS locally in Go and in Linux/Docker CI |
+| Q5 | Claude Code stream-JSON parser plus equivalent container task | PASS locally in Go and in Linux/Docker CI |
 | Q6 | raw OpenAI Responses and Anthropic Messages objects lack valid terminal build protocol | PASS |
 | Q7 | observed executable/profile mismatch | PASS: denied before provider invocation |
 | Q8 | trusted primary outage and authorized ordered fallback | PASS: fresh attempt and durable failure provenance |
@@ -73,7 +73,7 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | Q13 | publication from another attempt under strict attempt ownership | PASS: conflict |
 | Q14 | closed draft PR | PASS: denied |
 | Q15 | success/error response floods through Codex and Claude trusted proxies | PASS: reads stop at limit + 1 |
-| Q16 | source edit, shell tool, assertion and generated output on noexec workspace | Linux/Docker mandatory in CI |
+| Q16 | source edit, shell tool, assertion and generated output on noexec workspace | PASS in Linux/Docker CI |
 
 ## Verification record
 
@@ -85,9 +85,9 @@ Observed locally on the authorized branch during post-QA rework:
 - TypeScript: `npx.cmd tsc --noEmit` passed;
 - production build: Next.js 14.2.35 compiled, typechecked and generated 65/65 static pages;
 - Python: compileall passed; all five JSON schemas and the production example parsed;
-- package: `sandiva_hermes_build_steward-0.2.0-py3-none-any.whl` built, SHA-256 `61ab0b6368a3dc5f002dea3c8a1a8da6c57cff278bf62a6d163feaaa26f57350`;
+- package: `sandiva_hermes_build_steward-0.2.0-py3-none-any.whl` built, SHA-256 `fe4523573f4015ad095153942c8aff6441a5b7aa2487cd88895a2c4a132c6386`;
 - diff hygiene: `git diff --check` passed (line-ending notices only).
 
-The current-head GitHub `Hermes Build Steward / deterministic` check is the required Linux/Docker evidence. Its workflow explicitly installs Go and asserts a working Docker daemon before discovery, so R2–R4 cannot be silently skipped there. The `sln-litigation-drafter` check remains the authoritative CI readback for the application suite. Vercel, if triggered by the draft PR, is a non-production preview only and is not production deployment or activation.
+GitHub Actions run `34080248946` completed successfully with all 231 tests passing on Linux/Docker. It built and exercised code-QA runtime image `sha256:3426c660931681b0255ffa4cc062ef109c7b28363a40f1fc3f84d54ada377ce1` and gateway image `sha256:960c39ae9691c7d7ecf51187463548319a3affc94cefb26548aea31b7b61d73b`. The workflow explicitly installs Go and asserts a working Docker daemon before discovery, so R2–R4 cannot be silently skipped there. The `sln-litigation-drafter` check remains the authoritative CI readback for the application suite. Vercel, if triggered by the draft PR, is a non-production preview only and is not production deployment or activation.
 
 Hostinger evidence is not represented as local or CI evidence and remains deferred.
