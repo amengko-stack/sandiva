@@ -365,7 +365,8 @@ func executeProvider(args []string) error {
 	if len(args) == 0 || (args[0] != "codex" && args[0] != "claude") {
 		return errors.New("launcher is not allowlisted")
 	}
-	command := exec.Command(args[0], args[1:]...)
+	launcher := filepath.Join("/opt/sandiva/bin", args[0])
+	command := exec.Command(launcher, args[1:]...)
 	command.Dir = workspace
 	command.Stdin = bytes.NewReader(prompt)
 	gateway := "http://" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT")
