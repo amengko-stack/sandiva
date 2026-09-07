@@ -13,9 +13,11 @@ from hermes_steward.execution_gateway_service import (
 
 def applications(codec):
     manifest=json.loads(os.environ["EXEC01_PROFILE_MANIFEST"])
+    if not isinstance(manifest,dict) or not manifest:
+        raise SystemExit("gateway profile manifest is invalid")
     result={}
     for profile_fingerprint,value in manifest.items():
-        configured=GatewayPolicy(provider=value["provider"],model=value["model"],profile_id=value["profileId"],profile_fingerprint=profile_fingerprint,policy_fingerprint=value["policyFingerprint"],implementation_digest=value["implementationDigest"],upstream_url=value["upstreamUrl"])
+        configured=GatewayPolicy.from_manifest(profile_fingerprint,value)
         credential_name="OPENAI_API_KEY" if configured.provider=="codex" else "ANTHROPIC_API_KEY"
         result[profile_fingerprint]=GatewayApplication(configured,codec,BoundProviderProxy(configured,lambda name=credential_name:os.environ.get(name,"")))
     return result

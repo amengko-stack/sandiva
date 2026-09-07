@@ -332,6 +332,7 @@ class ExecutionCoordinator:
         assert_current_authority: Callable[[], None],
         *,
         source_repository: Path,
+        transition_hook: Callable[[str, Any], None] | None = None,
     ):
         self._store = store
         self._workspace_factory = workspace_factory
@@ -341,6 +342,7 @@ class ExecutionCoordinator:
         self._result_sink = result_sink
         self._assert_current_authority = assert_current_authority
         self._source_repository = source_repository.resolve()
+        self._transition_hook = transition_hook or (lambda point, record: None)
         if not self._source_repository.is_dir():
             raise RecoveryError("trusted source repository is unavailable")
 
@@ -434,9 +436,11 @@ class ExecutionCoordinator:
         }:
             if record.stage == ExecutionStage.CREATED:
                 self._assert_current_authority()
+                self._transition_hook("BEFORE_WORKSPACE_CREATE", record)
                 workspace = self._workspace_factory.create(request, self._source_repository)
                 updated = self._checkpoint(record, ExecutionStage.WORKSPACE_READY, workspace=str(workspace.path))
                 record = self._save(record, updated)
+                self._transition_hook("AFTER_WORKSPACE_CREATE", record)
                 self._crash(crash_after, "WORKSPACE_READY")
                 continue
 

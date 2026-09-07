@@ -56,8 +56,27 @@ def resolved() -> ResolvedExecutionArtifacts:
     )
 
 
+def gateway_policy_for(selected, *, max_response_bytes=4 * 1024 * 1024):
+    manifest = {
+        "schemaVersion":"1.0", "profileId":selected.profile_id, "profileFingerprint":"0"*64,
+        "provider":selected.provider, "model":selected.model, "upstreamScheme":"https",
+        "upstreamHost":"api.openai.com" if selected.provider == "codex" else "api.anthropic.com",
+        "upstreamPort":443,
+        "upstreamPaths":["/v1/responses" if selected.provider == "codex" else "/v1/messages"],
+        "httpMethod":"POST", "maxRequestBytes":1024*1024,
+        "maxResponseBytes":max_response_bytes, "timeoutSeconds":120,
+        "sessionTtlSeconds":3600, "maxRequestsPerSession":128,
+        "implementationDigest":selected.gateway_implementation_digest,
+        "networkPolicyFingerprint":"7"*64, "credentialMode":"trusted-header-injection",
+    }
+    manifest["gatewayPolicyFingerprint"] = GatewayPolicy.fingerprint_manifest(manifest)
+    selected = replace(selected, gateway_policy_digest=manifest["gatewayPolicyFingerprint"])
+    manifest["profileFingerprint"] = selected.fingerprint
+    return selected, GatewayPolicy.from_manifest(selected.fingerprint, manifest)
+
+
 class SecondReworkFocusedTests(unittest.TestCase):
-    def _service(self, root: Path, task, profiles, runner, *, profile_attestor=None, gateway_controller=None):
+    def _service(self, root: Path, task, profiles, runner, *, profile_attestor=None, gateway_controller=None, transition_hook=None):
         source, base_sha = _source_repository(root)
         task["baseRef"] = base_sha
         policy = ContainmentPolicy(
@@ -90,7 +109,7 @@ class SecondReworkFocusedTests(unittest.TestCase):
                 specification_ref=task["specificationRef"], specification=SPEC_BYTES,
                 acceptance_contract_ref=task["acceptanceContractRef"], acceptance_contract=AC_BYTES,
             ),
-            profile_attestor, gateway_controller,
+            profile_attestor, gateway_controller, transition_hook=transition_hook,
         )
         return service, hermes
 
@@ -218,6 +237,9 @@ class SecondReworkFocusedTests(unittest.TestCase):
                 self.requested.append(size)
                 return b"x" * size
 
+            def geturl(self):
+                return self.url
+
         transport = UrlLibProviderHTTPTransport(response_limit_bytes=64)
         flood = Flood()
         from unittest.mock import patch
@@ -235,38 +257,24 @@ class SecondReworkFocusedTests(unittest.TestCase):
         for provider, upstream in (("codex", "https://api.openai.com/v1/responses"),
                                    ("claude-code", "https://api.anthropic.com/v1/messages")):
             selected = profile(provider)
-            policy = GatewayPolicy(
-                provider=provider, model=selected.model, profile_id=selected.profile_id,
-                profile_fingerprint=selected.fingerprint,
-                policy_fingerprint=selected.gateway_policy_digest,
-                implementation_digest=selected.gateway_implementation_digest,
-                upstream_url=upstream, max_response_bytes=64,
-            )
-            proxy = BoundProviderProxy(policy, lambda: "trusted-provider-secret")
+            selected, policy = gateway_policy_for(selected, max_response_bytes=64)
             provider_flood = Flood()
-            with self.subTest(provider=provider, response="success"), patch(
-                "hermes_steward.execution_gateway_service.urlopen", return_value=provider_flood,
-            ), self.assertRaisesRegex(Exception, "gateway bound"):
+            provider_flood.url = policy.upstream_url
+            proxy = BoundProviderProxy(policy, lambda: "trusted-provider-secret", opener=lambda *args, **kwargs: provider_flood)
+            with self.subTest(provider=provider, response="success"), self.assertRaisesRegex(Exception, "gateway bound"):
                 proxy.forward({"model": selected.model})
             self.assertEqual(provider_flood.requested, [65])
             provider_error = HTTPError(upstream, 500, "bad", {}, io.BytesIO(b"x" * 1000))
-            with self.subTest(provider=provider, response="error"), patch(
-                "hermes_steward.execution_gateway_service.urlopen", side_effect=provider_error,
-            ), self.assertRaisesRegex(Exception, "gateway bound"):
+            proxy = BoundProviderProxy(policy, lambda: "trusted-provider-secret", opener=lambda *args, **kwargs: (_ for _ in ()).throw(provider_error))
+            with self.subTest(provider=provider, response="error"), self.assertRaisesRegex(Exception, "gateway bound"):
                 proxy.forward({"model": selected.model})
 
     def test_q3_production_service_reaches_source_controlled_gateway_control_plane(self):
         root = Path.cwd() / ".t" / uuid.uuid4().hex[:8]; root.mkdir(parents=True)
         try:
-            selected = profile("codex")
+            selected, gateway_policy = gateway_policy_for(profile("codex"))
             task = dispatch_task(taskId="Q03")
             task["dispatchPolicy"].update(executorProfile={"profileId": selected.profile_id, "profileFingerprint": selected.fingerprint}, permittedFallbackProfiles=[], fallbackMode="NONE")
-            gateway_policy = GatewayPolicy(
-                    provider="codex", model=selected.model, profile_id=selected.profile_id,
-                    profile_fingerprint=selected.fingerprint, policy_fingerprint=selected.gateway_policy_digest,
-                    implementation_digest=selected.gateway_implementation_digest,
-                    upstream_url="https://api.openai.com/v1/responses",
-                )
             class Proxy:
                 def forward(self, body): return 200, b'{"ok":true}', {"Content-Type":"application/json"}
             application = GatewayApplication(
@@ -358,40 +366,8 @@ class SecondReworkFocusedTests(unittest.TestCase):
             verify_evidence(fixture.profiles, fabricated, attestation_key=fixture.key, trusted_resolver=fixture._resolver(actual))
 
     def test_q12_collector_resolves_task_records_github_and_hermes_before_signing(self):
-        profiles = {"codex":profile("codex"), "claude-code":profile("claude-code")}
-        task = dispatch_task(taskId="EXEC-01-QUALIFICATION")
-        task["dispatchPolicy"].update(executorProfile={"profileId":profiles["codex"].profile_id,"profileFingerprint":profiles["codex"].fingerprint}, permittedFallbackProfiles=[{"profileId":profiles["claude-code"].profile_id,"profileFingerprint":profiles["claude-code"].fingerprint}])
-        task = validate_dispatch_build_task(task); task_id = {"id":task["taskId"],"version":task["taskVersion"],"fingerprint":fingerprint(task)}
-        result_store=InMemoryStateStore(); probe_store=InMemoryStateStore(); check_store=InMemoryStateStore(); hermes_store=InMemoryStateStore()
-        github = {}
-        for number,(provider,item) in enumerate(profiles.items(),1):
-            attempt=f"attempt-{provider}"; branch=f"build/q12-{provider}"; commit=str(number)*40; pr_number=90+number
-            normalized={"schemaVersion":"1.0","disposition":"EXECUTION_SUCCEEDED","taskId":task["taskId"],"taskVersion":task["taskVersion"],"taskFingerprint":task_id["fingerprint"],"attemptId":attempt,"baseSha":task["baseRef"],"auditProvenanceId":"exec-audit-001","executorProfile":{"profileId":item.profile_id,"profileFingerprint":item.fingerprint},"branch":branch,"commitSha":commit,"draftPr":{"number":pr_number,"url":f"https://github.com/amengko-stack/sandiva/pull/{pr_number}","isDraft":True}}
-            audit={"schemaVersion":"1.0","auditProvenanceId":"exec-audit-001","task":task_id,"repository":{"url":task["repository"],"baseSha":task["baseRef"]},"executor":{"profileId":item.profile_id,"profileFingerprint":item.fingerprint,"provider":provider},"attempt":{"attemptId":attempt,"leaseId":f"lease-{provider}","fencingToken":number},"publication":{"branch":branch,"commitSha":commit,"draftPr":normalized["draftPr"]},"result":{"disposition":"EXECUTION_SUCCEEDED"}}
-            result_store.create(f"result-{provider}",normalized); result_store.create(f"audit-{provider}",audit)
-            probe_store.create(provider,{"provider":provider,"attemptId":attempt,"taskFingerprint":task_id["fingerprint"],"profileFingerprint":item.fingerprint,"origin":"trusted-runtime-probe","evidenceFingerprint":"c"*64})
-            github[("branch",branch)]={"object":{"sha":commit}}
-            github[("pr",branch)]=[{"number":pr_number,"head":{"ref":branch},"base":{"ref":"main"},"state":"open","draft":True,"merged":False}]
-            github[("checks",commit)]={"check_runs":[{"id":number,"name":"build","head_sha":commit,"conclusion":"success"}]}
-        for index,name in enumerate(REQUIRED_CHECKS):
-            check_store.create(str(index),{"taskFingerprint":task_id["fingerprint"],"name":name,"origin":"trusted-runtime-probe","evidenceFingerprint":"d"*64})
-        hermes_store.create("pass",{"origin":"trusted-hermes-independent","evidenceIdentity":"hermes://q12/pass","taskFingerprint":task_id["fingerprint"],"disposition":"PASS"})
-        class Transport:
-            def request(self, method, path, body=None):
-                if path.startswith("/git/ref/heads/"):
-                    from urllib.parse import unquote
-                    return 200, github[("branch",unquote(path.rsplit("/",1)[-1]))]
-                if path.startswith("/pulls?"):
-                    from urllib.parse import unquote
-                    return 200, github[("pr",unquote(path.split(":",1)[1]))]
-                return 200, github[("checks",path.split("/")[2])]
-        task_store=InMemoryStateStore(); task_store.create("task",task)
-        collector=DurableQualificationEvidenceCollector(
-            task_store=task_store,task_key="task",result_store=result_store,probe_store=probe_store,
-            check_store=check_store,hermes_evidence_store=hermes_store,
-            github_reader=TrustedGitHubQualificationReadPath("amengko-stack/sandiva",Transport()),
-            implementation_head_loader=lambda:"a"*40,
-        )
+        from test_exec01_third_rework import authoritative_collector_fixture
+        collector, profiles = authoritative_collector_fixture()
         key=b"q12-trusted-collector-signing-key-material"
         signed=collector.collect_and_sign(profiles,key)
         self.assertEqual(verify_evidence(profiles,signed,attestation_key=key,trusted_resolver=collector)["status"],"QUALIFIED")

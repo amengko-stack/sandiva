@@ -30,6 +30,8 @@ _FAILURE_MAP = {
     "resource_limit": "RESOURCE_LIMIT",
     "timeout": "TIMEOUT",
     "cancelled": "CANCELLED",
+    "malformed_provider_result": "MALFORMED_PROVIDER_RESULT",
+    "internal_error": "INTERNAL_ERROR",
 }
 
 

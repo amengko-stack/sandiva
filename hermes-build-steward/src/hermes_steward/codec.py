@@ -36,6 +36,11 @@ def record_to_dict(record: TaskRecord) -> dict[str, Any]:
         "results": copy.deepcopy(record.results),
         "failureHistory": copy.deepcopy(record.failure_history),
         "audit": copy.deepcopy(record.audit),
+        "unavailableProfileFingerprints": list(record.unavailable_profile_fingerprints),
+        "nextFallbackIndex": record.next_fallback_index,
+        "pendingFallbackProfileId": record.pending_fallback_profile_id,
+        "pendingFallbackProfileFingerprint": record.pending_fallback_profile_fingerprint,
+        "primaryFailureAttemptId": record.primary_failure_attempt_id,
     }
 
 
@@ -47,11 +52,15 @@ def _parse_timestamp(value: str) -> datetime:
 
 
 def record_from_dict(raw: Mapping[str, Any]) -> TaskRecord:
-    expected = {
+    legacy = {
         "schemaVersion", "key", "task", "taskFingerprint", "status", "attemptCount",
         "fencingCounter", "activeLease", "results", "failureHistory", "audit",
     }
-    if set(raw) != expected or raw["schemaVersion"] != "1.0":
+    added = {
+        "unavailableProfileFingerprints", "nextFallbackIndex", "pendingFallbackProfileId",
+        "pendingFallbackProfileFingerprint", "primaryFailureAttemptId",
+    }
+    if frozenset(raw) not in {frozenset(legacy), frozenset(legacy | added)} or raw["schemaVersion"] != "1.0":
         raise ValueError("persisted task record schema is invalid")
     task = validate_build_task(raw["task"])
     if raw["taskFingerprint"] != fingerprint(task):
@@ -94,10 +103,31 @@ def record_from_dict(raw: Mapping[str, Any]) -> TaskRecord:
         raise ValueError("persisted results contain invalid or duplicate attempt identities")
     if len(raw["results"]) > raw["attemptCount"]:
         raise ValueError("persisted results exceed recorded attempts")
+    unavailable = raw.get("unavailableProfileFingerprints", [])
+    next_fallback_index = raw.get("nextFallbackIndex", 0)
+    pending_id = raw.get("pendingFallbackProfileId")
+    pending_fingerprint = raw.get("pendingFallbackProfileFingerprint")
+    primary_attempt = raw.get("primaryFailureAttemptId")
+    if (
+        not isinstance(unavailable, list) or len(unavailable) != len(set(unavailable))
+        or any(not isinstance(item, str) or len(item) != 64 for item in unavailable)
+        or not isinstance(next_fallback_index, int) or isinstance(next_fallback_index, bool) or next_fallback_index < 0
+        or (pending_id is None) != (pending_fingerprint is None)
+        or (pending_id is not None and (not isinstance(pending_id, str) or not pending_id))
+        or (pending_fingerprint is not None and (not isinstance(pending_fingerprint, str) or len(pending_fingerprint) != 64))
+        or (primary_attempt is not None and (not isinstance(primary_attempt, str) or not primary_attempt))
+    ):
+        raise ValueError("persisted fallback state is invalid")
+    if pending_fingerprint is not None and status != TaskStatus.LEASED and status != TaskStatus.REWORK_REQUIRED:
+        raise ValueError("persisted pending fallback state is inconsistent")
     return TaskRecord(
         key=raw["key"], task=task,
         task_fingerprint=raw["taskFingerprint"], status=status,
         attempt_count=raw["attemptCount"], fencing_counter=raw["fencingCounter"],
         active_lease=lease, results=copy.deepcopy(raw["results"]),
         failure_history=copy.deepcopy(raw["failureHistory"]), audit=copy.deepcopy(raw["audit"]),
+        unavailable_profile_fingerprints=list(unavailable), next_fallback_index=next_fallback_index,
+        pending_fallback_profile_id=pending_id,
+        pending_fallback_profile_fingerprint=pending_fingerprint,
+        primary_failure_attempt_id=primary_attempt,
     )

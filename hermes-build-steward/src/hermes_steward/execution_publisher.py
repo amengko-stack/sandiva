@@ -366,13 +366,17 @@ class PublicationRecord:
 
 def deterministic_branch(request: NormalizedExecutionRequest) -> str:
     task = re.sub(r"[^a-z0-9]+", "-", request.task_id.lower()).strip("-")
-    if not task:
+    executor = re.sub(r"[^a-z0-9]+", "-", request.executor_profile_id.lower()).strip("-")
+    if not task or not executor:
         raise PublicationConflict("task ID cannot form a branch identity")
-    return f"build/{task[:80]}-{request.task_fingerprint[:12]}"
+    return f"build/{task[:56]}-{executor[:32]}-{request.task_fingerprint[:12]}"
 
 
 def deterministic_pr_identity(request: NormalizedExecutionRequest) -> str:
-    return f"exec-pr:{request.task_id}:{request.task_version}:{request.task_fingerprint}"
+    return (
+        f"exec-pr:{request.task_id}:{request.task_version}:{request.task_fingerprint}:"
+        f"{request.executor_profile_fingerprint}"
+    )
 
 
 class TrustedGitHubPublisher:
@@ -389,6 +393,7 @@ class TrustedGitHubPublisher:
         for field in (
             "taskFingerprint", "baseSha", "patchDigest", "specificationHash",
             "acceptanceContractHash", "executorProfileFingerprint", "prIdentity", "attemptId",
+            "leaseId", "fencingToken", "branch",
         ):
             if value.get(field) != expected[field]:
                 raise PublicationConflict(f"conflicting {kind} ownership")
@@ -410,10 +415,13 @@ class TrustedGitHubPublisher:
             "baseSha": request.base_sha,
             "patchDigest": changes.patch_digest,
             "attemptId": request.attempt_id,
+            "leaseId": request.lease_id,
+            "fencingToken": request.fencing_token,
             "prIdentity": pr_identity,
             "specificationHash": request.specification_hash,
             "acceptanceContractHash": request.acceptance_contract_hash,
             "executorProfileFingerprint": request.executor_profile_fingerprint,
+            "branch": branch,
         }
 
         assert_current_authority()
@@ -448,6 +456,8 @@ class TrustedGitHubPublisher:
         existing_pr = self._gateway.get_pull_request(pr_identity)
         if existing_pr is not None:
             self._assert_metadata(existing_pr, metadata, "pull request")
+            if existing_pr.get("commitSha") != commit_sha:
+                raise PublicationConflict("conflicting pull request commit identity")
             draft_pr = existing_pr
         else:
             assert_current_authority()
@@ -470,12 +480,13 @@ class TrustedGitHubPublisher:
                     f"Executor profile: {request.executor_profile_id} "
                     f"({request.executor_profile_fingerprint})\n"
                 ),
-                metadata,
+                {**metadata, "commitSha": commit_sha},
             )
 
         self._assert_metadata(draft_pr, metadata, "pull request")
         if (
-            draft_pr.get("state") != "open"
+            draft_pr.get("commitSha") != commit_sha
+            or draft_pr.get("state") != "open"
             or draft_pr.get("merged", False) is not False
             or
             draft_pr.get("isDraft") is not True

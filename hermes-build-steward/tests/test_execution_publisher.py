@@ -168,7 +168,7 @@ class PublisherTests(unittest.TestCase):
         self.assertIn(request.task_fingerprint[:12], branch)
         self.assertEqual(
             deterministic_pr_identity(request),
-            f"exec-pr:{request.task_id}:{request.task_version}:{request.task_fingerprint}",
+            f"exec-pr:{request.task_id}:{request.task_version}:{request.task_fingerprint}:{request.executor_profile_fingerprint}",
         )
 
     def test_duplicate_publication_reuses_one_commit_branch_and_draft_pr(self):

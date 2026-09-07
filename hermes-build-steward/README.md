@@ -66,13 +66,15 @@ The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A d
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
 
-EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`; R1–R8 and Q1–Q16 are distributed across the `test_exec01_*`, runtime, gateway, publisher and recovery suites plus the source-controlled Go runtime tests. The Linux-only Docker runtime tests are mandatory in GitHub Actions: CI explicitly installs Go, asserts a working Docker daemon and therefore cannot silently skip them. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
+EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`; R1–R8 and Q1–Q27 are distributed across the `test_exec01_*`, runtime, gateway, publisher and recovery suites plus the source-controlled Go runtime tests. The Linux-only Docker runtime tests are mandatory in GitHub Actions: CI explicitly installs Go, asserts a working Docker daemon and therefore cannot silently skip them. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
 
 ## Runtime configuration
 
 `config/production.example.json` documents the schema. Production must explicitly select `vmProvider: hostinger` and `graphAuthentication.provider: entra-certificate`. Before qualification, an authorized infrastructure operator must replace the tenant, application, SharePoint site, and dedicated runtime-list identifiers. The certificate file is external runtime state and must be readable only by the trusted `sandiva-hermes` service account. The dedicated list is runtime state, not the Control Tower, and this build does not provision or modify it.
 
 `config/exec01-production.example.json` separately documents the EXEC-01 composition schema. It is deliberately non-deployable: every executor/gateway image and executable digest is a zero/placeholder value, and the builder refuses to start until an authorized operator replaces them with the exact approved immutable artifacts, supplies the external trusted GitHub askpass helper, configures distinct execution/result SharePoint Lists, and starts the single approved gateway on the internal Docker network. Executor containers receive no Graph, Hermes, provider or GitHub publisher credential.
+
+`config/exec01-qualification.example.json` documents the closed production evidence-reader configuration. `plan` is read-only and requires only the approved profile manifest. `collect` reconstructs requests and validates authoritative task, execution, result, audit, probe, GitHub and Hermes records before writing a signed package. `verify` reconstructs the same concrete resolver and refuses a package that is self-contained, incomplete or inconsistent. These commands do not dispatch providers or activate Hermes; using them for AC-28 requires separate PM authorization.
 
 The list must have these internal column names:
 

@@ -2,12 +2,56 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 )
+
+func probeGateway(provider string, args []string) error {
+	token := os.Getenv("EXEC_GATEWAY_SESSION_TOKEN")
+	endpoint := os.Getenv("EXECUTOR_GATEWAY_ENDPOINT")
+	if token == "" {
+		return nil
+	}
+	model := ""
+	for index, value := range args {
+		if value == "--model" && index+1 < len(args) {
+			model = args[index+1]
+		}
+	}
+	path := "/v1/responses"
+	if provider == "claude" {
+		path = "/v1/messages"
+	}
+	body, _ := json.Marshal(map[string]interface{}{"model": model, "input": "synthetic bounded gateway probe"})
+	request, err := http.NewRequest("POST", "http://"+endpoint+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 65537))
+	if err != nil || len(raw) > 65536 || response.StatusCode != http.StatusOK {
+		return fmt.Errorf("gateway probe rejected")
+	}
+	var value map[string]interface{}
+	if json.Unmarshal(raw, &value) != nil || value["credentialAccepted"] != true {
+		return fmt.Errorf("gateway response is not trusted emulator evidence")
+	}
+	return nil
+}
 
 func emit(value map[string]interface{}) {
 	encoded, _ := json.Marshal(value)
@@ -45,6 +89,10 @@ func main() {
 		_ = os.WriteFile("/workspace/hermes-build-steward/noexec-probe.txt", []byte("direct-denied;trusted-interpreter-succeeded\n"), 0600)
 	}
 	provider := filepath.Base(os.Args[0])
+	if err := probeGateway(provider, os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "trusted gateway probe failed")
+		os.Exit(5)
+	}
 	if provider == "codex" {
 		emit(map[string]interface{}{"type": "thread.started", "thread_id": "emulator-thread"})
 		if command != "" {

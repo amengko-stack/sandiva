@@ -12,15 +12,30 @@ import hmac
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import quote
 
 from hermes_steward.contracts import canonical_json, fingerprint
 from hermes_steward.contracts import validate_dispatch_build_task
-from hermes_steward.execution_contracts import ExecutorProfile
-from hermes_steward.execution_publisher import GitHubTransport
+from hermes_steward.execution_contracts import (
+    ExecutorProfile, ObservedExecutorIdentity, normalize_execution_request, validate_execution_result,
+)
+from hermes_steward.execution_coordinator import (
+    ExecutionRecord, ExecutionStage, build_execution_audit_record,
+)
+from hermes_steward.execution_publisher import (
+    GitHubTransport, _decode_metadata, deterministic_branch, deterministic_pr_identity,
+)
 from hermes_steward.store import StateStore
+from hermes_steward.store import RecordNotFound, VersionedRecord
+from hermes_steward.execution_coordinator import execution_record_from_dict
+from hermes_steward.execution_runtime import BoundArtifactResolver
+from hermes_steward.codec import record_from_dict
+from hermes_steward.sharepoint_store import SharePointListStateStore
+from hermes_steward.execution_publisher import UrlLibGitHubTransport
 
 
 CONTRACT_SHA256 = "527dcd77c93ffc75482ca5633469d455d83f38351c6183e67d3ca2aee88ebad0"
@@ -126,6 +141,14 @@ class TrustedGitHubQualificationReadPath:
         )
         if observed_sha != commit_sha:
             _fail("trusted GitHub branch readback conflicts with the durable commit")
+        status, commit_value = self.transport.request("GET", f"/commits/{commit_sha}")
+        commit_payload = commit_value.get("commit") if status == 200 and isinstance(commit_value, Mapping) else None
+        if not isinstance(commit_payload, Mapping) or commit_value.get("sha", commit_sha) != commit_sha:
+            _fail("trusted GitHub commit readback is malformed or unrelated")
+        try:
+            commit_metadata = _decode_metadata(commit_payload.get("message"))
+        except Exception as error:
+            raise SystemExit("trusted GitHub commit metadata is missing or malformed") from error
         owner = self.repository.split("/", 1)[0]
         status, values = self.transport.request(
             "GET", f"/pulls?state=all&head={quote(owner + ':' + str(branch), safe=':')}"
@@ -140,6 +163,22 @@ class TrustedGitHubQualificationReadPath:
         head, base = pull_request.get("head"), pull_request.get("base")
         if not isinstance(head, Mapping) or not isinstance(base, Mapping):
             _fail("trusted GitHub pull-request readback is malformed")
+        try:
+            pr_metadata = _decode_metadata(pull_request.get("body"))
+        except Exception as error:
+            raise SystemExit("trusted GitHub pull-request metadata is missing or malformed") from error
+        expected_metadata = record.get("publicationMetadata")
+        expected_pr_metadata = (
+            {**dict(expected_metadata), "commitSha": commit_sha}
+            if isinstance(expected_metadata, Mapping) else None
+        )
+        if (
+            not isinstance(expected_metadata, Mapping)
+            or commit_metadata != dict(expected_metadata) or pr_metadata != expected_pr_metadata
+            or head.get("ref") != branch or head.get("sha", commit_sha) != commit_sha
+            or base.get("ref") != "main"
+        ):
+            _fail("trusted GitHub publication metadata conflicts with durable execution provenance")
         status, value = self.transport.request("GET", f"/commits/{commit_sha}/check-runs")
         check_runs = value.get("check_runs") if status == 200 and isinstance(value, Mapping) else None
         if (
@@ -170,20 +209,29 @@ class DurableQualificationEvidenceCollector:
 
     def __init__(
         self, *, task_store: StateStore[Any], task_key: str,
+        execution_store: StateStore[ExecutionRecord],
         result_store: StateStore[Mapping[str, Any]], probe_store: StateStore[Mapping[str, Any]],
         check_store: StateStore[Mapping[str, Any]],
         hermes_evidence_store: StateStore[Mapping[str, Any]],
         github_reader: TrustedGitHubQualificationReadPath,
         implementation_head_loader: Callable[[], str],
+        profiles: Mapping[str, ExecutorProfile], artifact_resolver: Any,
+        required_contract_sha256: str | None = None,
     ):
         self.task_store = task_store
         self.task_key = task_key
+        self.execution_store = execution_store
         self.result_store = result_store
         self.probe_store = probe_store
         self.check_store = check_store
         self.hermes_evidence_store = hermes_evidence_store
         self.github_reader = github_reader
         self.implementation_head_loader = implementation_head_loader
+        self.profiles = dict(profiles)
+        self.artifact_resolver = artifact_resolver
+        self.required_contract_sha256 = required_contract_sha256
+        if set(self.profiles) != {"codex", "claude-code"}:
+            _fail("qualification collector requires exact Codex and Claude profiles")
 
     @staticmethod
     def _values(store: StateStore[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -200,14 +248,24 @@ class DurableQualificationEvidenceCollector:
         if not isinstance(raw_task, Mapping):
             _fail("qualification task authority record is malformed")
         task = validate_dispatch_build_task(raw_task)
+        if task["repository"] != REPOSITORY or task["baseRef"] != BASE_SHA:
+            _fail("qualification task repository or authorized base is invalid")
+        if (
+            self.required_contract_sha256 is not None
+            and task["acceptanceContractHash"] != self.required_contract_sha256
+        ):
+            _fail("qualification task is not bound to the canonical EXEC-01 contract")
+        authority_audit = getattr(value, "audit", None)
         task_fingerprint = fingerprint(task)
         task_identity = {"id": task["taskId"], "version": task["taskVersion"], "fingerprint": task_fingerprint}
+        artifacts = self.artifact_resolver.resolve(task)
         durable_values = self._values(self.result_store)
-        results = {
-            (item.get("taskFingerprint"), item.get("attemptId")): item
-            for item in durable_values if item.get("schemaVersion") == "1.0" and "disposition" in item
-        }
-        audits = [
+        result_values = [
+            item for item in durable_values
+            if item.get("schemaVersion") == "1.0" and item.get("taskFingerprint") == task_fingerprint
+            and "disposition" in item
+        ]
+        audit_values = [
             item for item in durable_values
             if item.get("schemaVersion") == "1.0" and isinstance(item.get("task"), Mapping)
             and item["task"].get("fingerprint") == task_fingerprint
@@ -215,29 +273,116 @@ class DurableQualificationEvidenceCollector:
             and isinstance(item.get("publication"), Mapping)
             and isinstance(item.get("executor"), Mapping)
         ]
+        results: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in result_values:
+            identity = (str(item.get("taskFingerprint")), str(item.get("attemptId")))
+            if identity in results:
+                _fail("qualification contains a duplicate normalized result identity")
+            results[identity] = item
+        audits: dict[str, dict[str, Any]] = {}
+        for item in audit_values:
+            attempt = item.get("attempt")
+            attempt_id = attempt.get("attemptId") if isinstance(attempt, Mapping) else None
+            if not isinstance(attempt_id, str) or attempt_id in audits:
+                _fail("qualification contains a duplicate or malformed audit identity")
+            audits[attempt_id] = item
+        execution_values: list[ExecutionRecord] = []
+        seen_execution_identities: set[str] = set()
+        seen_execution_attempts: set[str] = set()
+        for versioned in self.execution_store.list_records():
+            execution = versioned.value
+            if not isinstance(execution, ExecutionRecord):
+                _fail("qualification execution-state store contains a malformed record")
+            if execution.task_fingerprint != task_fingerprint:
+                continue
+            if execution.identity in seen_execution_identities or execution.attempt_id in seen_execution_attempts:
+                _fail("qualification contains a duplicate execution record identity")
+            seen_execution_identities.add(execution.identity)
+            seen_execution_attempts.add(execution.attempt_id)
+            execution_values.append(execution)
         head_sha = self.implementation_head_loader()
+        if not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+            _fail("qualification implementation head is invalid")
         records, pull_requests = [], []
-        for audit in audits:
+        covered_providers: set[str] = set()
+        for execution in execution_values:
+            if execution.stage != ExecutionStage.RESULT_PERSISTED:
+                _fail("qualification execution record is not durably RESULT_PERSISTED")
+            audit = audits.get(execution.attempt_id)
+            result = results.get((task_fingerprint, execution.attempt_id))
+            if audit is None or result is None:
+                _fail("qualification execution record is missing its normalized result or audit")
             attempt, publication, executor = audit["attempt"], audit["publication"], audit["executor"]
-            result = results.get((task_fingerprint, attempt.get("attemptId")))
             draft_pr, repository = publication.get("draftPr"), audit.get("repository")
             audit_result = audit.get("result")
+            provider = executor.get("provider")
+            selected = self.profiles.get(provider) if isinstance(provider, str) else None
+            observed_raw = executor.get("observedIdentity")
             if (
-                result is None or not isinstance(draft_pr, Mapping) or not isinstance(repository, Mapping)
+                selected is None or provider in covered_providers
+                or executor.get("profileId") != selected.profile_id
+                or executor.get("profileFingerprint") != selected.fingerprint
+                or not isinstance(observed_raw, Mapping)
+            ):
+                _fail("durable executor profile provenance is invalid or duplicated")
+            try:
+                observed = ObservedExecutorIdentity(
+                    image=observed_raw["image"], runtime_wrapper_digest=observed_raw["runtimeWrapperDigest"],
+                    executable_digest=observed_raw["executableDigest"], executable_version=observed_raw["executableVersion"],
+                    launcher_version=observed_raw["launcherVersion"], model=observed_raw["model"],
+                    gateway_implementation_digest=observed_raw["gatewayImplementationDigest"],
+                    gateway_policy_digest=observed_raw["gatewayPolicyDigest"],
+                )
+                lease = SimpleNamespace(
+                    attempt_id=attempt["attemptId"], lease_id=attempt["leaseId"],
+                    fencing_token=attempt["fencingToken"],
+                )
+                request = normalize_execution_request(
+                    task, task_fingerprint, selected, lease, artifacts, observed,
+                    executor.get("fallbackContext"),
+                )
+                normalized = validate_execution_result(result, request, allow_trusted_publication=True)
+            except (KeyError, TypeError, ValueError) as error:
+                raise SystemExit("qualification normalized execution result is invalid") from error
+            if authority_audit is not None:
+                historical = [
+                    event for event in authority_audit
+                    if isinstance(event, Mapping) and event.get("event") in {"LEASE_ACQUIRED", "FALLBACK_ATTEMPT_CLAIMED"}
+                    and isinstance(event.get("details"), Mapping)
+                    and event["details"].get("attemptId") == request.attempt_id
+                    and event["details"].get("leaseId") == request.lease_id
+                    and event["details"].get("fencingToken") == request.fencing_token
+                ]
+                if len(historical) != 1:
+                    _fail("qualification attempt lease/fence is absent or duplicated in durable Hermes authority")
+            if (
+                not isinstance(draft_pr, Mapping) or not isinstance(repository, Mapping)
                 or not isinstance(audit_result, Mapping) or repository.get("url") != task["repository"]
                 or repository.get("baseSha") != task["baseRef"]
-                or result.get("disposition") != audit_result.get("disposition")
-                or result.get("taskId") != task["taskId"] or result.get("taskVersion") != task["taskVersion"]
-                or result.get("baseSha") != task["baseRef"]
-                or result.get("auditProvenanceId") != audit.get("auditProvenanceId")
-                or not isinstance(result.get("executorProfile"), Mapping)
-                or result["executorProfile"].get("profileFingerprint") != executor.get("profileFingerprint")
-                or result.get("branch") != publication.get("branch")
-                or result.get("commitSha") != publication.get("commitSha")
-                or not isinstance(result.get("draftPr"), Mapping)
-                or result["draftPr"].get("number") != draft_pr.get("number")
+                or normalized.get("disposition") != audit_result.get("disposition")
+                or execution.execution_result != normalized
+                or execution.change_set is None or execution.publication is None
+                or list(execution.change_set.changed_paths) != normalized["changedPaths"]
+                or execution.change_set.patch_digest != normalized["patchDigest"]
+                or execution.publication.branch != normalized["branch"]
+                or execution.publication.commit_sha != normalized["commitSha"]
+                or execution.publication.draft_pr.get("number") != normalized["draftPr"].get("number")
+                or build_execution_audit_record(request, execution) != audit
             ):
-                _fail("durable result and audit provenance do not agree")
+                _fail("durable execution result, trusted change set, publication, and audit do not agree")
+            expected_branch = deterministic_branch(request)
+            expected_pr_identity = deterministic_pr_identity(request)
+            if execution.publication.branch != expected_branch or execution.publication.pr_identity != expected_pr_identity:
+                _fail("durable publication does not use deterministic task identity")
+            metadata = {
+                "taskFingerprint":task_fingerprint, "baseSha":task["baseRef"],
+                "patchDigest":execution.change_set.patch_digest, "attemptId":execution.attempt_id,
+                "leaseId":request.lease_id, "fencingToken":request.fencing_token,
+                "prIdentity":expected_pr_identity, "specificationHash":task["specificationHash"],
+                "acceptanceContractHash":task["acceptanceContractHash"],
+                "executorProfileFingerprint":selected.fingerprint,
+                "branch":expected_branch,
+            }
             record = {
                 "task": task_identity, "attemptId": attempt.get("attemptId"),
                 "leaseId": attempt.get("leaseId"), "fencingToken": attempt.get("fencingToken"),
@@ -248,12 +393,27 @@ class DurableQualificationEvidenceCollector:
             }
             record["recordFingerprint"] = fingerprint(record)
             records.append(record)
-            provider = executor.get("provider")
-            if not isinstance(provider, str):
-                _fail("durable executor provider provenance is missing")
-            pull_requests.append(self.github_reader.read(provider, record))
+            github_record = {**record, "publicationMetadata": metadata}
+            github_readback = self.github_reader.read(provider, github_record)
+            if any(
+                item["number"] == github_readback["number"]
+                or item["head"] == github_readback["head"]
+                for item in pull_requests
+            ):
+                _fail("qualification contains a duplicate pull request identity")
+            pull_requests.append(github_readback)
+            covered_providers.add(provider)
+
+        if len(execution_values) != 2 or len(results) != 2 or len(audits) != 2 or covered_providers != set(self.profiles):
+            _fail("qualification requires exactly one complete execution/result/audit record per provider")
 
         probes = [item for item in self._values(self.probe_store) if item.get("taskFingerprint") == task_fingerprint]
+        probe_identities: set[tuple[Any, Any]] = set()
+        for probe in probes:
+            identity = (probe.get("provider"), probe.get("attemptId"))
+            if identity in probe_identities:
+                _fail("qualification contains a duplicate containment probe identity")
+            probe_identities.add(identity)
         hermes_values = [
             item for item in self._values(self.hermes_evidence_store)
             if item.get("taskFingerprint") == task_fingerprint
@@ -450,22 +610,202 @@ def _read_attestation_key(path: str) -> bytes:
     return value
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--profiles", required=True)
-    parser.add_argument("--evidence")
-    parser.add_argument("--attestation-key-file")
-    arguments = parser.parse_args()
-    profiles = load_profiles(arguments.profiles)
-    if arguments.evidence:
-        if not arguments.attestation_key_file:
-            _fail("evidence verification requires a trusted attestation key file")
-        value = verify_evidence(
-            profiles, _read(arguments.evidence),
-            attestation_key=_read_attestation_key(arguments.attestation_key_file),
+class JsonFileStateStore:
+    """Read-only synthetic authority used by code-QA CLI fixtures."""
+
+    def __init__(self, path: Path, decoder: Callable[[Mapping[str, Any]], Any]):
+        raw = _read(str(path))
+        records = raw.get("records")
+        if set(raw) != {"records"} or not isinstance(records, list):
+            _fail("qualification file store is malformed")
+        self._records: dict[str, VersionedRecord[Any]] = {}
+        for index, item in enumerate(records):
+            if not isinstance(item, Mapping) or set(item) != {"key", "value"} or not isinstance(item["key"], str):
+                _fail("qualification file-store record is malformed")
+            if item["key"] in self._records:
+                _fail("qualification file store contains a duplicate key")
+            if not isinstance(item["value"], Mapping):
+                _fail("qualification file-store value is malformed")
+            self._records[item["key"]] = VersionedRecord(decoder(item["value"]), f'"file-{index}"')
+
+    def get(self, key: str) -> VersionedRecord[Any]:
+        if key not in self._records:
+            raise RecordNotFound(key)
+        return self._records[key]
+
+    def list_records(self) -> list[VersionedRecord[Any]]:
+        return list(self._records.values())
+
+    def create(self, key: str, value: Any) -> VersionedRecord[Any]:
+        del key, value
+        raise PermissionError("qualification file authority is read-only")
+
+    def compare_and_swap(self, key: str, expected_etag: str, value: Any) -> VersionedRecord[Any]:
+        del key, expected_etag, value
+        raise PermissionError("qualification file authority is read-only")
+
+
+class FileGitHubQualificationTransport:
+    def __init__(self, path: Path):
+        value = _read(str(path))
+        if set(value) != {"branches", "commits", "pullRequests", "checks"} or any(
+            not isinstance(value[field], Mapping) for field in value
+        ):
+            _fail("qualification GitHub file readback is malformed")
+        self.value = value
+
+    def request(self, method: str, path: str, body: Mapping[str, Any] | None = None) -> tuple[int, Any]:
+        del body
+        if method != "GET":
+            return 403, {}
+        from urllib.parse import unquote
+        if path.startswith("/git/ref/heads/"):
+            value = self.value["branches"].get(unquote(path.rsplit("/", 1)[-1]))
+        elif path.startswith("/pulls?"):
+            value = self.value["pullRequests"].get(unquote(path.split(":", 1)[1]))
+        elif path.endswith("/check-runs"):
+            value = self.value["checks"].get(path.split("/")[2])
+        elif path.startswith("/commits/"):
+            value = self.value["commits"].get(path.split("/")[2])
+        else:
+            value = None
+        return (200, value) if value is not None else (404, {})
+
+
+def _resolved_path(base: Path, value: Any, field: str) -> Path:
+    if not isinstance(value, str) or not value:
+        _fail(f"qualification {field} path is invalid")
+    path = Path(value)
+    return (path if path.is_absolute() else base / path).resolve()
+
+
+def _store_from_config(
+    raw: Any, base: Path, decoder: Callable[[Mapping[str, Any]], Any], *,
+    production: bool, status_getter: Callable[[Any], str] | None = None,
+) -> StateStore[Any]:
+    if not isinstance(raw, Mapping) or raw.get("kind") not in {"file", "sharepoint"}:
+        _fail("qualification store configuration is invalid")
+    if raw["kind"] == "file":
+        if production or set(raw) not in ({"kind", "path"}, {"kind", "path", "key"}):
+            _fail("file qualification stores are restricted to synthetic code QA")
+        return JsonFileStateStore(_resolved_path(base, raw["path"], "store"), decoder)
+    expected = {"kind", "endpoint", "namespace", "environmentId", "tokenEnvironment"}
+    observed_fields = set(raw) - ({"key"} if "key" in raw else set())
+    if observed_fields != expected:
+        _fail("SharePoint qualification store configuration is invalid")
+    token_name = raw["tokenEnvironment"]
+    if not isinstance(token_name, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{2,127}", token_name):
+        _fail("SharePoint qualification token environment is invalid")
+    return SharePointListStateStore(
+        raw["endpoint"], raw["namespace"], raw["environmentId"],
+        lambda name=token_name: os.environ.get(name, ""), record_encoder=lambda value: dict(value),
+        record_decoder=decoder, status_getter=status_getter,
+    )
+
+
+def build_qualification_runtime(config_path: str) -> tuple[DurableQualificationEvidenceCollector, dict[str, ExecutorProfile], bytes]:
+    path = Path(config_path).resolve()
+    raw = _read(str(path))
+    expected = {
+        "schemaVersion", "classification", "profilesFile", "attestationKeyFile",
+        "implementationRepositoryPath", "taskStore", "executionStore", "resultStore",
+        "probeStore", "checkStore", "hermesEvidenceStore", "artifacts", "githubReadback",
+    }
+    if set(raw) != expected or raw["schemaVersion"] != "1.0" or raw["classification"] not in {
+        "synthetic-code-qa", "production-hostinger-qualification",
+    }:
+        _fail("qualification runtime configuration fields are invalid")
+    base = path.parent
+    production = raw["classification"] == "production-hostinger-qualification"
+    profiles = load_profiles(str(_resolved_path(base, raw["profilesFile"], "profiles")))
+    task_raw = raw["taskStore"]
+    task_store = _store_from_config(task_raw, base, record_from_dict if production else lambda value: dict(value), production=production)
+    task_key = task_raw.get("key") if isinstance(task_raw, Mapping) else None
+    if not isinstance(task_key, str) or not task_key:
+        _fail("qualification task-store key is required")
+    execution_store = _store_from_config(raw["executionStore"], base, execution_record_from_dict, production=production)
+    identity = lambda value: dict(value)
+    result_store = _store_from_config(raw["resultStore"], base, identity, production=production)
+    probe_store = _store_from_config(raw["probeStore"], base, identity, production=production)
+    check_store = _store_from_config(raw["checkStore"], base, identity, production=production)
+    hermes_store = _store_from_config(raw["hermesEvidenceStore"], base, identity, production=production)
+    artifact_raw = raw["artifacts"]
+    if not isinstance(artifact_raw, Mapping) or set(artifact_raw) != {
+        "pmInstructionFile", "specificationFile", "acceptanceContractFile",
+    }:
+        _fail("qualification artifact configuration is invalid")
+    task_value = task_store.get(task_key).value
+    task = getattr(task_value, "task", task_value)
+    if not isinstance(task, Mapping):
+        _fail("qualification task authority is malformed")
+    artifact_resolver = BoundArtifactResolver(
+        pm_ref=task["originatingPmInstructionRef"],
+        pm_instruction=_resolved_path(base, artifact_raw["pmInstructionFile"], "PM instruction").read_bytes(),
+        specification_ref=task["specificationRef"],
+        specification=_resolved_path(base, artifact_raw["specificationFile"], "specification").read_bytes(),
+        acceptance_contract_ref=task["acceptanceContractRef"],
+        acceptance_contract=_resolved_path(base, artifact_raw["acceptanceContractFile"], "acceptance contract").read_bytes(),
+    )
+    github_raw = raw["githubReadback"]
+    if not isinstance(github_raw, Mapping) or github_raw.get("repository") != "amengko-stack/sandiva":
+        _fail("qualification GitHub readback configuration is invalid")
+    if github_raw.get("kind") == "file" and not production and set(github_raw) == {"kind", "repository", "path"}:
+        github_transport: GitHubTransport = FileGitHubQualificationTransport(
+            _resolved_path(base, github_raw["path"], "GitHub readback")
+        )
+    elif github_raw.get("kind") == "github" and production and set(github_raw) == {"kind", "repository", "tokenEnvironment"}:
+        token_name = github_raw["tokenEnvironment"]
+        github_transport = UrlLibGitHubTransport(
+            github_raw["repository"], lambda name=token_name: os.environ.get(name, "")
         )
     else:
-        value = qualification_plan(profiles)
+        _fail("qualification GitHub readback mode is invalid")
+    repository = _resolved_path(base, raw["implementationRepositoryPath"], "implementation repository")
+    def load_head() -> str:
+        try:
+            origin = subprocess.check_output(["git", "-C", str(repository), "remote", "get-url", "origin"], text=True, stderr=subprocess.PIPE).strip()
+            head = subprocess.check_output(["git", "-C", str(repository), "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE).strip()
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise SystemExit("qualification implementation Git identity is unavailable") from error
+        if origin not in {REPOSITORY, REPOSITORY + ".git"} or not re.fullmatch(r"[0-9a-f]{40}", head):
+            _fail("qualification implementation Git identity is unapproved")
+        return head
+    collector = DurableQualificationEvidenceCollector(
+        task_store=task_store, task_key=task_key, execution_store=execution_store,
+        result_store=result_store, probe_store=probe_store, check_store=check_store,
+        hermes_evidence_store=hermes_store,
+        github_reader=TrustedGitHubQualificationReadPath("amengko-stack/sandiva", github_transport),
+        implementation_head_loader=load_head, profiles=profiles, artifact_resolver=artifact_resolver,
+        required_contract_sha256=CONTRACT_SHA256 if production else None,
+    )
+    key = _read_attestation_key(str(_resolved_path(base, raw["attestationKeyFile"], "attestation key")))
+    return collector, profiles, key
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="mode", required=True)
+    plan = commands.add_parser("plan")
+    plan.add_argument("--profiles", required=True)
+    collect = commands.add_parser("collect")
+    collect.add_argument("--config", required=True)
+    collect.add_argument("--output", required=True)
+    verify = commands.add_parser("verify")
+    verify.add_argument("--config", required=True)
+    verify.add_argument("--evidence", required=True)
+    arguments = parser.parse_args()
+    if arguments.mode == "plan":
+        value = qualification_plan(load_profiles(arguments.profiles))
+    else:
+        collector, profiles, key = build_qualification_runtime(arguments.config)
+        if arguments.mode == "collect":
+            value = collector.collect_and_sign(profiles, key)
+            output = Path(arguments.output).resolve()
+            output.write_text(json.dumps(value, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        else:
+            value = verify_evidence(
+                profiles, _read(arguments.evidence), attestation_key=key, trusted_resolver=collector,
+            )
     print(json.dumps(value, sort_keys=True, separators=(",", ":")))
     return 0
 

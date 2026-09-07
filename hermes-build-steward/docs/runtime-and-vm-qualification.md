@@ -62,3 +62,22 @@ The preparation phase durably records the coordinator-observed runaway terminati
 The second phase must show attempt count `2`, a larger fencing token, all isolation probes `true`, and final state `READY_FOR_PM_ACCEPTANCE`. Inspect the list item/version history to confirm the earlier attempt, lease, fence, qualification checkpoint, ambiguous recovery, takeover, result, and audit remained durable with no duplicate result.
 
 Local unit tests and command construction are implementation evidence only. They must not be reported as actual VM qualification.
+
+## EXEC-01 qualification evidence entrypoint
+
+The later EXEC-01 Hostinger qualification uses three explicit modes. They are intentionally not run by ordinary code QA:
+
+```bash
+PYTHONPATH=src python qualification/run_exec01_vm_qualification.py plan \
+  --profiles /etc/sandiva-hermes/exec01-profiles.json
+
+PYTHONPATH=src python qualification/run_exec01_vm_qualification.py collect \
+  --config /etc/sandiva-hermes/exec01-qualification.json \
+  --output /var/lib/sandiva-hermes/evidence/exec01-qualification.json
+
+PYTHONPATH=src python qualification/run_exec01_vm_qualification.py verify \
+  --config /etc/sandiva-hermes/exec01-qualification.json \
+  --evidence /var/lib/sandiva-hermes/evidence/exec01-qualification.json
+```
+
+The production configuration shape is documented in `config/exec01-qualification.example.json`. Both `collect` and `verify` instantiate SharePoint-backed task/execution/result/probe/check/Hermes readers, a hash-verifying artifact resolver, repository-scoped GitHub readback, and an exact local implementation-head reader. `collect` signs only after trusted acquisition succeeds. `verify` independently reacquires those sources; there is no evidence-only verification path and no manually asserted boolean can produce `QUALIFIED`.

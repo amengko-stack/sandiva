@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -18,6 +20,8 @@ from hermes_steward.execution_adapters import ClaudeCodeExecutionAdapter, CodexE
 from hermes_steward.execution_contracts import ExecutorProfile, ResolvedExecutionArtifacts, normalize_execution_request
 from hermes_steward.execution_isolation import ContainerProviderRunner, ContainmentPolicy, DockerContainerJobRunner, DockerNetworkAttestor, GatewayNetworkBinding
 from hermes_steward.prepublication import PrepublicationInspector
+from hermes_steward.execution_gateway_service import GatewayPolicy
+from hermes_steward.execution_runtime import DockerExecutorGatewayController
 from test_execution_task_contract import dispatch_task
 
 
@@ -232,16 +236,246 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
 
     def test_q3_gateway_image_is_source_controlled_multi_profile_and_mints_bound_session(self):
         implementation=self.gateway_image.split("sha256:",1)[1]
-        manifest={
-            "1"*64:{"provider":"codex","model":"codex-model","profileId":"codex-q3","policyFingerprint":"3"*64,"implementationDigest":implementation,"upstreamUrl":"https://api.openai.com/v1/responses"},
-            "2"*64:{"provider":"claude-code","model":"claude-model","profileId":"claude-q3","policyFingerprint":"3"*64,"implementationDigest":implementation,"upstreamUrl":"https://api.anthropic.com/v1/messages"},
-        }
+        manifest={}
+        for key,provider,model,host,path in (
+            ("1"*64,"codex","codex-model","api.openai.com","/v1/responses"),
+            ("2"*64,"claude-code","claude-model","api.anthropic.com","/v1/messages"),
+        ):
+            value={"schemaVersion":"1.0","profileId":f"{provider}-q3","profileFingerprint":key,
+                   "provider":provider,"model":model,"upstreamScheme":"https","upstreamHost":host,
+                   "upstreamPort":443,"upstreamPaths":[path],"httpMethod":"POST","maxRequestBytes":65536,
+                   "maxResponseBytes":65536,"timeoutSeconds":30,"sessionTtlSeconds":300,
+                   "maxRequestsPerSession":1,"implementationDigest":implementation,
+                   "networkPolicyFingerprint":"3"*64,"credentialMode":"trusted-header-injection"}
+            value["gatewayPolicyFingerprint"]=GatewayPolicy.fingerprint_manifest(value)
+            manifest[key]=value
         environment=["--env",f"EXEC01_PROFILE_MANIFEST={json.dumps(manifest,separators=(',',':'))}","--env","EXEC01_SESSION_SIGNING_KEY=q3-source-gateway-signing-key-material"]
         health=json.loads(subprocess.check_output(["docker","run","--rm",*environment,self.gateway_image,"health"],text=True))
         self.assertEqual(set(health["profiles"]),set(manifest))
         token=subprocess.check_output(["docker","run","--rm",*environment,self.gateway_image,"issue","--task-fingerprint","4"*64,"--attempt-id","attempt-q3","--profile-fingerprint","1"*64],text=True).strip()
         self.assertGreater(len(token),64)
         self.assertNotIn("OPENAI",token)
+
+    def _q24_profiles_and_manifest(self):
+        implementation = self.gateway_image.split("sha256:", 1)[1]
+        profiles, manifest = {}, {}
+        for provider, host, path in (
+            ("codex", "provider.test.internal", "/v1/responses"),
+            ("claude-code", "provider.test.internal", "/v1/messages"),
+        ):
+            launcher = "codex" if provider == "codex" else "claude"
+            policy = {
+                "schemaVersion": "1.0", "profileId": f"{provider}-q24",
+                "profileFingerprint": "0" * 64, "provider": provider,
+                "model": "synthetic-conformance-model", "upstreamScheme": "http",
+                "upstreamHost": host, "upstreamPort": 8080, "upstreamPaths": [path],
+                "httpMethod": "POST", "maxRequestBytes": 65536,
+                "maxResponseBytes": 65536, "timeoutSeconds": 10,
+                "sessionTtlSeconds": 300, "maxRequestsPerSession": 1,
+                "implementationDigest": implementation,
+                "networkPolicyFingerprint": self.policy_fingerprint,
+                "credentialMode": "synthetic-emulator",
+            }
+            policy_digest = GatewayPolicy.fingerprint_manifest(policy)
+            attest = json.loads(subprocess.check_output([
+                "docker", "run", "--rm", "--network", "none",
+                "--entrypoint", "/opt/sandiva/bin/exec01-runtime", self.image,
+                "attest", launcher, "synthetic-conformance-model", implementation, policy_digest,
+            ], text=True))
+            fixed = (
+                ("codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "--model",
+                 "synthetic-conformance-model", "--sandbox", "danger-full-access", "-")
+                if provider == "codex" else
+                ("claude", "--print", "--output-format", "stream-json", "--verbose", "--model",
+                 "synthetic-conformance-model", "--permission-mode", "bypassPermissions")
+            )
+            profile = ExecutorProfile(
+                profile_id=policy["profileId"], provider=provider,
+                runtime_name=f"{provider}-cli", runtime_version=attest["executableVersion"],
+                model="synthetic-conformance-model", launcher_version=attest["launcherVersion"],
+                executable_digest=attest["executableDigest"], fixed_argv=fixed, image=self.image,
+                credential_mode="trusted-egress-gateway",
+                gateway_endpoint="executor-gateway.sandiva.internal:8443",
+                allowed_endpoints=("executor-gateway.sandiva.internal:8443",),
+                runtime_wrapper_digest=attest["runtimeWrapperDigest"],
+                gateway_implementation_digest=implementation,
+                gateway_policy_digest=policy_digest,
+            )
+            policy["profileFingerprint"] = profile.fingerprint
+            policy["gatewayPolicyFingerprint"] = policy_digest
+            profiles[provider] = profile
+            manifest[profile.fingerprint] = policy
+        return profiles, manifest
+
+    def _q24_request(self, profile, suffix):
+        task = dispatch_task(
+            taskId=f"Q24-{suffix}",
+            baseRef=subprocess.check_output(
+                ["git", "-C", str(self.workspace), "rev-parse", "HEAD"], text=True,
+            ).strip(),
+        )
+        task["executorPolicy"]["approvedCommands"] = ["sh q16-build.sh"]
+        task["dispatchPolicy"].update(
+            executorProfile={"profileId": profile.profile_id, "profileFingerprint": profile.fingerprint},
+            permittedFallbackProfiles=[], fallbackMode="NONE",
+        )
+        task = validate_dispatch_build_task(task)
+        lease = type("Lease", (), {
+            "attempt_id": f"attempt-q24-{suffix}", "lease_id": f"lease-q24-{suffix}",
+            "fencing_token": 24,
+        })()
+        return normalize_execution_request(
+            task, fingerprint(task), profile, lease,
+            ResolvedExecutionArtifacts(PM_BYTES, SPEC_BYTES, AC_BYTES),
+        )
+
+    def _q24_issue(self, profile, request):
+        return subprocess.check_output([
+            "docker", "exec", self.gateway, "/opt/sandiva/bin/exec01-gateway", "issue",
+            "--task-fingerprint", request.task_fingerprint,
+            "--attempt-id", request.attempt_id,
+            "--profile-fingerprint", profile.fingerprint,
+        ], text=True).strip()
+
+    def _q24_probe(self, token, path, body, repeat=1):
+        script = (
+            "import json,os,urllib.request,urllib.error\n"
+            "out=[]\n"
+            "for _ in range(int(os.environ['REPEAT'])):\n"
+            " r=urllib.request.Request('http://executor-gateway.sandiva.internal:8443'+os.environ['PATH_Q'],"
+            "data=os.environ['BODY'].encode(),headers={'Authorization':'Bearer '+os.environ['TOKEN'],"
+            "'Content-Type':'application/json'},method='POST')\n"
+            " try:\n  x=urllib.request.urlopen(r,timeout=5); out.append([x.status,x.read(65537).decode(errors='replace')])\n"
+            " except urllib.error.HTTPError as e: out.append([e.code,e.read(1024).decode(errors='replace')])\n"
+            "print(json.dumps(out))\n"
+        )
+        return json.loads(subprocess.check_output([
+            "docker", "run", "--rm", "--network", self.network,
+            "--env", f"TOKEN={token}", "--env", f"PATH_Q={path}",
+            "--env", f"BODY={json.dumps(body,separators=(',',':'))}",
+            "--env", f"REPEAT={repeat}", "--entrypoint", "python", self.gateway_image,
+            "-c", script,
+        ], text=True))
+
+    @staticmethod
+    def _q24_tamper_token(token, field, value):
+        payload, signature = token.split(".", 1)
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        claims[field] = value
+        changed = base64.urlsafe_b64encode(
+            json.dumps(claims, sort_keys=True, separators=(",", ":")).encode()
+        ).rstrip(b"=").decode()
+        return changed + "." + signature
+
+    def test_q24_full_runtime_gateway_proxy_and_upstream_emulator(self):
+        # Replace the topology-only setUp peer with the reviewed gateway image.
+        subprocess.run(["docker", "rm", "-f", self.gateway], check=True, stdout=subprocess.DEVNULL)
+        upstream_network = f"{self.network}-upstream"
+        upstream = f"{self.gateway}-upstream"
+        credential = "Q24_PROVIDER_CREDENTIAL_SENTINEL_7c4f"
+        subprocess.run(["docker", "network", "create", "--internal", upstream_network], check=True, stdout=subprocess.DEVNULL)
+        try:
+            profiles, manifest = self._q24_profiles_and_manifest()
+            subprocess.run([
+                "docker", "run", "-d", "--name", upstream, "--network", upstream_network,
+                "--network-alias", "provider.test.internal",
+                "--env", f"EXPECTED_PROVIDER_CREDENTIAL={credential}",
+                "--entrypoint", "/opt/sandiva/bin/exec01-upstream-emulator", self.gateway_image,
+            ], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run([
+                "docker", "run", "-d", "--name", self.gateway, "--network", self.network,
+                "--network-alias", "executor-gateway.sandiva.internal",
+                "--label", f"sandiva.exec.gateway-policy={self.policy_fingerprint}",
+                "--env", f"EXEC01_PROFILE_MANIFEST={json.dumps(manifest,separators=(',',':'))}",
+                "--env", "EXEC01_SESSION_SIGNING_KEY=q24-gateway-signing-key-material-0001",
+                "--env", f"OPENAI_API_KEY={credential}", "--env", f"ANTHROPIC_API_KEY={credential}",
+                self.gateway_image, "serve",
+            ], check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(["docker", "network", "connect", upstream_network, self.gateway], check=True)
+            ready = False
+            for _ in range(50):
+                observed = subprocess.run([
+                    "docker", "exec", self.gateway, "python", "-c",
+                    "import socket; socket.create_connection(('127.0.0.1',8443),1).close(); socket.create_connection(('provider.test.internal',8080),1).close()",
+                ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if observed.returncode == 0:
+                    ready = True
+                    break
+                time.sleep(0.1)
+            self.assertTrue(ready, "source gateway or isolated upstream emulator did not become ready")
+            binding = GatewayNetworkBinding(self.network, self.gateway, self.gateway_image, self.policy_fingerprint)
+            controller = DockerExecutorGatewayController(binding)
+            observations, normalized_results = {}, {}
+            for provider in ("codex", "claude-code"):
+                profile = profiles[provider]
+                request = self._q24_request(profile, provider.replace("-", ""))
+                token = controller.prepare(profile, request)
+                policy = ContainmentPolicy(
+                    cpu_limit="1.0", memory_limit="128m", pids_limit=32,
+                    workspace_limit_bytes=16*1024*1024, wall_time_seconds=30,
+                    output_limit_bytes=65536, network_name=self.network,
+                    allowed_endpoints=profile.allowed_endpoints,
+                )
+                job = DockerContainerJobRunner(
+                    policy, network_attestor=DockerNetworkAttestor(binding),
+                )
+                runner = ContainerProviderRunner(policy, self.workspace.parent/"requests", runner=job)
+                runner.bind_gateway_session(request, token)
+                adapter = CodexExecutionAdapter(profile, runner) if provider == "codex" else ClaudeCodeExecutionAdapter(profile, runner)
+                result = adapter.execute(request, self.workspace.as_posix())
+                changes = PrepublicationInspector().inspect(str(self.workspace), request)
+                self.assertEqual(result["disposition"], "EXECUTION_SUCCEEDED")
+                self.assertIn("hermes-build-steward/README.md", changes.changed_paths)
+                observations[provider] = (profile, request)
+                normalized_results[provider] = result
+
+            combined = json.dumps({"observations":observations, "results":normalized_results}, default=str) + subprocess.check_output(
+                ["docker", "logs", self.gateway], text=True, stderr=subprocess.STDOUT,
+            )
+            for path in self.workspace.rglob("*"):
+                if path.is_file(): combined += path.read_text(errors="replace")
+            self.assertNotIn(credential, combined)
+
+            # The executor network has no direct route or DNS membership for the upstream emulator.
+            direct = subprocess.run([
+                "docker", "run", "--rm", "--network", self.network, "--entrypoint", "python",
+                self.gateway_image, "-c",
+                "import urllib.request; urllib.request.urlopen('http://provider.test.internal:8080',timeout=2)",
+            ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.assertNotEqual(direct.returncode, 0)
+
+            profile, request = observations["codex"]
+            path = "/v1/responses"
+            def issued(): return self._q24_issue(profile, request)
+            normal = {"model": profile.model, "input": "probe"}
+            replay = self._q24_probe(issued(), path, normal, repeat=2)
+            self.assertEqual([item[0] for item in replay], [200, 403])
+            cross_peer = issued()
+            self.assertEqual(self._q24_probe(cross_peer, path, normal)[0][0], 200)
+            self.assertEqual(self._q24_probe(cross_peer, path, normal)[0][0], 403)
+            for token in (
+                self._q24_tamper_token(issued(), "taskFingerprint", "f"*64),
+                self._q24_tamper_token(issued(), "attemptId", "other-attempt"),
+                self._q24_tamper_token(issued(), "profileFingerprint", "e"*64),
+            ):
+                self.assertEqual(self._q24_probe(token, path, normal)[0][0], 403)
+            self.assertEqual(self._q24_probe(issued(), "/v1/messages", normal)[0][0], 403)
+            for changed in (
+                {**normal, "model": "executor-selected-model"},
+                {**normal, "url": "https://attacker.invalid/collect"},
+                {**normal, "testMode": "echo-success"},
+                {**normal, "testMode": "echo-error"},
+                {**normal, "testMode": "oversized-success"},
+                {**normal, "testMode": "oversized-error"},
+                {**normal, "testMode": "malformed"},
+            ):
+                observed = self._q24_probe(issued(), path, changed)
+                self.assertEqual(observed[0][0], 403)
+                self.assertNotIn(credential, observed[0][1])
+        finally:
+            subprocess.run(["docker", "rm", "-f", upstream], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["docker", "rm", "-f", self.gateway], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["docker", "network", "rm", upstream_network], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__=="__main__": unittest.main()

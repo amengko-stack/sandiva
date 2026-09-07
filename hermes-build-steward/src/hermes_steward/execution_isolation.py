@@ -192,6 +192,7 @@ def sanitized_executor_environment(
         "EXEC_TASK_FINGERPRINT": request.task_fingerprint,
         "EXEC_ATTEMPT_ID": request.attempt_id,
         "EXEC_PROFILE_ID": request.executor_profile_id,
+        "EXEC_PROFILE_FINGERPRINT": request.executor_profile_fingerprint,
         "EXEC_ALLOWED_ENDPOINTS": json.dumps(sorted(policy.allowed_endpoints), separators=(",", ":")),
         "CI": "true",
         "LANG": "C.UTF-8",

@@ -7,6 +7,7 @@ RUN mkdir -p /opt/sandiva/gateway/hermes_steward /opt/sandiva/bin \
 WORKDIR /opt/sandiva/gateway
 COPY src/hermes_steward/ /opt/sandiva/gateway/hermes_steward/
 COPY --chmod=0555 runtime/executor-gateway/bin/ /opt/sandiva/bin/
+COPY --chmod=0555 runtime/executor-gateway/upstream-emulator.py /opt/sandiva/bin/exec01-upstream-emulator
 ENV PYTHONPATH=/opt/sandiva/gateway
 USER 65532:65532
 ENTRYPOINT ["python", "/opt/sandiva/bin/exec01-gateway"]

@@ -26,6 +26,7 @@ type requestEnvelope struct {
 	TaskID                      string                 `json:"taskId"`
 	TaskFingerprint             string                 `json:"taskFingerprint"`
 	AttemptID                   string                 `json:"attemptId"`
+	ExecutorProfileFingerprint  string                 `json:"executorProfileFingerprint"`
 	ExecutionContent            map[string]interface{} `json:"executionContent"`
 	ExecutionContentFingerprint string                 `json:"executionContentFingerprint"`
 	ApprovedCommands            []string               `json:"approvedCommands"`
@@ -83,7 +84,7 @@ func loadRequest() (requestEnvelope, []byte, error) {
 	if err = json.Unmarshal(raw, &request); err != nil {
 		return request, nil, err
 	}
-	if request.TaskID == "" || request.TaskFingerprint == "" || request.AttemptID == "" || request.ExecutionContentFingerprint == "" || request.ExecutionContent == nil {
+	if request.TaskID == "" || request.TaskFingerprint == "" || request.AttemptID == "" || request.ExecutorProfileFingerprint == "" || request.ExecutionContentFingerprint == "" || request.ExecutionContent == nil {
 		return request, nil, errors.New("sealed request identity/content is incomplete")
 	}
 	content, err := canonical(request.ExecutionContent)
@@ -211,27 +212,49 @@ func approved(command string, values []string) bool {
 }
 
 func failureType(value interface{}) string {
-	raw, _ := json.Marshal(value)
-	lowered := strings.ToLower(string(raw))
-	switch {
-	case strings.Contains(lowered, "rate") && strings.Contains(lowered, "limit"):
-		return "rate_limit"
-	case strings.Contains(lowered, "auth") || strings.Contains(lowered, "unauthorized"):
-		return "authentication"
-	case strings.Contains(lowered, "cancel"):
-		return "cancelled"
-	case strings.Contains(lowered, "timeout") || strings.Contains(lowered, "timed out"):
-		return "timeout"
-	case strings.Contains(lowered, "policy") || strings.Contains(lowered, "permission"):
-		return "policy_denied"
-	default:
-		return "provider_unavailable"
+	known := map[string]string{
+		"provider_unavailable":      "provider_unavailable",
+		"service_unavailable":       "provider_unavailable",
+		"authentication":            "authentication",
+		"authentication_error":      "authentication",
+		"rate_limit":                "rate_limit",
+		"rate_limit_error":          "rate_limit",
+		"policy_denied":             "policy_denied",
+		"permission_denied":         "policy_denied",
+		"resource_limit":            "resource_limit",
+		"timeout":                   "timeout",
+		"cancelled":                 "cancelled",
+		"malformed_provider_result": "malformed_provider_result",
+		"internal_error":            "internal_error",
 	}
+	var visit func(interface{}) string
+	visit = func(candidate interface{}) string {
+		switch typed := candidate.(type) {
+		case map[string]interface{}:
+			for _, key := range []string{"classification", "error_type", "code", "type"} {
+				if raw, ok := typed[key].(string); ok {
+					if normalized, exists := known[strings.ToLower(raw)]; exists {
+						return normalized
+					}
+				}
+			}
+			for _, key := range []string{"error", "failure"} {
+				if nested, exists := typed[key]; exists {
+					if normalized := visit(nested); normalized != "internal_error" {
+						return normalized
+					}
+				}
+			}
+		}
+		return "internal_error"
+	}
+	return visit(value)
 }
 
 func parseCodex(raw []byte, request requestEnvelope, started, completed string, exitCode int) (observation, error) {
-	result := observation{Protocol: "codex-exec-jsonl-v1", Status: "failed", StartedAt: started, CompletedAt: completed, Commands: []string{}, Tests: []map[string]interface{}{}, ChangedPaths: []string{}, LogRefs: []string{}, ErrorType: "provider_unavailable"}
-	terminal := false
+	result := observation{Protocol: "codex-exec-jsonl-v1", Status: "failed", StartedAt: started, CompletedAt: completed, Commands: []string{}, Tests: []map[string]interface{}{}, ChangedPaths: []string{}, LogRefs: []string{}, ErrorType: "internal_error"}
+	terminal := ""
+	startedThread := false
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 64*1024), outputLimit)
 	for scanner.Scan() {
@@ -240,16 +263,32 @@ func parseCodex(raw []byte, request requestEnvelope, started, completed string, 
 			return result, errors.New("malformed Codex JSONL event")
 		}
 		typeName, _ := event["type"].(string)
+		if terminal != "" {
+			return result, errors.New("Codex protocol contains an event after its terminal turn")
+		}
+		if !startedThread && typeName != "thread.started" {
+			return result, errors.New("Codex event precedes thread start")
+		}
 		if typeName == "thread.started" {
+			if startedThread {
+				return result, errors.New("Codex protocol contains multiple thread start events")
+			}
+			startedThread = true
 			result.ThreadID, _ = event["thread_id"].(string)
 		}
 		if typeName == "turn.completed" {
-			terminal = true
+			if !startedThread {
+				return result, errors.New("Codex terminal turn precedes thread start")
+			}
+			terminal = "completed"
 			result.Status = "completed"
 			result.ErrorType = ""
 		}
-		if typeName == "turn.failed" || typeName == "error" {
-			terminal = true
+		if typeName == "turn.failed" {
+			if !startedThread {
+				return result, errors.New("Codex terminal turn precedes thread start")
+			}
+			terminal = "failed"
 			result.Status = "failed"
 			result.ErrorType = failureType(event)
 		}
@@ -273,19 +312,19 @@ func parseCodex(raw []byte, request requestEnvelope, started, completed string, 
 	if err := scanner.Err(); err != nil {
 		return result, err
 	}
-	if !terminal {
+	if terminal == "" {
 		return result, errors.New("Codex protocol has no terminal turn event")
 	}
-	if exitCode != 0 && result.Status == "completed" {
-		return result, errors.New("Codex exited nonzero after success event")
+	if (terminal == "completed" && exitCode != 0) || (terminal == "failed" && exitCode == 0) {
+		return result, errors.New("Codex process exit status contradicts its terminal event")
 	}
 	return result, nil
 }
 
 func parseClaude(raw []byte, request requestEnvelope, started, completed string, exitCode int) (observation, error) {
-	result := observation{Protocol: "claude-code-stream-json-v1", StopReason: "error", StartedAtC: started, CompletedAtC: completed, CommandsC: []string{}, TestsC: []map[string]interface{}{}, ChangedPathsC: []string{}, EvidenceRefs: []string{}, ErrorTypeC: "provider_unavailable"}
-	terminal := false
-	toolCommands := map[string]string{}
+	result := observation{Protocol: "claude-code-stream-json-v1", StopReason: "error", StartedAtC: started, CompletedAtC: completed, CommandsC: []string{}, TestsC: []map[string]interface{}{}, ChangedPathsC: []string{}, EvidenceRefs: []string{}, ErrorTypeC: "internal_error"}
+	terminal := ""
+	toolUses := map[string]string{}
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 64*1024), outputLimit)
 	for scanner.Scan() {
@@ -293,8 +332,10 @@ func parseClaude(raw []byte, request requestEnvelope, started, completed string,
 		if json.Unmarshal(scanner.Bytes(), &event) != nil {
 			return result, errors.New("malformed Claude stream-json event")
 		}
+		if terminal != "" {
+			return result, errors.New("Claude protocol contains an event after its terminal result")
+		}
 		if event["type"] == "result" {
-			terminal = true
 			result.SessionID, _ = event["session_id"].(string)
 			if turns, ok := event["num_turns"].(float64); ok && turns >= 0 {
 				result.Turns = int(turns)
@@ -302,11 +343,14 @@ func parseClaude(raw []byte, request requestEnvelope, started, completed string,
 			subtype, _ := event["subtype"].(string)
 			isError, _ := event["is_error"].(bool)
 			if subtype == "success" && !isError {
+				terminal = "success"
 				result.StopReason = "end_turn"
 				result.ErrorTypeC = ""
-			}
-			if isError {
+			} else if isError && strings.HasPrefix(subtype, "error") {
+				terminal = "error"
 				result.ErrorTypeC = failureType(event)
+			} else {
+				return result, errors.New("Claude terminal result subtype is unknown or contradictory")
 			}
 		}
 		if event["type"] == "assistant" {
@@ -317,8 +361,15 @@ func parseClaude(raw []byte, request requestEnvelope, started, completed string,
 				input, _ := item["input"].(map[string]interface{})
 				command, _ := input["command"].(string)
 				toolID, _ := item["id"].(string)
-				if item["type"] == "tool_use" && item["name"] == "Bash" && toolID != "" && approved(command, request.ApprovedCommands) {
-					toolCommands[toolID] = command
+				if item["type"] == "tool_use" && toolID != "" {
+					if _, exists := toolUses[toolID]; exists {
+						return result, errors.New("Claude protocol reused a tool-use identity")
+					}
+					if item["name"] == "Bash" && approved(command, request.ApprovedCommands) {
+						toolUses[toolID] = command
+					} else {
+						toolUses[toolID] = ""
+					}
 				}
 			}
 		}
@@ -328,31 +379,39 @@ func parseClaude(raw []byte, request requestEnvelope, started, completed string,
 			for _, rawItem := range content {
 				item, _ := rawItem.(map[string]interface{})
 				toolID, _ := item["tool_use_id"].(string)
-				command, exists := toolCommands[toolID]
-				if item["type"] != "tool_result" || !exists {
+				command, exists := toolUses[toolID]
+				if item["type"] != "tool_result" {
 					continue
+				}
+				if !exists {
+					return result, errors.New("Claude protocol returned an unknown tool-use identity")
 				}
 				isError, _ := item["is_error"].(bool)
 				status := "PASS"
 				if isError {
 					status = "FAIL"
 				}
-				result.CommandsC = append(result.CommandsC, command)
-				result.TestsC = append(result.TestsC, map[string]interface{}{
-					"name": "approved command: " + command, "status": status, "command": command,
-				})
-				delete(toolCommands, toolID)
+				if command != "" {
+					result.CommandsC = append(result.CommandsC, command)
+					result.TestsC = append(result.TestsC, map[string]interface{}{
+						"name": "approved command: " + command, "status": status, "command": command,
+					})
+				}
+				delete(toolUses, toolID)
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return result, err
 	}
-	if !terminal {
+	if terminal == "" {
 		return result, errors.New("Claude protocol has no terminal result event")
 	}
-	if exitCode != 0 && result.StopReason == "end_turn" {
-		return result, errors.New("Claude exited nonzero after success result")
+	if len(toolUses) != 0 {
+		return result, errors.New("Claude protocol has unresolved tool-use identities")
+	}
+	if (terminal == "success" && exitCode != 0) || (terminal == "error" && exitCode == 0) {
+		return result, errors.New("Claude process exit status contradicts its terminal result")
 	}
 	return result, nil
 }
@@ -371,7 +430,15 @@ func executeProvider(args []string) error {
 	command.Stdin = bytes.NewReader(prompt)
 	gateway := "http://" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT")
 	session := os.Getenv("EXEC_GATEWAY_SESSION_TOKEN")
-	command.Env = []string{"PATH=/opt/sandiva/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/run/exec", "CI=true", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "EXECUTOR_GATEWAY_ENDPOINT=" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT"), "EXEC_GATEWAY_SESSION_TOKEN=" + session}
+	command.Env = []string{
+		"PATH=/opt/sandiva/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/run/exec", "CI=true",
+		"LANG=C.UTF-8", "LC_ALL=C.UTF-8",
+		"EXECUTOR_GATEWAY_ENDPOINT=" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT"),
+		"EXEC_GATEWAY_SESSION_TOKEN=" + session,
+		"EXEC_TASK_FINGERPRINT=" + request.TaskFingerprint,
+		"EXEC_ATTEMPT_ID=" + request.AttemptID,
+		"EXEC_PROFILE_FINGERPRINT=" + request.ExecutorProfileFingerprint,
+	}
 	if args[0] == "codex" {
 		command.Env = append(command.Env, "OPENAI_BASE_URL="+gateway+"/v1", "OPENAI_API_KEY="+session)
 	} else {
@@ -399,7 +466,11 @@ func executeProvider(args []string) error {
 		result, err = parseClaude(stdout.buffer.Bytes(), request, started, completed, exitCode)
 	}
 	if err != nil {
-		return fmt.Errorf("provider protocol rejected: %w", err)
+		if args[0] == "codex" {
+			result = observation{Protocol: "codex-exec-jsonl-v1", Status: "failed", StartedAt: started, CompletedAt: completed, Commands: []string{}, Tests: []map[string]interface{}{}, ChangedPaths: []string{}, LogRefs: []string{}, ErrorType: "malformed_provider_result"}
+		} else {
+			result = observation{Protocol: "claude-code-stream-json-v1", StopReason: "error", StartedAtC: started, CompletedAtC: completed, CommandsC: []string{}, TestsC: []map[string]interface{}{}, ChangedPathsC: []string{}, EvidenceRefs: []string{}, ErrorTypeC: "malformed_provider_result"}
+		}
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }

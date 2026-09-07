@@ -56,6 +56,11 @@ class TaskRecord:
     results: list[dict[str, Any]] = field(default_factory=list)
     failure_history: list[dict[str, Any]] = field(default_factory=list)
     audit: list[dict[str, Any]] = field(default_factory=list)
+    unavailable_profile_fingerprints: list[str] = field(default_factory=list)
+    next_fallback_index: int = 0
+    pending_fallback_profile_id: str | None = None
+    pending_fallback_profile_fingerprint: str | None = None
+    primary_failure_attempt_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -159,6 +164,8 @@ class Coordinator:
 
         def mutation(record: TaskRecord) -> Lease | _RejectedMutation:
             now = self.clock()
+            if record.pending_fallback_profile_fingerprint is not None:
+                raise CoordinatorError("pending fallback requires exact fallback lease claim")
             active = record.active_lease
             if active is not None and active.lease_expires_at > now:
                 raise CoordinatorError("task already has a valid lease owner")
@@ -216,10 +223,14 @@ class Coordinator:
 
     def record_execution_unavailable(
         self, task_id: str, task_version: int, lease_id: str, fencing_token: int,
-        profile_id: str,
+        profile_id: str, profile_fingerprint: str,
     ) -> TaskRecord:
         """Close one technical attempt so an authorized fallback gets a fresh fence/attempt."""
-        if not isinstance(profile_id, str) or not profile_id:
+        if (
+            not isinstance(profile_id, str) or not profile_id
+            or not isinstance(profile_fingerprint, str)
+            or len(profile_fingerprint) != 64
+        ):
             raise CoordinatorError("unavailable executor profile identity is required")
         key = self._key(task_id, task_version)
 
@@ -227,18 +238,97 @@ class Coordinator:
             lease = self._assert_fence(record, lease_id, fencing_token)
             if record.status != TaskStatus.LEASED:
                 raise CoordinatorError("executor unavailability can only close a leased attempt")
+            policy = record.task.get("dispatchPolicy")
+            references = [
+                policy.get("executorProfile"), *policy.get("permittedFallbackProfiles", [])
+            ] if isinstance(policy, Mapping) else []
+            current_index = next((
+                index for index, item in enumerate(references)
+                if isinstance(item, Mapping) and item.get("profileId") == profile_id
+                and item.get("profileFingerprint") == profile_fingerprint
+            ), None)
+            if current_index is None or profile_fingerprint in record.unavailable_profile_fingerprints:
+                raise CoordinatorError("unavailable executor profile is not the current authorized selection")
             record.failure_history.append({
                 "attemptId": lease.attempt_id,
                 "disposition": "PROVIDER_UNAVAILABLE",
                 "profileId": profile_id,
+                "profileFingerprint": profile_fingerprint,
                 "at": self.clock().isoformat(),
             })
+            record.unavailable_profile_fingerprints.append(profile_fingerprint)
+            if record.primary_failure_attempt_id is None:
+                record.primary_failure_attempt_id = lease.attempt_id
+            record.next_fallback_index = current_index + 1
+            pending = next((
+                item for item in references[record.next_fallback_index:]
+                if isinstance(item, Mapping)
+                and item.get("profileFingerprint") not in record.unavailable_profile_fingerprints
+            ), None) if policy.get("fallbackMode") == "ORDERED" else None
+            record.pending_fallback_profile_id = pending.get("profileId") if pending else None
+            record.pending_fallback_profile_fingerprint = pending.get("profileFingerprint") if pending else None
             self._transition(record, TaskStatus.REWORK_REQUIRED, "trusted executor profile unavailable")
-            self._event(record, "EXECUTOR_PROFILE_UNAVAILABLE", attemptId=lease.attempt_id, profileId=profile_id)
+            self._event(
+                record, "EXECUTOR_PROFILE_UNAVAILABLE", attemptId=lease.attempt_id,
+                profileId=profile_id, profileFingerprint=profile_fingerprint,
+            )
+            if pending is not None:
+                self._event(
+                    record, "FALLBACK_PENDING", primaryFailureAttemptId=record.primary_failure_attempt_id,
+                    nextFallbackIndex=record.next_fallback_index,
+                    profileId=record.pending_fallback_profile_id,
+                    profileFingerprint=record.pending_fallback_profile_fingerprint,
+                )
             record.active_lease = None
             return record
 
         return self._mutate(key, mutation)
+
+    def claim_fallback(self, task_id: str, task_version: int, worker_id: str, ttl_seconds: int) -> Lease:
+        """Atomically claim only the exact fallback durably selected by prior unavailability."""
+        if ttl_seconds < 1:
+            raise CoordinatorError("lease TTL must be positive")
+        key = self._key(task_id, task_version)
+
+        def mutation(record: TaskRecord) -> Lease | _RejectedMutation:
+            now = self.clock()
+            active = record.active_lease
+            if active is not None and active.lease_expires_at > now:
+                if active.worker_id != worker_id:
+                    raise CoordinatorError("task already has a valid lease owner")
+                return active
+            if (
+                record.status != TaskStatus.REWORK_REQUIRED
+                or record.pending_fallback_profile_id is None
+                or record.pending_fallback_profile_fingerprint is None
+            ):
+                raise CoordinatorError("task has no exact pending fallback")
+            if record.attempt_count >= record.task["retryPolicy"]["maxAttempts"]:
+                self._transition(record, TaskStatus.FAILED, "retry limit exhausted")
+                return _RejectedMutation("retry limit exhausted")
+            record.attempt_count += 1
+            record.fencing_counter += 1
+            attempt_id = "attempt-" + str(uuid.uuid5(uuid.NAMESPACE_URL, f"{record.key}:attempt:{record.attempt_count}"))
+            lease = Lease(
+                task_id=task_id, attempt_id=attempt_id, worker_id=worker_id,
+                lease_id="lease-" + str(uuid.uuid4()), lease_started_at=now,
+                lease_expires_at=now + timedelta(seconds=ttl_seconds), fencing_token=record.fencing_counter,
+            )
+            record.active_lease = lease
+            self._transition(record, TaskStatus.READY, "durable fallback made ready")
+            self._transition(record, TaskStatus.LEASED, "exact authorized fallback lease acquired")
+            self._event(
+                record, "FALLBACK_ATTEMPT_CLAIMED", attemptId=attempt_id, leaseId=lease.lease_id,
+                fencingToken=lease.fencing_token, profileId=record.pending_fallback_profile_id,
+                profileFingerprint=record.pending_fallback_profile_fingerprint,
+                primaryFailureAttemptId=record.primary_failure_attempt_id,
+            )
+            return lease
+
+        response = self._mutate(key, mutation)
+        if isinstance(response, _RejectedMutation):
+            raise CoordinatorError(response.message)
+        return response
 
     def begin_verification(self, task_id: str, task_version: int, lease_id: str, fencing_token: int) -> TaskRecord:
         key = self._key(task_id, task_version)
