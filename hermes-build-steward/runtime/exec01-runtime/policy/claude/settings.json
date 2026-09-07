@@ -1,8 +1,12 @@
 {
+  "permissions": {
+    "allow": ["mcp__sandiva_execution_authority__sandiva_execute"],
+    "deny": ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "LS", "NotebookEdit", "WebFetch", "WebSearch"]
+  },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "*",
+        "matcher": "Bash|Read|Write|Edit|Glob|Grep|LS|NotebookEdit|WebFetch|WebSearch",
         "hooks": [
           {
             "type": "command",

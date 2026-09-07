@@ -7,10 +7,11 @@ name = "sandiva-hermes-build-steward"
 version = "0.2.0"
 description = "Sandiva HERMES-01 trusted coordinator and EXEC-01 build adapter"
 requires-python = ">=3.11"
-dependencies = ["msal>=1.29,<2"]
+dependencies = ["msal>=1.29,<2", "cryptography>=42,<49"]
 
 [project.scripts]
 hermes-build-steward = "hermes_steward.cli:main"
+exec01-evidence-producer = "hermes_steward.evidence_producer_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

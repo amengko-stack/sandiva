@@ -26,19 +26,19 @@
         "origin": "trusted-runtime-probe",
         "producerIdentity": "sandiva-producer://hostinger/exec01-runtime-probe/v1",
         "storeIdentity": "sharepoint:prod.exec01.probes",
-        "authenticationKeyFile": "/etc/sandiva-hermes/credentials/exec01-probe-producer.key"
+        "verificationCertificateFile": "/etc/sandiva-hermes/certificates/exec01-probe-producer.pem"
       },
       "qualification-check": {
         "origin": "trusted-qualification-check",
         "producerIdentity": "sandiva-producer://hostinger/exec01-qualification-check/v1",
         "storeIdentity": "sharepoint:prod.exec01.checks",
-        "authenticationKeyFile": "/etc/sandiva-hermes/credentials/exec01-check-producer.key"
+        "verificationCertificateFile": "/etc/sandiva-hermes/certificates/exec01-check-producer.pem"
       },
       "hermes-result": {
         "origin": "trusted-hermes-independent",
         "producerIdentity": "sandiva-producer://hostinger/hermes-independent/v1",
         "storeIdentity": "sharepoint:prod.hermes.evidence",
-        "authenticationKeyFile": "/etc/sandiva-hermes/credentials/hermes-evidence-producer.key"
+        "verificationCertificateFile": "/etc/sandiva-hermes/certificates/hermes-evidence-producer.pem"
       }
     }
   },

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,18 +12,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	pathpkg "path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
 const workspace = "/workspace"
 const outputLimit = 4 * 1024 * 1024
-const launcherVersion = "exec01-runtime-v1.2.0"
-const denialMarker = "/run/exec/pretool-denied"
+const launcherVersion = "exec01-runtime-v1.3.0"
+const denialMarker = "/run/exec/authority/pretool-denied"
+const brokerSocket = "/run/exec/provider/action.sock"
+const brokerLedger = "/run/exec/authority/action-ledger.jsonl"
+const brokerReady = "/run/exec/authority/action-ready"
 const hookInputLimit = 64 * 1024
 
 // authorizationWorkspaceHost is compile-time fixed to the isolated attempt
@@ -276,6 +282,25 @@ type hookInput struct {
 	ToolName  string                 `json:"tool_name"`
 	Cwd       string                 `json:"cwd"`
 	ToolInput map[string]interface{} `json:"tool_input"`
+}
+
+type toolExecution struct {
+	Disposition string      `json:"disposition"`
+	Executed    bool        `json:"executed"`
+	ToolName    string      `json:"toolName,omitempty"`
+	Command     string      `json:"command,omitempty"`
+	ExitCode    int         `json:"exitCode,omitempty"`
+	Output      interface{} `json:"output,omitempty"`
+	Reason      string      `json:"reason,omitempty"`
+}
+
+type brokerRequest struct {
+	CapabilityToken string                 `json:"capabilityToken"`
+	TaskFingerprint string                 `json:"taskFingerprint"`
+	AttemptID       string                 `json:"attemptId"`
+	Sequence        int                    `json:"sequence"`
+	ToolName        string                 `json:"toolName"`
+	ToolInput       map[string]interface{} `json:"toolInput"`
 }
 
 func validAuthorityPattern(value string) bool {
@@ -743,6 +768,470 @@ func authorizeTool(raw []byte, request requestEnvelope) (hookDecision, error) {
 	return hookDecision{Reason: "tool is not allowlisted for EXEC-01"}, nil
 }
 
+func toolHostPath(value string) (string, error) {
+	relative, err := repositoryPath(value)
+	if err != nil {
+		return "", err
+	}
+	if relative == "." {
+		return authorizationWorkspaceHost, nil
+	}
+	return filepath.Join(authorizationWorkspaceHost, filepath.FromSlash(relative)), nil
+}
+
+func toolString(input map[string]interface{}, names ...string) (string, bool) {
+	for _, name := range names {
+		if raw, ok := input[name]; ok {
+			value, valid := raw.(string)
+			return value, valid
+		}
+	}
+	return "", false
+}
+
+func executeAuthorizedTool(request requestEnvelope, tool string, input map[string]interface{}) (toolExecution, error) {
+	result := toolExecution{Disposition: "provider_runtime_failure", ToolName: tool}
+	raw, err := json.Marshal(hookInput{EventName: "PreToolUse", ToolName: tool, Cwd: workspace, ToolInput: input})
+	if err != nil {
+		result.Reason = "action could not be normalized"
+		return result, nil
+	}
+	decision, err := authorizeTool(raw, request)
+	if err != nil {
+		result.Reason = "Sandiva authorizer failed closed"
+		return result, nil
+	}
+	if !decision.Allowed {
+		result.Disposition = "denied_before_execution"
+		result.Reason = decision.Reason
+		return result, nil
+	}
+
+	fail := func(actionErr error) (toolExecution, error) {
+		result.Executed = true
+		result.Reason = actionErr.Error()
+		return result, nil
+	}
+	succeed := func(output interface{}) (toolExecution, error) {
+		result.Disposition = "authorized_and_executed"
+		result.Executed = true
+		result.Output = output
+		return result, nil
+	}
+
+	switch tool {
+	case "Bash", "shell", "shell_command":
+		commandValue, ok := toolString(input, "command", "cmd")
+		if !ok {
+			return fail(errors.New("authorized shell command could not be resolved"))
+		}
+		result.Command = commandValue
+		process := exec.Command("/bin/sh", "-c", commandValue)
+		process.Dir = authorizationWorkspaceHost
+		process.Env = []string{"PATH=/opt/sandiva/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/run/exec", "CI=true", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+		stdout := &boundedBuffer{limit: 512 * 1024}
+		stderr := &boundedBuffer{limit: 64 * 1024}
+		process.Stdout, process.Stderr = stdout, stderr
+		runErr := process.Run()
+		output := map[string]interface{}{"stdout": stdout.buffer.String(), "stderr": stderr.buffer.String(), "exitCode": 0}
+		if runErr != nil {
+			if exit, ok := runErr.(*exec.ExitError); ok {
+				result.ExitCode = exit.ExitCode()
+				output["exitCode"] = result.ExitCode
+				return succeed(output)
+			}
+			return fail(runErr)
+		}
+		return succeed(output)
+	case "Read":
+		value, _ := toolString(input, "file_path", "path", "filePath")
+		target, pathErr := toolHostPath(value)
+		if pathErr != nil {
+			return fail(pathErr)
+		}
+		file, openErr := os.Open(target)
+		if openErr != nil {
+			return fail(openErr)
+		}
+		defer file.Close()
+		content, readErr := io.ReadAll(io.LimitReader(file, 512*1024+1))
+		if readErr != nil || len(content) > 512*1024 {
+			return fail(errors.New("read result exceeds its bound"))
+		}
+		return succeed(string(content))
+	case "Write":
+		value, _ := toolString(input, "file_path", "path", "filePath")
+		content, _ := toolString(input, "content")
+		target, pathErr := toolHostPath(value)
+		if pathErr != nil {
+			return fail(pathErr)
+		}
+		if mkdirErr := os.MkdirAll(filepath.Dir(target), 0700); mkdirErr != nil {
+			return fail(mkdirErr)
+		}
+		temporary, createErr := os.CreateTemp(filepath.Dir(target), ".exec01-write-*")
+		if createErr != nil {
+			return fail(createErr)
+		}
+		temporaryName := temporary.Name()
+		defer os.Remove(temporaryName)
+		if chmodErr := temporary.Chmod(0600); chmodErr != nil {
+			temporary.Close()
+			return fail(chmodErr)
+		}
+		if _, writeErr := temporary.WriteString(content); writeErr != nil {
+			temporary.Close()
+			return fail(writeErr)
+		}
+		if closeErr := temporary.Close(); closeErr != nil {
+			return fail(closeErr)
+		}
+		if renameErr := os.Rename(temporaryName, target); renameErr != nil {
+			return fail(renameErr)
+		}
+		return succeed(map[string]interface{}{"bytesWritten": len(content)})
+	case "Edit":
+		value, _ := toolString(input, "file_path", "path", "filePath")
+		oldValue, _ := toolString(input, "old_string")
+		newValue, _ := toolString(input, "new_string")
+		target, pathErr := toolHostPath(value)
+		if pathErr != nil {
+			return fail(pathErr)
+		}
+		content, readErr := os.ReadFile(target)
+		if readErr != nil || len(content) > 2*1024*1024 {
+			return fail(errors.New("edit target is unavailable or exceeds its bound"))
+		}
+		replaceAll, _ := input["replace_all"].(bool)
+		count := bytes.Count(content, []byte(oldValue))
+		if count == 0 || (!replaceAll && count != 1) {
+			return fail(errors.New("edit match is absent or ambiguous"))
+		}
+		replaced := bytes.Replace(content, []byte(oldValue), []byte(newValue), 1)
+		if replaceAll {
+			replaced = bytes.ReplaceAll(content, []byte(oldValue), []byte(newValue))
+		}
+		if writeErr := os.WriteFile(target, replaced, 0600); writeErr != nil {
+			return fail(writeErr)
+		}
+		return succeed(map[string]interface{}{"replacements": count})
+	case "LS":
+		value, _ := toolString(input, "path", "directory", "root")
+		target, pathErr := toolHostPath(value)
+		if pathErr != nil {
+			return fail(pathErr)
+		}
+		entries, readErr := os.ReadDir(target)
+		if readErr != nil {
+			return fail(readErr)
+		}
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		sort.Strings(names)
+		return succeed(names)
+	case "Glob":
+		value, _ := toolString(input, "path", "directory", "root")
+		pattern, _ := toolString(input, "pattern")
+		target, pathErr := toolHostPath(value)
+		if pathErr != nil {
+			return fail(pathErr)
+		}
+		matches, globErr := filepath.Glob(filepath.Join(target, filepath.FromSlash(pattern)))
+		if globErr != nil {
+			return fail(globErr)
+		}
+		for index, match := range matches {
+			relative, _ := filepath.Rel(authorizationWorkspaceHost, match)
+			matches[index] = filepath.ToSlash(relative)
+		}
+		sort.Strings(matches)
+		return succeed(matches)
+	case "Grep":
+		value, _ := toolString(input, "path", "directory", "root")
+		pattern, _ := toolString(input, "pattern")
+		target, pathErr := toolHostPath(value)
+		if pathErr != nil {
+			return fail(pathErr)
+		}
+		matches := []string{}
+		walkErr := filepath.WalkDir(target, func(candidate string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			content, readErr := os.ReadFile(candidate)
+			if readErr != nil || len(content) > 512*1024 {
+				return nil
+			}
+			if bytes.Contains(content, []byte(pattern)) {
+				relative, _ := filepath.Rel(authorizationWorkspaceHost, candidate)
+				matches = append(matches, filepath.ToSlash(relative))
+			}
+			if len(matches) > 10000 {
+				return errors.New("grep result exceeds its bound")
+			}
+			return nil
+		})
+		if walkErr != nil {
+			return fail(walkErr)
+		}
+		sort.Strings(matches)
+		return succeed(matches)
+	case "apply_patch":
+		patchValue, _ := toolString(input, "patch", "command", "input")
+		if strings.HasPrefix(strings.ReplaceAll(patchValue, "\r\n", "\n"), "*** Begin Patch\n") {
+			return fail(errors.New("custom patch execution is not supported by the trusted broker"))
+		}
+		for _, arguments := range [][]string{{"--dry-run", "-p1", "--forward", "--batch"}, {"-p1", "--forward", "--batch"}} {
+			process := exec.Command("/usr/bin/patch", arguments...)
+			process.Dir = authorizationWorkspaceHost
+			process.Env = []string{"PATH=/usr/bin:/bin", "HOME=/run/exec", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
+			process.Stdin = strings.NewReader(patchValue)
+			output := &boundedBuffer{limit: 128 * 1024}
+			process.Stdout, process.Stderr = output, output
+			if runErr := process.Run(); runErr != nil {
+				return fail(errors.New("trusted patch execution failed"))
+			}
+		}
+		return succeed(map[string]interface{}{"patchDigest": fmt.Sprintf("%x", sha256.Sum256([]byte(patchValue)))})
+	default:
+		result.Reason = "tool is not implemented by the Sandiva action broker"
+		return result, nil
+	}
+}
+
+func handleBrokerRequest(raw []byte, request requestEnvelope, expectedSequence int) toolExecution {
+	failed := toolExecution{Disposition: "provider_runtime_failure", Reason: "broker request failed closed"}
+	if len(raw) == 0 || len(raw) > hookInputLimit {
+		return failed
+	}
+	var action brokerRequest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&action); err != nil {
+		return failed
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return failed
+	}
+	if action.TaskFingerprint != request.TaskFingerprint || action.AttemptID != request.AttemptID || action.Sequence != expectedSequence || action.ToolName == "" || action.ToolInput == nil {
+		return failed
+	}
+	result, err := executeAuthorizedTool(request, action.ToolName, action.ToolInput)
+	if err != nil {
+		return failed
+	}
+	return result
+}
+
+func appendBrokerLedger(sequence int, result toolExecution) error {
+	entry, err := json.Marshal(map[string]interface{}{
+		"sequence": sequence, "occurredAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"disposition": result.Disposition, "executed": result.Executed,
+		"toolName": result.ToolName, "command": result.Command, "exitCode": result.ExitCode, "reason": result.Reason,
+	})
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(brokerLedger, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(append(entry, '\n'))
+	return err
+}
+
+func serveBroker() error {
+	request, _, err := loadRequest()
+	if err != nil {
+		return err
+	}
+	token := os.Getenv("EXEC_ACTION_CAPABILITY")
+	if len(token) < 32 {
+		return errors.New("action capability is absent")
+	}
+	_ = os.Remove(brokerSocket)
+	listener, err := net.Listen("unix", brokerSocket)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	if err := os.Chmod(brokerSocket, 0600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(brokerLedger, nil, 0600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(brokerReady, []byte("ready\n"), 0600); err != nil {
+		return err
+	}
+	sequence := 1
+	for {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return acceptErr
+		}
+		_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
+		raw, readErr := io.ReadAll(io.LimitReader(connection, hookInputLimit+1))
+		result := toolExecution{Disposition: "provider_runtime_failure", Reason: "broker transport failed closed"}
+		if readErr == nil && len(raw) <= hookInputLimit {
+			var authentication struct {
+				CapabilityToken string `json:"capabilityToken"`
+			}
+			if json.Unmarshal(raw, &authentication) == nil && authentication.CapabilityToken == token {
+				result = handleBrokerRequest(raw, request, sequence)
+			}
+		}
+		if result.Disposition != "provider_runtime_failure" || result.ToolName != "" {
+			if ledgerErr := appendBrokerLedger(sequence, result); ledgerErr != nil {
+				result = toolExecution{Disposition: "provider_runtime_failure", Reason: "broker provenance persistence failed closed"}
+			}
+			sequence++
+		}
+		_ = json.NewEncoder(connection).Encode(result)
+		_ = connection.Close()
+	}
+}
+
+func brokerAction() error {
+	request, _, err := loadRequest()
+	if err != nil {
+		return err
+	}
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, hookInputLimit+1))
+	if err != nil || len(raw) > hookInputLimit {
+		return errors.New("broker action exceeds its bound")
+	}
+	var action brokerRequest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&action); err != nil {
+		return errors.New("broker action is malformed")
+	}
+	action.TaskFingerprint = request.TaskFingerprint
+	action.AttemptID = request.AttemptID
+	action.CapabilityToken = os.Getenv("EXEC_ACTION_CAPABILITY")
+	encoded, err := json.Marshal(action)
+	if err != nil {
+		return err
+	}
+	connection, err := net.DialTimeout("unix", brokerSocket, 2*time.Second)
+	if err != nil {
+		return errors.New("Sandiva action broker is unavailable")
+	}
+	defer connection.Close()
+	_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
+	if _, err := connection.Write(encoded); err != nil {
+		return err
+	}
+	if unix, ok := connection.(*net.UnixConn); ok {
+		_ = unix.CloseWrite()
+	}
+	response, err := io.ReadAll(io.LimitReader(connection, hookInputLimit+1))
+	if err != nil || len(response) > hookInputLimit {
+		return errors.New("broker response exceeds its bound")
+	}
+	var result toolExecution
+	if json.Unmarshal(response, &result) != nil || result.Disposition == "" {
+		return errors.New("broker response is malformed")
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func sendBrokerAction(action brokerRequest) (toolExecution, error) {
+	request, _, err := loadRequest()
+	if err != nil {
+		return toolExecution{}, err
+	}
+	action.TaskFingerprint = request.TaskFingerprint
+	action.AttemptID = request.AttemptID
+	action.CapabilityToken = os.Getenv("EXEC_ACTION_CAPABILITY")
+	encoded, err := json.Marshal(action)
+	if err != nil {
+		return toolExecution{}, err
+	}
+	connection, err := net.DialTimeout("unix", brokerSocket, 2*time.Second)
+	if err != nil {
+		return toolExecution{}, errors.New("Sandiva action broker is unavailable")
+	}
+	defer connection.Close()
+	_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
+	if _, err := connection.Write(encoded); err != nil {
+		return toolExecution{}, err
+	}
+	if unix, ok := connection.(*net.UnixConn); ok {
+		_ = unix.CloseWrite()
+	}
+	response, err := io.ReadAll(io.LimitReader(connection, hookInputLimit+1))
+	if err != nil || len(response) > hookInputLimit {
+		return toolExecution{}, errors.New("broker response exceeds its bound")
+	}
+	var result toolExecution
+	if json.Unmarshal(response, &result) != nil || result.Disposition == "" {
+		return toolExecution{}, errors.New("broker response is malformed")
+	}
+	return result, nil
+}
+
+func serveMCP() error {
+	sequence := 1
+	scanner := bufio.NewScanner(io.LimitReader(os.Stdin, outputLimit+1))
+	scanner.Buffer(make([]byte, 64*1024), hookInputLimit)
+	encoder := json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		var message struct {
+			JSONRPC string                 `json:"jsonrpc"`
+			ID      interface{}            `json:"id"`
+			Method  string                 `json:"method"`
+			Params  map[string]interface{} `json:"params"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(scanner.Bytes()))
+		decoder.DisallowUnknownFields()
+		if decoder.Decode(&message) != nil || message.JSONRPC != "2.0" || message.Method == "" {
+			return errors.New("MCP request is malformed")
+		}
+		if message.ID == nil {
+			continue
+		}
+		response := map[string]interface{}{"jsonrpc": "2.0", "id": message.ID}
+		switch message.Method {
+		case "initialize":
+			response["result"] = map[string]interface{}{"protocolVersion": "2024-11-05", "capabilities": map[string]interface{}{"tools": map[string]interface{}{}}, "serverInfo": map[string]interface{}{"name": "sandiva-execution-authority", "version": launcherVersion}}
+		case "tools/list":
+			response["result"] = map[string]interface{}{"tools": []interface{}{map[string]interface{}{"name": "sandiva_execute", "description": "Execute one task-bound repository action through Sandiva authority", "inputSchema": map[string]interface{}{"type": "object", "additionalProperties": false, "required": []string{"toolName", "toolInput"}, "properties": map[string]interface{}{"toolName": map[string]interface{}{"type": "string"}, "toolInput": map[string]interface{}{"type": "object"}}}}}}
+		case "tools/call":
+			name, _ := message.Params["name"].(string)
+			arguments, _ := message.Params["arguments"].(map[string]interface{})
+			toolName, _ := arguments["toolName"].(string)
+			toolInput, _ := arguments["toolInput"].(map[string]interface{})
+			if name != "sandiva_execute" || toolName == "" || toolInput == nil {
+				response["error"] = map[string]interface{}{"code": -32602, "message": "action request is malformed"}
+				break
+			}
+			result, actionErr := sendBrokerAction(brokerRequest{Sequence: sequence, ToolName: toolName, ToolInput: toolInput})
+			sequence++
+			if actionErr != nil {
+				response["error"] = map[string]interface{}{"code": -32603, "message": "Sandiva action authority failed closed"}
+				break
+			}
+			encoded, _ := json.Marshal(result)
+			response["result"] = map[string]interface{}{"content": []interface{}{map[string]interface{}{"type": "text", "text": string(encoded)}}, "isError": result.Disposition != "authorized_and_executed"}
+		default:
+			response["error"] = map[string]interface{}{"code": -32601, "message": "method is not supported"}
+		}
+		if err := encoder.Encode(response); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
 func emitHookDecision(provider string, decision hookDecision) error {
 	if provider != "codex" && provider != "claude" {
 		return errors.New("hook provider is not allowlisted")
@@ -1017,11 +1506,58 @@ func executeProvider(args []string) error {
 		return errors.New("launcher is not allowlisted")
 	}
 	launcher := filepath.Join("/opt/sandiva/bin", args[0])
-	if err := os.Remove(denialMarker); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.New("pre-tool authorization state cannot be initialized")
+	for _, target := range []string{denialMarker, brokerSocket, brokerLedger, brokerReady} {
+		if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.New("execution authority state cannot be initialized")
+		}
+	}
+	if err := os.MkdirAll("/run/exec/provider", 0700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll("/run/exec/authority", 0700); err != nil {
+		return err
+	}
+	capabilityBytes := make([]byte, 32)
+	if _, err := rand.Read(capabilityBytes); err != nil {
+		return errors.New("action capability could not be created")
+	}
+	capability := hex.EncodeToString(capabilityBytes)
+	broker := exec.Command(runtimeExecutablePath, "broker-serve")
+	broker.Env = append(os.Environ(), "EXEC_ACTION_CAPABILITY="+capability)
+	if err := broker.Start(); err != nil {
+		return errors.New("Sandiva action broker could not start")
+	}
+	defer func() {
+		if broker.Process != nil {
+			_ = broker.Process.Kill()
+		}
+		_ = broker.Wait()
+	}()
+	ready := false
+	for index := 0; index < 100; index++ {
+		if _, err := os.Stat(brokerReady); err == nil {
+			ready = true
+			break
+		}
+		if broker.ProcessState != nil && broker.ProcessState.Exited() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		return errors.New("Sandiva action broker did not attest readiness")
+	}
+	if err := os.WriteFile(denialMarker, nil, 0600); err != nil {
+		return errors.New("pre-tool denial state cannot be created")
+	}
+	if err := os.Truncate(denialMarker, 0); err != nil {
+		return err
+	}
+	if err := restrictProviderFilesystem(launcher); err != nil {
+		return fmt.Errorf("Sandiva provider confinement failed closed: %w", err)
 	}
 	command := exec.Command(launcher, args[1:]...)
-	command.Dir = workspace
+	command.Dir = "/run/exec/provider"
 	command.Stdin = bytes.NewReader(prompt)
 	gateway := "http://" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT")
 	session := os.Getenv("EXEC_GATEWAY_SESSION_TOKEN")
@@ -1034,6 +1570,8 @@ func executeProvider(args []string) error {
 		"EXEC_ATTEMPT_ID=" + request.AttemptID,
 		"EXEC_PROFILE_FINGERPRINT=" + request.ExecutorProfile.ProfileFingerprint,
 		"EXEC_REQUEST_B64=" + os.Getenv("EXEC_REQUEST_B64"),
+		"EXEC_ACTION_CAPABILITY=" + capability,
+		"EXEC_ACTION_BROKER=" + brokerSocket,
 	}
 	if args[0] == "codex" {
 		command.Env = append(command.Env, "CODEX_HOME=/opt/sandiva/codex", "OPENAI_BASE_URL="+gateway+"/v1", "OPENAI_API_KEY="+session)
@@ -1074,7 +1612,8 @@ func executeProvider(args []string) error {
 			result.ErrorTypeC = errorType
 		}
 	}
-	if _, markerErr := os.Stat(denialMarker); markerErr == nil {
+	markerInfo, markerErr := os.Stat(denialMarker)
+	if markerErr == nil && markerInfo.Size() > 0 {
 		markerDigest, digestErr := fileDigest(denialMarker)
 		if digestErr != nil {
 			return errors.New("pre-tool denial provenance cannot be read")
@@ -1094,6 +1633,60 @@ func executeProvider(args []string) error {
 		}
 	} else if !errors.Is(markerErr, os.ErrNotExist) {
 		return errors.New("pre-tool authorization state cannot be read")
+	}
+	ledgerRaw, ledgerErr := os.ReadFile(brokerLedger)
+	if ledgerErr != nil && !errors.Is(ledgerErr, os.ErrNotExist) {
+		return errors.New("action broker provenance cannot be read")
+	}
+	trustedCommands := []string{}
+	trustedTests := []map[string]interface{}{}
+	brokerEvents := 0
+	for _, line := range bytes.Split(bytes.TrimSpace(ledgerRaw), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		var event toolExecution
+		if json.Unmarshal(line, &event) != nil {
+			return errors.New("action broker provenance is malformed")
+		}
+		brokerEvents++
+		if event.Disposition == "denied_before_execution" {
+			if args[0] == "codex" {
+				result.Status, result.ErrorType = "blocked", "policy_denied"
+			} else {
+				result.StopReason, result.ErrorTypeC = "blocked", "policy_denied"
+			}
+		}
+		if event.Disposition == "provider_runtime_failure" {
+			if args[0] == "codex" {
+				result.Status, result.ErrorType = "failed", "internal_error"
+			} else {
+				result.StopReason, result.ErrorTypeC = "error", "internal_error"
+			}
+		}
+		if event.Executed && event.Command != "" {
+			trustedCommands = append(trustedCommands, event.Command)
+			status := "PASS"
+			if event.ExitCode != 0 {
+				status = "FAIL"
+			}
+			trustedTests = append(trustedTests, map[string]interface{}{"name": "approved command: " + event.Command, "status": status, "command": event.Command})
+		}
+	}
+	if brokerEvents == 0 {
+		if args[0] == "codex" {
+			result.Status, result.ErrorType = "failed", "internal_error"
+		} else {
+			result.StopReason, result.ErrorTypeC = "error", "internal_error"
+		}
+	}
+	brokerReference := fmt.Sprintf("audit://exec01/%s/%s/sandiva-action-broker/%x", request.TaskFingerprint, request.AttemptID, sha256.Sum256(ledgerRaw))
+	if args[0] == "codex" {
+		result.Commands, result.Tests = trustedCommands, trustedTests
+		result.LogRefs = append(result.LogRefs, brokerReference)
+	} else {
+		result.CommandsC, result.TestsC = trustedCommands, trustedTests
+		result.EvidenceRefs = append(result.EvidenceRefs, brokerReference)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
@@ -1165,6 +1758,12 @@ func main() {
 		} else {
 			err = authorize(os.Args[2])
 		}
+	case "broker-serve":
+		err = serveBroker()
+	case "broker-action":
+		err = brokerAction()
+	case "mcp-server":
+		err = serveMCP()
 	case "sleep":
 		for {
 			time.Sleep(time.Hour)

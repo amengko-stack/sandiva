@@ -14,27 +14,22 @@ import (
 	"time"
 )
 
-func authorize(provider, command string) (bool, error) {
-	input, _ := json.Marshal(map[string]interface{}{
-		"hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/workspace",
-		"tool_input": map[string]string{"command": command},
+func action(sequence int, tool string, input map[string]interface{}) (map[string]interface{}, error) {
+	payload, _ := json.Marshal(map[string]interface{}{
+		"sequence": sequence, "toolName": tool, "toolInput": input,
 	})
-	process := exec.Command("/opt/sandiva/bin/exec01-runtime", "authorize", provider)
-	process.Stdin = bytes.NewReader(input)
+	process := exec.Command("/opt/sandiva/bin/exec01-runtime", "broker-action")
+	process.Stdin = bytes.NewReader(payload)
 	process.Env = os.Environ()
 	raw, err := process.Output()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	var result struct {
-		Output struct {
-			PermissionDecision string `json:"permissionDecision"`
-		} `json:"hookSpecificOutput"`
-	}
+	var result map[string]interface{}
 	if json.Unmarshal(raw, &result) != nil {
-		return false, fmt.Errorf("pre-tool authorizer returned malformed output")
+		return nil, fmt.Errorf("Sandiva action broker returned malformed output")
 	}
-	return result.Output.PermissionDecision == "allow", nil
+	return result, nil
 }
 
 func probeGateway(provider string, args []string) error {
@@ -97,12 +92,47 @@ func main() {
 		fmt.Fprintln(os.Stderr, "missing bounded build instruction")
 		os.Exit(2)
 	}
-	command := ""
+	command := "sh q16-build.sh"
 	provider := filepath.Base(os.Args[0])
-	if _, err := os.Stat("/workspace/q16-build.sh"); err == nil {
-		command = "sh q16-build.sh"
-		allowed, err := authorize(provider, command)
-		if err != nil || !allowed {
+	if bytes.Contains(prompt, []byte("SEVENTH_NO_BROKER_SUCCESS")) {
+		if provider == "codex" {
+			emit(map[string]interface{}{"type": "thread.started", "thread_id": "bypass"})
+			emit(map[string]interface{}{"type": "turn.completed"})
+		} else {
+			emit(map[string]interface{}{"type": "result", "subtype": "success", "is_error": false, "session_id": "bypass", "num_turns": 1})
+		}
+		return
+	}
+	if bytes.Contains(prompt, []byte("SEVENTH_DIRECT_SURFACE")) {
+		if os.WriteFile("/workspace/hermes-build-steward/SEVENTH-BYPASS", []byte("bad"), 0600) == nil {
+			fmt.Fprintln(os.Stderr, "provider reached the authoritative workspace")
+			os.Exit(91)
+		}
+		if exec.Command("/bin/sh", "-c", "touch /workspace/hermes-build-steward/SEVENTH-PROCESS").Run() == nil {
+			fmt.Fprintln(os.Stderr, "provider executed an unbrokered child process")
+			os.Exit(92)
+		}
+		if provider == "codex" {
+			emit(map[string]interface{}{"type": "thread.started", "thread_id": "direct-surface"})
+			emit(map[string]interface{}{"type": "turn.completed"})
+		} else {
+			emit(map[string]interface{}{"type": "result", "subtype": "success", "is_error": false, "session_id": "direct-surface", "num_turns": 1})
+		}
+		return
+	}
+	if bytes.Contains(prompt, []byte("SEVENTH_UNKNOWN_SURFACE")) {
+		_, _ = action(1, "CodeMode", map[string]interface{}{"path": "hermes-build-steward/SEVENTH-CODE-MODE"})
+		if provider == "codex" {
+			emit(map[string]interface{}{"type": "thread.started", "thread_id": "unknown-surface"})
+			emit(map[string]interface{}{"type": "turn.completed"})
+		} else {
+			emit(map[string]interface{}{"type": "result", "subtype": "success", "is_error": false, "session_id": "unknown-surface", "num_turns": 1})
+		}
+		return
+	}
+	execution, actionErr := action(1, "Bash", map[string]interface{}{"command": command, "cwd": "/workspace"})
+	if actionErr != nil || execution["disposition"] != "authorized_and_executed" {
+		if execution != nil && execution["disposition"] == "denied_before_execution" {
 			if provider == "codex" {
 				emit(map[string]interface{}{"type": "thread.started", "thread_id": "emulator-thread"})
 				emit(map[string]interface{}{"type": "turn.failed", "error": map[string]string{"classification": "policy_denied"}})
@@ -111,20 +141,14 @@ func main() {
 			}
 			os.Exit(1)
 		}
-		if err := exec.Command("/workspace/q16-build.sh").Run(); err == nil {
-			fmt.Fprintln(os.Stderr, "noexec workspace unexpectedly executed a local binary")
-			os.Exit(3)
-		}
-		process := exec.Command("/bin/sh", "/workspace/q16-build.sh")
-		process.Dir = "/workspace"
-		if output, err := process.CombinedOutput(); err != nil {
-			fmt.Fprintln(os.Stderr, string(output))
-			os.Exit(3)
-		}
-		_ = os.WriteFile("/workspace/hermes-build-steward/noexec-probe.txt", []byte("direct-denied;trusted-interpreter-succeeded\n"), 0600)
+		fmt.Fprintln(os.Stderr, "Sandiva action broker failed")
+		os.Exit(3)
 	}
-	_ = os.MkdirAll("/workspace/hermes-build-steward", 0700)
-	if err := os.WriteFile("/workspace/hermes-build-steward/provider-prompt.json", prompt, 0600); err != nil {
+	if written, err := action(2, "Write", map[string]interface{}{"path": "hermes-build-steward/provider-prompt.json", "content": string(prompt)}); err != nil || written["disposition"] != "authorized_and_executed" {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if written, err := action(3, "Write", map[string]interface{}{"path": "hermes-build-steward/noexec-probe.txt", "content": "direct-denied;trusted-interpreter-succeeded\n"}); err != nil || written["disposition"] != "authorized_and_executed" {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}

@@ -392,4 +392,46 @@ func TestSixthReworkCommandAliasesAreExactAndUnknownToolsFailClosed(t *testing.T
 	}
 }
 
+func TestSeventhReworkSandivaBrokerOwnsAuthorizationAndTheFilesystemSideEffect(t *testing.T) {
+	request := sealedRequest(t)
+	target := filepath.Join(authorizationWorkspaceHost, "hermes-build-steward", "broker.txt")
+	denied, err := executeAuthorizedTool(request, "Write", map[string]interface{}{
+		"path": "client/broker.txt", "content": "unauthorized",
+	})
+	if err != nil || denied.Disposition != "denied_before_execution" || denied.Executed {
+		t.Fatalf("unauthorized action was not a pre-execution denial: %#v %v", denied, err)
+	}
+	if _, err := os.Stat(filepath.Join(authorizationWorkspaceHost, "client", "broker.txt")); !os.IsNotExist(err) {
+		t.Fatal("denied broker action produced a filesystem side effect")
+	}
+	authorized, err := executeAuthorizedTool(request, "Write", map[string]interface{}{
+		"path": "hermes-build-steward/broker.txt", "content": "authorized",
+	})
+	if err != nil || authorized.Disposition != "authorized_and_executed" || !authorized.Executed {
+		t.Fatalf("authorized broker action did not execute truthfully: %#v %v", authorized, err)
+	}
+	if value, err := os.ReadFile(target); err != nil || string(value) != "authorized" {
+		t.Fatalf("broker did not produce the approved exact effect: %q %v", value, err)
+	}
+}
+
+func TestSeventhReworkMalformedOrUnknownBrokerRequestCannotBecomeExecution(t *testing.T) {
+	request := sealedRequest(t)
+	for name, raw := range map[string][]byte{
+		"malformed":     []byte(`{"toolName":"Write"`),
+		"unknown":       []byte(`{"toolName":"CodeMode","toolInput":{"path":"hermes-build-steward/pwned"}}`),
+		"wrong attempt": []byte(`{"taskFingerprint":"` + request.TaskFingerprint + `","attemptId":"other","sequence":1,"toolName":"Write","toolInput":{"path":"hermes-build-steward/pwned","content":"bad"}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := handleBrokerRequest(raw, request, 1)
+			if result.Disposition != "provider_runtime_failure" || result.Executed {
+				t.Fatalf("invalid broker request was representable as execution: %#v", result)
+			}
+			if _, err := os.Stat(filepath.Join(authorizationWorkspaceHost, "hermes-build-steward", "pwned")); !os.IsNotExist(err) {
+				t.Fatal("invalid broker request produced a side effect")
+			}
+		})
+	}
+}
+
 func TestMain(m *testing.M) { os.Exit(m.Run()) }

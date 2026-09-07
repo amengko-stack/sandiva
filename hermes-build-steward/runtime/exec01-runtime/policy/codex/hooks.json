@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "*",
+        "matcher": "Bash|Read|Write|Edit|Glob|Grep|LS|apply_patch|WebFetch|WebSearch|CodeMode",
         "hooks": [
           {
             "type": "command",

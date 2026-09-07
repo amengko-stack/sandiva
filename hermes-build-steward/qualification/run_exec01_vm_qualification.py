@@ -37,6 +37,9 @@ from hermes_steward.execution_runtime import BoundArtifactResolver
 from hermes_steward.codec import record_from_dict
 from hermes_steward.sharepoint_store import SharePointListStateStore
 from hermes_steward.execution_publisher import UrlLibGitHubTransport
+from hermes_steward.evidence_producers import (
+    ProducerAuthority, ProducerOccurrenceError, verify_occurrence_record,
+)
 
 
 CONTRACT_SHA256 = "527dcd77c93ffc75482ca5633469d455d83f38351c6183e67d3ca2aee88ebad0"
@@ -66,7 +69,8 @@ class TrustedEvidenceProducer:
     origin: str
     producer_identity: str
     store_identity: str
-    authentication_key: bytes
+    authentication_key: bytes | None = None
+    public_authority: ProducerAuthority | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -76,9 +80,27 @@ class TrustedEvidenceProducer:
             }
             or not isinstance(self.producer_identity, str) or "://" not in self.producer_identity
             or not isinstance(self.store_identity, str) or not self.store_identity
-            or not isinstance(self.authentication_key, bytes) or len(self.authentication_key) < 32
+            or (
+                (isinstance(self.authentication_key, bytes) and len(self.authentication_key) >= 32)
+                == (self.public_authority is not None)
+            )
         ):
             _fail("qualification trusted evidence producer policy is invalid")
+        if self.public_authority is not None and (
+            self.public_authority.evidence_type != self.evidence_type
+            or self.public_authority.origin != self.origin
+            or self.public_authority.producer_identity != self.producer_identity
+            or self.public_authority.store_identity != self.store_identity
+        ):
+            _fail("qualification public producer authority is inconsistent")
+
+    @classmethod
+    def from_public_certificate(cls, authority: ProducerAuthority) -> "TrustedEvidenceProducer":
+        return cls(
+            evidence_type=authority.evidence_type, origin=authority.origin,
+            producer_identity=authority.producer_identity, store_identity=authority.store_identity,
+            authentication_key=None, public_authority=authority,
+        )
 
 
 def attest_producer_record(value: Mapping[str, Any], key: bytes) -> dict[str, Any]:
@@ -97,7 +119,21 @@ def _validate_producer_record(
     context: Mapping[str, Any], source_identity: str,
 ) -> dict[str, Any]:
     value = json.loads(json.dumps(dict(raw)))
+    if authority.public_authority is not None:
+        try:
+            verified = verify_occurrence_record(value, authority.public_authority)
+        except ProducerOccurrenceError as error:
+            raise SystemExit(
+                "qualification evidence is asserted or unbound from authenticated trusted-producer provenance"
+            ) from error
+        if (
+            verified.get("evidenceContext") != dict(context)
+            or verified.get("sourceIdentity", verified.get("evidenceIdentity")) != source_identity
+        ):
+            _fail("qualification evidence is asserted or unbound from authenticated trusted-producer provenance")
+        return verified
     attestation = value.pop("producerAttestation", None)
+    assert authority.authentication_key is not None
     expected = hmac.new(authority.authentication_key, canonical_json(value), hashlib.sha256).hexdigest()
     if (
         value.get("origin") != authority.origin
@@ -1077,23 +1113,45 @@ def _evidence_authority_from_config(
     if not isinstance(producers, Mapping) or set(producers) != set(required):
         _fail("qualification evidence producer configuration is incomplete")
     result: dict[str, TrustedEvidenceProducer] = {}
+    # Production roles are independently credentialed. Reusing one certificate
+    # would collapse occurrence authority even if the textual role labels differ.
+    production_certificate_fingerprints: set[str] = set()
     for evidence_type, (expected_origin, expected_store) in required.items():
         value = producers[evidence_type]
-        if not isinstance(value, Mapping) or set(value) != {
-            "origin", "producerIdentity", "storeIdentity", "authenticationKeyFile",
-        }:
+        expected_fields = {
+            "origin", "producerIdentity", "storeIdentity",
+            "verificationCertificateFile" if production else "authenticationKeyFile",
+        }
+        if not isinstance(value, Mapping) or set(value) != expected_fields:
             _fail("qualification evidence producer configuration is malformed")
         if value["origin"] != expected_origin or value["storeIdentity"] != expected_store:
             _fail("qualification evidence producer does not match its authoritative store")
         if production and not str(value["producerIdentity"]).startswith("sandiva-producer://hostinger/"):
             _fail("live qualification evidence producer is not Hostinger-pinned")
-        result[evidence_type] = TrustedEvidenceProducer(
-            evidence_type=evidence_type, origin=value["origin"],
-            producer_identity=value["producerIdentity"], store_identity=value["storeIdentity"],
-            authentication_key=_read_attestation_key(str(_resolved_path(
-                base, value["authenticationKeyFile"], f"{evidence_type} producer key",
-            ))),
-        )
+        if production:
+            try:
+                public_authority = ProducerAuthority(
+                    evidence_type=evidence_type, origin=value["origin"],
+                    producer_identity=value["producerIdentity"], store_identity=value["storeIdentity"],
+                    verification_certificate_pem=_resolved_path(
+                        base, value["verificationCertificateFile"],
+                        f"{evidence_type} producer verification certificate",
+                    ).read_bytes(),
+                )
+            except (OSError, ProducerOccurrenceError) as error:
+                raise SystemExit("qualification producer public authority is invalid") from error
+            if public_authority.certificate_fingerprint in production_certificate_fingerprints:
+                _fail("qualification production evidence producers must use distinct certificates")
+            production_certificate_fingerprints.add(public_authority.certificate_fingerprint)
+            result[evidence_type] = TrustedEvidenceProducer.from_public_certificate(public_authority)
+        else:
+            result[evidence_type] = TrustedEvidenceProducer(
+                evidence_type=evidence_type, origin=value["origin"],
+                producer_identity=value["producerIdentity"], store_identity=value["storeIdentity"],
+                authentication_key=_read_attestation_key(str(_resolved_path(
+                    base, value["authenticationKeyFile"], f"{evidence_type} producer key",
+                ))),
+            )
     return result, str(accepted)
 
 

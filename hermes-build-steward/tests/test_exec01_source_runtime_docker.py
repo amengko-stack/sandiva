@@ -226,27 +226,51 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         subprocess.run(["docker","rm","-f",self.gateway],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); subprocess.run(["docker","network","rm",self.network],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         shutil.rmtree(self.workspace.parent,ignore_errors=True)
 
-    def _profile_request(self, provider, approved_commands=("sh q16-build.sh",)):
+    def _profile_request(self, provider, approved_commands=("sh q16-build.sh",), pm_instruction=PM_BYTES):
         launcher="codex" if provider=="codex" else "claude"
         attest=json.loads(subprocess.check_output(["docker","run","--rm","--network","none","--entrypoint","/opt/sandiva/bin/exec01-runtime",self.image,"attest",launcher,"synthetic-conformance-model","a"*64,self.policy_fingerprint],text=True))
-        fixed=("codex","exec","--json","--ephemeral","--strict-config","--dangerously-bypass-hook-trust","--model","synthetic-conformance-model","--sandbox","workspace-write","-") if provider=="codex" else ("claude","--print","--output-format","stream-json","--verbose","--model","synthetic-conformance-model","--permission-mode","dontAsk","--setting-sources","user","--settings","/opt/sandiva/claude/settings.json","--no-session-persistence")
+        fixed=("codex","exec","--json","--ephemeral","--strict-config","--dangerously-bypass-hook-trust","--model","synthetic-conformance-model","--sandbox","read-only","-") if provider=="codex" else ("claude","--print","--output-format","stream-json","--verbose","--model","synthetic-conformance-model","--permission-mode","dontAsk","--setting-sources","user","--settings","/opt/sandiva/claude/settings.json","--strict-mcp-config","--mcp-config","/opt/sandiva/claude/mcp.json","--allowedTools","mcp__sandiva_execution_authority__sandiva_execute","--disallowedTools","Bash,Read,Write,Edit,Glob,Grep,LS,NotebookEdit,WebFetch,WebSearch","--no-session-persistence")
         profile=ExecutorProfile(profile_id=f"{provider}-source-runtime",provider=provider,runtime_name=f"{provider}-cli",runtime_version=attest["executableVersion"],model="synthetic-conformance-model",launcher_version=attest["launcherVersion"],executable_digest=attest["executableDigest"],fixed_argv=fixed,image=self.image,credential_mode="trusted-egress-gateway",gateway_endpoint="executor-gateway.sandiva.internal:8443",allowed_endpoints=("executor-gateway.sandiva.internal:8443",),runtime_wrapper_digest=attest["runtimeWrapperDigest"],gateway_implementation_digest="a"*64,gateway_policy_digest=self.policy_fingerprint)
         task=dispatch_task(taskId=f"Q{provider.upper().replace('-','')}",baseRef=subprocess.check_output(["git","-C",str(self.workspace),"rev-parse","HEAD"],text=True).strip())
+        task["originatingPmInstructionHash"] = hashlib.sha256(pm_instruction).hexdigest()
         task["executorPolicy"]["approvedCommands"]=list(approved_commands)
         task["dispatchPolicy"].update(executorProfile={"profileId":profile.profile_id,"profileFingerprint":profile.fingerprint},permittedFallbackProfiles=[],fallbackMode="NONE")
         task=validate_dispatch_build_task(task)
         lease=type("Lease",(),{"attempt_id":f"attempt-{provider}","lease_id":f"lease-{provider}","fencing_token":1})()
-        request=normalize_execution_request(task,fingerprint(task),profile,lease,ResolvedExecutionArtifacts(PM_BYTES,SPEC_BYTES,AC_BYTES))
+        request=normalize_execution_request(task,fingerprint(task),profile,lease,ResolvedExecutionArtifacts(pm_instruction,SPEC_BYTES,AC_BYTES))
         return profile,request
 
-    def _run(self, provider, approved_commands=("sh q16-build.sh",)):
-        profile,request=self._profile_request(provider, approved_commands)
+    def _run(self, provider, approved_commands=("sh q16-build.sh",), pm_instruction=PM_BYTES):
+        profile,request=self._profile_request(provider, approved_commands, pm_instruction)
         policy=ContainmentPolicy(cpu_limit="1.0",memory_limit="128m",pids_limit=32,workspace_limit_bytes=16*1024*1024,wall_time_seconds=30,output_limit_bytes=65536,network_name=self.network,allowed_endpoints=profile.allowed_endpoints)
         job=DockerContainerJobRunner(policy,network_attestor=DockerNetworkAttestor(GatewayNetworkBinding(self.network,self.gateway,self.image,self.policy_fingerprint)))
         runner=ContainerProviderRunner(policy,self.workspace.parent/"requests",runner=job)
         adapter=CodexExecutionAdapter(profile,runner) if provider=="codex" else ClaudeCodeExecutionAdapter(profile,runner)
         result=adapter.execute(request,self.workspace.as_posix()); changes=PrepublicationInspector().inspect(str(self.workspace),request)
         return request,result,changes
+
+    def test_seventh_rework_provider_hook_bypass_crash_timeout_and_unknown_surfaces_fail_closed(self):
+        baseline = self._sixth_workspace_state()
+        cases = (
+            "SEVENTH_NO_BROKER_SUCCESS",  # hook absent, crashed, timed out, spawn failed, or malformed
+            "SEVENTH_DIRECT_SURFACE",     # direct file/process and exec_command-equivalent attempt
+            "SEVENTH_UNKNOWN_SURFACE",    # Code Mode/new or unknown tool surface
+        )
+        for marker in cases:
+            for provider in ("codex", "claude-code"):
+                with self.subTest(marker=marker, provider=provider):
+                    _, result, changes = self._run(
+                        provider, approved_commands=("true",),
+                        pm_instruction=(marker + "\n").encode(),
+                    )
+                    self.assertEqual(result["disposition"], "EXECUTION_FAILED")
+                    self.assertEqual(result["failureClassification"], "INTERNAL_ERROR")
+                    self.assertEqual(result["commandsExecuted"], [])
+                    self.assertEqual(changes.changed_paths, ())
+                    self.assertEqual(self._sixth_workspace_state(), baseline)
+                    self.assertFalse((self.workspace/"hermes-build-steward"/"SEVENTH-BYPASS").exists())
+                    self.assertFalse((self.workspace/"hermes-build-steward"/"SEVENTH-PROCESS").exists())
+                    self.assertFalse((self.workspace/"hermes-build-steward"/"SEVENTH-CODE-MODE").exists())
 
     def _sixth_hook(self, provider, tool, tool_input, *, raw=None, request_payload=None):
         _, request = self._profile_request(provider)
@@ -475,11 +499,14 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             fixed = (
                 ("codex", "exec", "--json", "--ephemeral", "--strict-config",
                  "--dangerously-bypass-hook-trust", "--model", "synthetic-conformance-model",
-                 "--sandbox", "workspace-write", "-")
+                 "--sandbox", "read-only", "-")
                 if provider == "codex" else
                 ("claude", "--print", "--output-format", "stream-json", "--verbose", "--model",
                  "synthetic-conformance-model", "--permission-mode", "dontAsk", "--setting-sources",
-                 "user", "--settings", "/opt/sandiva/claude/settings.json", "--no-session-persistence")
+                 "user", "--settings", "/opt/sandiva/claude/settings.json", "--strict-mcp-config",
+                 "--mcp-config", "/opt/sandiva/claude/mcp.json", "--allowedTools",
+                 "mcp__sandiva_execution_authority__sandiva_execute", "--disallowedTools",
+                 "Bash,Read,Write,Edit,Glob,Grep,LS,NotebookEdit,WebFetch,WebSearch", "--no-session-persistence")
             )
             profile = ExecutorProfile(
                 profile_id=policy["profileId"], provider=provider,
