@@ -32,7 +32,7 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-22 | result acceptance fixed to `NOT_EVALUATED`; Hermes evidence separately acquired and PASS-only for qualification | Q10–Q12; hostile 28; Hermes F/G regression | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests and its dedicated workflow | 983/983 application regression; scoped diff inspection | PASS |
-| AC-25 | accepted Hermes behavior retained | complete 231-test Hermes/EXEC run; includes A–X, F1–F7, G1–G9, HA-01–HA-10, qualification regression and mandatory Linux/Docker runtime fixtures | PASS locally and in current-head Linux CI |
+| AC-25 | accepted Hermes behavior retained | complete 244-test Hermes/EXEC run; includes A–X, F1–F7, G1–G9, HA-01–HA-10, qualification regression and mandatory Linux/Docker runtime fixtures | PASS locally and in current-head Linux CI |
 | AC-26 | application/type/build/CI | 983/983 application tests; TypeScript and production build pass; current-head GitHub workflow requires Go and a working Docker daemon | PASS locally and in current-head GitHub checks |
 | AC-27 | `build_execution_audit_record`; observed profile, durable fallback and strict publication-attempt provenance | Q7–Q9, Q13, Q20, Q25–Q26; end-to-end provenance tests | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-28 | runnable trusted collect/verify modes; authoritative execution/result/audit/probe and repository-scoped GitHub metadata readback; Hermes PASS mandatory | Q10–Q14, Q17–Q20; actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED / NOT AUTHORIZED |
@@ -81,7 +81,7 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | Q21 | canonical gateway manifest/profile/policy mismatch matrix | PASS: startup fails closed |
 | Q22 | arbitrary upstream scheme/host/path/query/fragment and redirect | PASS: denied |
 | Q23 | reflected credential in success or error response | PASS: body discarded; generic denial contains no sentinel |
-| Q24 | source runtime to source gateway serve mode to isolated upstream emulator | Mandatory Linux/Docker CI fixture |
+| Q24 | source runtime to source gateway serve mode to isolated upstream emulator | PASS in Linux/Docker CI for Codex and Claude; direct upstream route and credential-reflection/replay/cross-identity probes denied |
 | Q25 | restart after durable primary unavailability before fallback lease | PASS: exact pending fallback claimed |
 | Q26 | duplicate dispatch during fallback recovery | PASS: no primary replay or competing attempt |
 | Q27 | contradictory/multiple/missing terminal events and unknown failure | PASS in Go: malformed/internal classification; no fallback signal |
