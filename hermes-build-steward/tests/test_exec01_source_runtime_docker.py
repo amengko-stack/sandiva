@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import uuid
@@ -24,6 +25,27 @@ from test_execution_task_contract import dispatch_task
 class SourceControlledRuntimeDockerTests(unittest.TestCase):
     @staticmethod
     def _reproducible_build(tag, dockerfile, context, build_args):
+        context_archive = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
+        context_archive.close()
+        try:
+            with tarfile.open(context_archive.name, "w", format=tarfile.GNU_FORMAT) as archive:
+                for path in sorted(context.rglob("*")):
+                    relative = path.relative_to(context)
+                    if "__pycache__" in relative.parts or path.suffix in {".pyc", ".pyo"}:
+                        continue
+                    info = archive.gettarinfo(str(path), arcname=relative.as_posix())
+                    info.mtime = 1704067200
+                    info.uid = info.gid = 0
+                    info.uname = info.gname = ""
+                    if info.isfile():
+                        with path.open("rb") as source:
+                            archive.addfile(info, source)
+                    else:
+                        archive.addfile(info)
+            context_input = open(context_archive.name, "rb")
+        except Exception:
+            Path(context_archive.name).unlink(missing_ok=True)
+            raise
         command = [
             "docker", "buildx", "build", "--pull=false", "--no-cache", "--provenance=false",
             "--build-arg", "SOURCE_DATE_EPOCH=1704067200",
@@ -32,9 +54,13 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             command.extend(("--build-arg", f"{key}={value}"))
         command.extend((
             "--output", f"type=docker,name={tag},rewrite-timestamp=true",
-            "-f", str(dockerfile), str(context),
+            "-f", str(dockerfile), "-",
         ))
-        subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+        try:
+            subprocess.run(command, check=True, stdin=context_input, stdout=subprocess.DEVNULL)
+        finally:
+            context_input.close()
+            Path(context_archive.name).unlink(missing_ok=True)
         return subprocess.check_output(
             ["docker", "image", "inspect", tag, "--format", "{{.Id}}"], text=True
         ).strip()
