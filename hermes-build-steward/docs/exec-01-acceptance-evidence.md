@@ -11,8 +11,8 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-01 | `contracts.py`, `codec.py`, `sharepoint_store.py`; canonical task v2 schema | Q28–Q31; v1/v2 task tests; R1 production dispatch; hostile 01–03, 05 | PASS in builder code QA; pending independent QA |
 | AC-02 | `execution_adapters.py` | adapter conformance tests | PASS |
 | AC-03 | `ExecutorProfileRegistry`, `DockerExecutorProfileAttestor`; wrapper/executable/image/gateway identity bound into the profile | Q7; profile tests; hostile 04–05 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
-| AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified PM/spec/contract content plus scope, criteria, evaluation, QA, command authority and policy envelope; sealed request drives immutable provider hooks and exact path authority | Q1, Q40–Q41; S1–S20; Go scope-policy tests; real-runtime sentinel fixtures; hostile 06 | PASS in builder code QA; pending independent QA |
-| AC-05 | `validate_execution_result`; full result schema independently reapplied by the qualification collector; unauthorized commands are denied before invocation and any post-hoc defensive observation remains truthfully recorded | Q19–Q20, Q40–Q41; Go command-observation assertions; Codex/Claude normalization; hostile 27–28 | PASS in builder code QA; pending independent QA |
+| AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified content/authority; separately running Sandiva action broker owns all repository effects; provider process tree has no `/workspace` access | Q1, Q40–Q41; S1–S20; seventh-rework no-broker/direct/unknown-surface Docker sentinels; hostile 06 | PASS in builder code QA; pending independent QA |
+| AC-05 | `validate_execution_result`; full result schema independently reapplied; executed/denied/runtime-failure evidence comes from the protected broker ledger, not provider assertions; terminal success without an occurrence fails | Q19–Q20, Q40–Q41; Go broker tests; Codex/Claude normalization; hostile 27–28 | PASS in builder code QA; pending independent QA |
 | AC-06 | `ProductionExecutionService`, `WorkspaceFactory` | R1 real service dispatch, trusted-origin clone, exact-base/reuse/cleanup tests | PASS |
 | AC-07 | source-controlled `exec01-gateway`; task/attempt/profile-bound capability; raw credentials exist only in provider-specific trusted proxies; reflected secrets discarded across bounded streams | Q3, Q15, Q21–Q24, Q37–Q39, Q42; hostile 11; Linux R2 | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI |
 | AC-08 | no-mount executor runtime; preserved trusted Git metadata; hook/config-denying publisher | publisher hook/URL-rewrite probe; hostile 12–15; Linux R2 | PASS; CURRENT-HEAD LINUX CI PASS |
@@ -25,16 +25,16 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-15 | authority callback at privileged checkpoints | stale-fence tests; hostile 21 | PASS |
 | AC-16 | `ExecutionCoordinator` staged recovery plus durable pending/active fallback identity and expired-attempt reconciliation | Q25–Q26, Q32–Q36 and seven fallback crash boundaries; eight-case recovery matrix; hostile 22–24 | PASS in builder code QA; pending independent QA |
 | AC-17 | immutable max-attempt enforcement | recovery retry test | PASS |
-| AC-18 | source-controlled `exec01-runtime`; fixed Codex CLI argv/config; immutable Codex `PreToolUse` authorization for commands and all supported path tools; explicit finite-state Codex JSONL parser; bounded streaming gateway transport | Q2, Q4, Q6, Q16, Q24, Q27, Q37, Q39–Q40; S1–S20; Go authorization/protocol tests; Linux sentinel fixtures | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
-| AC-19 | source-controlled `exec01-runtime`; fixed Claude Code CLI argv/settings/config root; immutable Claude `PreToolUse` authorization for commands and all supported path tools; explicit finite-state stream-JSON parser; bounded streaming gateway transport | Q2, Q5, Q6, Q16, Q24, Q27, Q38–Q39, Q41; S1–S20; Go authorization/protocol tests; Linux sentinel fixtures | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
-| AC-20 | stable provider-neutral adapter/result contract; contradictory/missing terminals and raw Responses/Messages objects rejected; every provider-selected command/path tool requires sealed task-bound authorization before invocation | Q4–Q6, Q19, Q24, Q27, Q37–Q41; S1–S20; cross-adapter synthetic equivalence; pre-execution sentinel | PASS in builder code QA; pending independent QA |
+| AC-18 | source-controlled `exec01-runtime`; fixed Codex CLI/MCP profile; Linux Landlock denies provider workspace/arbitrary-executable access; broker owns exact actions; explicit Codex JSONL FSM | Q2, Q4, Q6, Q16, Q24, Q27, Q37, Q39–Q40; S1–S20; Go broker/protocol tests; seventh Linux bypass fixtures | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
+| AC-19 | source-controlled `exec01-runtime`; fixed Claude CLI/MCP profile with built-ins denied; same OS/broker boundary; explicit Claude stream-JSON FSM | Q2, Q5, Q6, Q16, Q24, Q27, Q38–Q39, Q41; S1–S20; Go broker/protocol tests; seventh Linux bypass fixtures | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI; external backend deferred to AC-28 |
+| AC-20 | stable provider-neutral adapter/result contract; contradictory/missing terminals and raw API objects rejected; broker occurrence is mandatory and coordinator-owned | Q4–Q6, Q19, Q24, Q27, Q37–Q41; S1–S20; cross-adapter equivalence; no-broker/direct/unknown-surface sentinels | PASS in builder code QA; pending independent QA |
 | AC-21 | durable trusted primary-unavailability, pending/selected fallback transitions and fresh lease/fence/attempt | Q8–Q9, Q25–Q27, Q32–Q36; fallback crash/no-downgrade tests; hostile 29 | PASS in builder code QA; pending independent QA |
-| AC-22 | result acceptance fixed to `NOT_EVALUATED`; complete criterion-authorized Hermes evidence separately acquired, trusted-producer authenticated, exact origin-policy pinned, support-resolved, exact-selected-profile bound and PASS-only | Q10–Q12, Q31, Q42; fifth/sixth provenance adversarial suites including bidirectional cross-profile substitution; hostile 28; Hermes F/G regression | PASS in builder code QA; pending independent QA |
+| AC-22 | result acceptance fixed to `NOT_EVALUATED`; complete criterion-authorized Hermes evidence is created only by the independent PFX occurrence producer, separately acquired, exact-policy/support/profile bound and PASS-only | Q10–Q12, Q31, Q42; fifth/sixth provenance plus seventh PFX suites; hostile 28; Hermes F/G regression | PASS in builder code QA; pending independent QA |
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests and its dedicated workflow | 983/983 application regression; scoped diff inspection | PASS |
 | AC-25 | accepted Hermes behavior retained | complete 280-test Hermes/EXEC run (13 Linux/Docker skips on Windows); includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS in local builder code QA; exact-head Linux/Docker CI pending |
 | AC-26 | application/type/build/CI | 983/983 application tests; application and legacy-root TypeScript and production builds pass | PASS locally; exact-head GitHub checks pending |
-| AC-27 | `build_execution_audit_record`; versioned task, observed profile, durable fallback, pre-tool command/path authority, strict publication-attempt provenance, authenticated evidence producer/store/source identities and exact run/head/type/authoritative-selected-profile linkage | Q7–Q9, Q13, Q20, Q25–Q36, Q40–Q42; S1–S20; bidirectional cross-profile provenance fixture; end-to-end provenance tests | PASS in builder code QA; pending independent QA |
+| AC-27 | `build_execution_audit_record`; protected broker action ledger; versioned task/profile/fallback/publication provenance; three distinct PFX-authenticated occurrence producers; exact run/head/type/attempt/selected-profile linkage | Q7–Q9, Q13, Q20, Q25–Q42; S1–S20; seventh bypass and PFX occurrence suites | PASS in builder code QA; pending independent QA |
 | AC-28 | runnable trusted collect/verify modes; authoritative execution/result/audit/probe and repository-scoped GitHub metadata readback; Hermes PASS mandatory | Q10–Q14, Q17–Q20, Q31, Q42; actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED / BLOCKED / NOT AUTHORIZED |
 
 ## R1–R8 rework regressions
@@ -161,6 +161,31 @@ cannot substitute for each other in either direction. The earlier fabricated-evi
 support-resolution, origin-policy, source/store/producer, run/head/task/attempt/provider,
 executor-origin, mutation and duplicate-identity denials remain regression-covered.
 AC-28 remains `NOT EXECUTED / NOT AUTHORIZED / BLOCKED`.
+
+## Seventh technical closure
+
+The provider hook is no longer an execution authority. Before either pinned
+provider starts, the wrapper forks a Sandiva-owned action broker with the sealed
+request and then applies an irreversible Linux Landlock ruleset to itself and its
+provider descendants. The provider has no access to `/workspace`, cannot execute
+workspace/scratch content, and can execute only the exact attested provider and
+runtime wrapper. Repository actions cross the task/attempt/sequence-bound MCP
+channel; the broker authorizes and performs each action and records whether it was
+denied before execution, actually executed, or failed in the runtime. An absent,
+crashed, timed-out, malformed or skipped hook therefore cannot grant an effect.
+A clean provider terminal with no protected broker occurrence is normalized as an
+internal failure.
+
+Qualification occurrence evidence is likewise no longer creatable by the
+collector's validation secret. Source-controlled containment, qualification-check
+and independent-Hermes producer implementations each perform their own observer or
+evaluator, sign the occurrence with a separately deployed PFX, and write through a
+separately scoped SharePoint credential. Production collection loads three distinct
+public certificates only. The PFX adversarial suite proves missing occurrences stay
+missing, role credentials cannot cross-sign, a plausible manually staged row cannot
+verify, crashes write nothing, and duplicate/restart production reuses one authenticated
+occurrence. The existing exact-profile and supporting-evidence checks run after this
+producer-origin proof. AC-28 remains `NOT EXECUTED / NOT AUTHORIZED / BLOCKED`.
 
 ### Sixth-rework scope fixtures
 

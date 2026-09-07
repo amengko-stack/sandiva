@@ -46,6 +46,9 @@ def pfx_identity(root: Path, name: str, evidence_type: str, store_identity: str)
         name.encode(), key, certificate, None,
         serialization.BestAvailableEncryption(password),
     ))
+    # Production rejects group/world-readable private-key containers. Match the
+    # deployment invariant in this synthetic Linux identity as well.
+    pfx_path.chmod(0o600)
     certificate_pem = certificate.public_bytes(serialization.Encoding.PEM)
     authority = ProducerAuthority(
         evidence_type=evidence_type,
