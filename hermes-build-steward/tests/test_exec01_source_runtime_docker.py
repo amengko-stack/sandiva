@@ -73,6 +73,13 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             "rootfs": inspected.get("RootFS"),
             "history": inspected.get("History"),
             "config": inspected.get("Config"),
+            "fileHashes": subprocess.check_output(
+                [
+                    "docker", "run", "--rm", "--entrypoint", "sha256sum", image,
+                    "/opt/sandiva/bin/exec01-runtime", "/opt/sandiva/bin/codex", "/opt/sandiva/bin/claude",
+                ],
+                text=True,
+            ).splitlines(),
         }
 
     @classmethod
