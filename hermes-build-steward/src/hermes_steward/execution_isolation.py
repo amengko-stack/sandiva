@@ -753,6 +753,11 @@ class ContainerProviderRunner:
                 "completedAt": "1970-01-01T00:00:00Z", "commandsExecuted": [], "testOutcomes": [],
                 "changedPaths": [], "patchDigest": None, "evidenceReferences": [], "errorType": failure_type,
             }
+        if outcome.return_code != 0:
+            diagnostic = outcome.stderr.decode("utf-8", errors="replace")[:256].strip()
+            raise WorkspaceError(
+                f"source-controlled provider wrapper exited {outcome.return_code}: {diagnostic}"
+            )
         try:
             raw = json.loads(outcome.stdout.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
