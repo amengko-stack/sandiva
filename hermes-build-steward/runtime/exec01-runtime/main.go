@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	pathpkg "path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -1556,6 +1557,12 @@ func executeProvider(args []string) error {
 	if err := os.Truncate(denialMarker, 0); err != nil {
 		return err
 	}
+	// Landlock attaches to the calling Linux thread's credentials. A Go
+	// process is multi-threaded, so keep this goroutine on the restricted OS
+	// thread through provider fork/exec and all post-run provenance reads.
+	// Unlocking would let an unrelated goroutine reuse a differently confined
+	// thread and would make inheritance nondeterministic.
+	runtime.LockOSThread()
 	if err := restrictProviderFilesystem(launcher); err != nil {
 		return fmt.Errorf("Sandiva provider confinement failed closed: %w", err)
 	}

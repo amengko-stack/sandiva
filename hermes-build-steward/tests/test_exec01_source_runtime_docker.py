@@ -254,6 +254,8 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         cases = (
             "SEVENTH_NO_BROKER_SUCCESS",  # hook absent, crashed, timed out, spawn failed, or malformed
             "SEVENTH_DIRECT_SURFACE",     # direct file/process and exec_command-equivalent attempt
+            "SEVENTH_DIRECT_SURFACE",     # repeat to catch Go OS-thread confinement inheritance drift
+            "SEVENTH_DIRECT_SURFACE",
             "SEVENTH_UNKNOWN_SURFACE",    # Code Mode/new or unknown tool surface
         )
         for marker in cases:
