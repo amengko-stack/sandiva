@@ -54,7 +54,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             command.extend(("--build-arg", f"{key}={value}"))
         command.extend((
             "--output", f"type=docker,name={tag},rewrite-timestamp=true",
-            "-f", str(dockerfile), "-",
+            "-f", dockerfile.relative_to(context).as_posix(), "-",
         ))
         try:
             subprocess.run(command, check=True, stdin=context_input, stdout=subprocess.DEVNULL)

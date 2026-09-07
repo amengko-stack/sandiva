@@ -12,5 +12,5 @@ tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner \
 docker buildx build --pull=false --provenance=false \
   --build-arg "SOURCE_DATE_EPOCH=$epoch" --build-arg "PYTHON_IMAGE=$1" \
   --output "type=docker,name=$tag,rewrite-timestamp=true" \
-  -f "$root/runtime/executor-gateway/Dockerfile" - < "$archive"
+  -f runtime/executor-gateway/Dockerfile - < "$archive"
 docker image inspect "$tag" --format '{{.Id}}'

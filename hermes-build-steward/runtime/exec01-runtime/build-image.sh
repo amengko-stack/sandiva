@@ -14,5 +14,5 @@ docker buildx build --pull=false --provenance=false \
   --build-arg "SOURCE_DATE_EPOCH=$epoch" \
   --build-arg "BUILD_IMAGE=$1" --build-arg "EXECUTOR_IMAGE=$2" \
   --output "type=docker,name=$tag,rewrite-timestamp=true" \
-  -f "$context/Dockerfile" - < "$archive"
+  -f Dockerfile - < "$archive"
 docker image inspect "$tag" --format '{{.Id}}'
