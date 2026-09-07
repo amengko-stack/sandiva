@@ -62,7 +62,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             {"BUILD_IMAGE": build_image, "RUNTIME_IMAGE": runtime_image},
         )
         if repeated_runtime != cls.image:
-            raise RuntimeError("runtime image build is not reproducible")
+            raise RuntimeError(f"runtime image build is not reproducible: {cls.image} != {repeated_runtime}")
         if not cls.image.startswith("sha256:"): raise RuntimeError("runtime image is not content-addressed")
         print(f"EXEC01_CODE_QA_RUNTIME_IMAGE={cls.image}")
         repository = Path(__file__).parents[1]
@@ -79,7 +79,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             {"PYTHON_IMAGE": python_image},
         )
         if repeated_gateway != cls.gateway_image:
-            raise RuntimeError("gateway image build is not reproducible")
+            raise RuntimeError(f"gateway image build is not reproducible: {cls.gateway_image} != {repeated_gateway}")
         if not cls.gateway_image.startswith("sha256:"): raise RuntimeError("gateway image is not content-addressed")
         print(f"EXEC01_CODE_QA_GATEWAY_IMAGE={cls.gateway_image}")
 
