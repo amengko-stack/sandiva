@@ -28,6 +28,41 @@ from test_execution_task_contract import dispatch_task
 @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("docker") and shutil.which("go"), "requires Linux Docker and Go")
 class SourceControlledRuntimeDockerTests(unittest.TestCase):
     @staticmethod
+    def _image_file_metadata(image: str, targets: tuple[str, ...]) -> dict[str, tuple[int, int, int]]:
+        """Read immutable image-layer metadata without requiring tools in the image."""
+        container = subprocess.check_output(["docker", "create", image], text=True).strip()
+        try:
+            process = subprocess.Popen(["docker", "export", container], stdout=subprocess.PIPE)
+            assert process.stdout is not None
+            wanted = {target.lstrip("/"): target for target in targets}
+            observed: dict[str, tuple[int, int, int]] = {}
+            with tarfile.open(fileobj=process.stdout, mode="r|*") as archive:
+                for member in archive:
+                    normalized = member.name.lstrip("./")
+                    if normalized in wanted:
+                        observed[wanted[normalized]] = (member.mode, member.uid, member.gid)
+            if process.wait() != 0:
+                raise AssertionError("docker export failed")
+            return observed
+        finally:
+            subprocess.run(["docker", "rm", "-f", container], check=False, stdout=subprocess.DEVNULL)
+
+    @staticmethod
+    def _build_write_probe(directory: Path) -> Path:
+        source = directory / "write-probe.go"
+        binary = directory / "write-probe"
+        source.write_text(
+            'package main\nimport ("os")\nfunc main(){'
+            'if len(os.Args)!=2 { os.Exit(2) }; '
+            'if err:=os.WriteFile(os.Args[1],[]byte("attacker"),0600); err!=nil { os.Exit(23) }'
+            '}\n'
+        )
+        environment = dict(os.environ)
+        environment["CGO_ENABLED"] = "0"
+        subprocess.run(["go", "build", "-trimpath", "-o", str(binary), str(source)], check=True, env=environment)
+        return binary
+
+    @staticmethod
     def _reproducible_build(tag, dockerfile, context, build_args):
         context_archive = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
         context_archive.close()
@@ -295,17 +330,20 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                     self.assertEqual(self._sixth_workspace_state(), baseline)
 
     def test_sixth_rework_s15_s17_mandatory_hook_and_provider_configuration_are_immutable(self):
-        for target in ("/opt/sandiva/codex/hooks.json", "/opt/sandiva/claude/settings.json", "/opt/sandiva/bin/exec01-runtime"):
-            mode = subprocess.check_output([
-                "docker", "run", "--rm", "--network", "none", "--entrypoint", "stat",
-                self.image, "-c", "%a:%u:%g", target,
-            ], text=True).strip()
-            self.assertIn(mode.split(":")[0], {"444", "555"})
-            overwrite = subprocess.run([
-                "docker", "run", "--rm", "--network", "none", "--read-only", "--user", "65532:65532",
-                "--entrypoint", "/bin/sh", self.image, "-c", f"printf attacker > {target}",
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self.assertNotEqual(overwrite.returncode, 0)
+        targets = ("/opt/sandiva/codex/hooks.json", "/opt/sandiva/claude/settings.json", "/opt/sandiva/bin/exec01-runtime")
+        metadata = self._image_file_metadata(self.image, targets)
+        self.assertEqual(set(metadata), set(targets))
+        with tempfile.TemporaryDirectory() as probe_directory:
+            probe = self._build_write_probe(Path(probe_directory))
+            for target in targets:
+                mode, _, _ = metadata[target]
+                self.assertIn(mode, {0o444, 0o555})
+                overwrite = subprocess.run([
+                    "docker", "run", "--rm", "--network", "none", "--read-only", "--user", "65532:65532",
+                    "--mount", f"type=bind,src={probe},dst=/write-probe,readonly",
+                    "--entrypoint", "/write-probe", self.image, target,
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                self.assertEqual(overwrite.returncode, 23)
 
         # S16: writable workspace settings cannot replace immutable CODEX_HOME /
         # CLAUDE_CONFIG_DIR policy. S17: even direct alternate launcher use in
