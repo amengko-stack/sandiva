@@ -614,10 +614,10 @@ func executeProvider(args []string) error {
 	}
 	if _, markerErr := os.Stat(denialMarker); markerErr == nil {
 		if args[0] == "codex" {
-			result.Status = "failed"
+			result.Status = "blocked"
 			result.ErrorType = "policy_denied"
 		} else {
-			result.StopReason = "error"
+			result.StopReason = "blocked"
 			result.ErrorTypeC = "policy_denied"
 		}
 	} else if !errors.Is(markerErr, os.ErrNotExist) {
