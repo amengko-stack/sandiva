@@ -420,9 +420,10 @@ func attest(args []string) error {
 	if len(args) != 4 || (args[0] != "codex" && args[0] != "claude") {
 		return errors.New("attestation arguments are invalid")
 	}
-	launcher, err := exec.LookPath(args[0])
-	if err != nil {
-		return err
+	launcher := filepath.Join("/opt/sandiva/bin", args[0])
+	info, err := os.Stat(launcher)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+		return errors.New("executor launcher identity is unavailable")
 	}
 	executableDigest, err := fileDigest(launcher)
 	if err != nil {
