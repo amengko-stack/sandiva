@@ -456,6 +456,7 @@ class ThirdReworkQualificationTests(unittest.TestCase):
         try:
             profiles_path=root/"profiles.json"; profiles_path.write_text(json.dumps({k:v.as_dict() for k,v in profiles.items()}))
             key_path=root/"attestation.key"; key_path.write_bytes(b"q17-authoritative-attestation-key-material")
+            key_path.chmod(0o600)
             (root/"pm.md").write_bytes(PM_BYTES); (root/"spec.md").write_bytes(SPEC_BYTES); (root/"contract.md").write_bytes(AC_BYTES)
             self._write_store(root/"task.json", [collector.task_store.get("task")], first_key="task")
             self._write_store(root/"executions.json", collector.execution_store.list_records(), execution_record_to_dict)
