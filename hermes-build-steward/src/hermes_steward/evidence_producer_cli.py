@@ -20,6 +20,12 @@ _ROLE_ENVIRONMENTS = {
     "qualification-check": ("EXEC01_CHECK_PFX_PASSWORD", "EXEC01_CHECK_STORE_TOKEN"),
     "hermes-result": ("EXEC01_HERMES_PFX_PASSWORD", "EXEC01_HERMES_STORE_TOKEN"),
 }
+_QUALIFICATION_CHECKS = {
+    "codexSyntheticDispatch", "claudeSyntheticDispatch", "providerCredentialIsolation",
+    "controlPlaneCredentialIsolation", "networkContainment", "scopePathEnforcement",
+    "timeoutTermination", "crashRecovery", "duplicateDispatch", "staleFenceDenial",
+    "trustedPublisher", "normalizedBuildResult", "hermesIndependentVerification",
+}
 
 
 def _closed(value: Any, fields: set[str], name: str) -> Mapping[str, Any]:
@@ -107,13 +113,21 @@ def build_producer(config_path: Path):
         record_encoder=lambda value: dict(value), record_decoder=lambda value: dict(value),
         status_getter=lambda value: "OCCURRENCE_PERSISTED",
     )
-    observer = _command_observer(raw["observer"])
     if role == "containment-probe":
-        return ContainmentProbeProducer(authority, signer, store, observer=observer)
+        return ContainmentProbeProducer(authority, signer, store, observer=_command_observer(raw["observer"]))
     if role == "qualification-check":
-        return QualificationCheckProducer(authority, signer, store, checkers={"production": observer})
+        observers = raw["observer"]
+        if not isinstance(observers, Mapping) or set(observers) != _QUALIFICATION_CHECKS:
+            raise ProducerOccurrenceError("qualification producer requires every exact independent check")
+        return QualificationCheckProducer(
+            authority, signer, store,
+            checkers={name: _command_observer(value) for name, value in observers.items()},
+        )
     origin_policy = os.environ.get("EXEC01_HERMES_ORIGIN_POLICY_FINGERPRINT", "")
-    return HermesResultProducer(authority, signer, store, evaluator=observer, origin_policy_fingerprint=origin_policy)
+    return HermesResultProducer(
+        authority, signer, store, evaluator=_command_observer(raw["observer"]),
+        origin_policy_fingerprint=origin_policy,
+    )
 
 
 def main() -> int:

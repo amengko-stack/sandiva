@@ -4,8 +4,8 @@ ARG EXECUTOR_IMAGE
 FROM ${BUILD_IMAGE} AS build
 ARG SOURCE_DATE_EPOCH
 WORKDIR /src
-COPY go.mod main.go ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /out/exec01-runtime ./main.go \
+COPY go.mod main.go sandbox_linux.go sandbox_other.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /out/exec01-runtime . \
  && touch -d "@${SOURCE_DATE_EPOCH}" /out /out/exec01-runtime
 
 FROM ${EXECUTOR_IMAGE}

@@ -4,9 +4,9 @@ ARG RUNTIME_IMAGE
 FROM ${BUILD_IMAGE} AS build
 ARG SOURCE_DATE_EPOCH
 WORKDIR /src
-COPY go.mod main.go ./
+COPY go.mod main.go sandbox_linux.go sandbox_other.go ./
 COPY emulator ./emulator
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /out/exec01-runtime ./main.go \
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /out/exec01-runtime . \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /out/provider-emulator ./emulator/main.go \
  && cp /out/provider-emulator /out/codex \
  && mv /out/provider-emulator /out/claude \
