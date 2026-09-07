@@ -68,6 +68,28 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
     @staticmethod
     def _image_identity_fields(image):
         inspected = json.loads(subprocess.check_output(["docker", "image", "inspect", image], text=True))[0]
+        saved = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
+        saved.close()
+        try:
+            subprocess.run(["docker", "save", "-o", saved.name, image], check=True)
+            with tarfile.open(saved.name, "r") as outer:
+                manifest = json.loads(outer.extractfile("manifest.json").read())[0]
+                layer_file = outer.extractfile(manifest["Layers"][-1])
+                with tarfile.open(fileobj=layer_file, mode="r") as layer:
+                    layer_entries = [
+                        {
+                            "name": item.name,
+                            "mode": item.mode,
+                            "uid": item.uid,
+                            "gid": item.gid,
+                            "mtime": item.mtime,
+                            "size": item.size,
+                            "pax": item.pax_headers,
+                        }
+                        for item in layer
+                    ]
+        finally:
+            Path(saved.name).unlink(missing_ok=True)
         return {
             "created": inspected.get("Created"),
             "rootfs": inspected.get("RootFS"),
@@ -80,6 +102,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
                 ],
                 text=True,
             ).splitlines(),
+            "lastLayerEntries": layer_entries,
         }
 
     @classmethod
