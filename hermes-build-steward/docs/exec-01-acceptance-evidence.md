@@ -85,7 +85,7 @@ Observed locally on the authorized branch during post-QA rework:
 - TypeScript: `npx.cmd tsc --noEmit` passed;
 - production build: Next.js 14.2.35 compiled, typechecked and generated 65/65 static pages;
 - Python: compileall passed; all five JSON schemas and the production example parsed;
-- package: `sandiva_hermes_build_steward-0.2.0-py3-none-any.whl` built, SHA-256 `fe4523573f4015ad095153942c8aff6441a5b7aa2487cd88895a2c4a132c6386`;
+- package: `sandiva_hermes_build_steward-0.2.0-py3-none-any.whl` built successfully (wheel archive timestamps are build-local and are not asserted as a canonical artifact identity);
 - diff hygiene: `git diff --check` passed (line-ending notices only).
 
 GitHub Actions run `34081768388` completed successfully with all 231 tests passing on Linux/Docker. With cache disabled, it independently built each code-QA image twice and required identical image IDs: runtime image `sha256:ec72008d2356834c39fc012ddf1153707c77d794b7a654e82516a35abe1ce5ee` and gateway image `sha256:a45dceeef7cf07243de1740583179a364d0bf02317b72470a518fe9fe99f8148`. The workflow explicitly installs Go and asserts a working Docker daemon before discovery, so R2–R4 cannot be silently skipped there. The `sln-litigation-drafter` check remains the authoritative CI readback for the application suite. Vercel, if triggered by the draft PR, is a non-production preview only and is not production deployment or activation.
