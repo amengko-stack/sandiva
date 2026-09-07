@@ -251,6 +251,8 @@ def build_execution_audit_record(
             "profileId": request.executor_profile_id,
             "profileFingerprint": request.executor_profile_fingerprint,
             "provider": request.executor_provider,
+            "observedIdentity": json.loads(request.observed_executor_identity_json),
+            "fallbackContext": json.loads(request.fallback_context_json),
         },
         "attempt": {
             "attemptId": request.attempt_id,

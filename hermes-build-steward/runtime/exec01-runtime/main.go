@@ -1,0 +1,475 @@
+package main
+
+import (
+	"archive/tar"
+	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const workspace = "/workspace"
+const outputLimit = 4 * 1024 * 1024
+const launcherVersion = "exec01-runtime-v1.0.0"
+
+type requestEnvelope struct {
+	TaskID                      string                 `json:"taskId"`
+	TaskFingerprint             string                 `json:"taskFingerprint"`
+	AttemptID                   string                 `json:"attemptId"`
+	ExecutionContent            map[string]interface{} `json:"executionContent"`
+	ExecutionContentFingerprint string                 `json:"executionContentFingerprint"`
+	ApprovedCommands            []string               `json:"approvedCommands"`
+}
+
+type observation struct {
+	Protocol      string                   `json:"protocol"`
+	Status        string                   `json:"status"`
+	StopReason    string                   `json:"stop_reason"`
+	StartedAt     string                   `json:"started_at"`
+	CompletedAt   string                   `json:"completed_at"`
+	StartedAtC    string                   `json:"startedAt"`
+	CompletedAtC  string                   `json:"completedAt"`
+	Commands      []string                 `json:"commands"`
+	CommandsC     []string                 `json:"commandsExecuted"`
+	Tests         []map[string]interface{} `json:"tests"`
+	TestsC        []map[string]interface{} `json:"testOutcomes"`
+	ChangedPaths  []string                 `json:"changed_paths"`
+	ChangedPathsC []string                 `json:"changedPaths"`
+	PatchDigest   interface{}              `json:"patch_digest"`
+	PatchDigestC  interface{}              `json:"patchDigest"`
+	LogRefs       []string                 `json:"log_refs"`
+	EvidenceRefs  []string                 `json:"evidenceReferences"`
+	ErrorType     string                   `json:"error_type"`
+	ErrorTypeC    string                   `json:"errorType"`
+	ThreadID      string                   `json:"thread_id,omitempty"`
+	SessionID     string                   `json:"session_id,omitempty"`
+	Turns         int                      `json:"num_turns,omitempty"`
+}
+
+type boundedBuffer struct {
+	buffer bytes.Buffer
+	limit  int
+}
+
+func (b *boundedBuffer) Write(value []byte) (int, error) {
+	remaining := b.limit - b.buffer.Len()
+	if remaining <= 0 || len(value) > remaining {
+		return 0, errors.New("provider output exceeds runtime bound")
+	}
+	return b.buffer.Write(value)
+}
+
+func canonical(value interface{}) ([]byte, error) { return json.Marshal(value) }
+
+func loadRequest() (requestEnvelope, []byte, error) {
+	var request requestEnvelope
+	raw, err := base64.StdEncoding.DecodeString(os.Getenv("EXEC_REQUEST_B64"))
+	if err != nil {
+		return request, nil, err
+	}
+	if len(raw) == 0 || len(raw) > 2*1024*1024 {
+		return request, nil, errors.New("sealed request size is invalid")
+	}
+	if err = json.Unmarshal(raw, &request); err != nil {
+		return request, nil, err
+	}
+	if request.TaskID == "" || request.TaskFingerprint == "" || request.AttemptID == "" || request.ExecutionContentFingerprint == "" || request.ExecutionContent == nil {
+		return request, nil, errors.New("sealed request identity/content is incomplete")
+	}
+	content, err := canonical(request.ExecutionContent)
+	if err != nil {
+		return request, nil, err
+	}
+	digest := sha256.Sum256(content)
+	if hex.EncodeToString(digest[:]) != request.ExecutionContentFingerprint {
+		return request, nil, errors.New("sealed execution content fingerprint mismatch")
+	}
+	return request, content, nil
+}
+
+func safeTarget(name string) (string, error) {
+	clean := filepath.Clean(name)
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", errors.New("archive path escapes workspace")
+	}
+	target := filepath.Join(workspace, clean)
+	relative, err := filepath.Rel(workspace, target)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, "../") {
+		return "", errors.New("archive path escapes workspace")
+	}
+	return target, nil
+}
+
+func importTree() error {
+	reader := tar.NewReader(os.Stdin)
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		target, err := safeTarget(header.Name)
+		if err != nil {
+			return err
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0700); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+				return err
+			}
+			output, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.Copy(output, reader)
+			closeErr := output.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+			if err := os.Chmod(target, os.FileMode(header.Mode)&0777); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			link := filepath.Clean(header.Linkname)
+			if filepath.IsAbs(link) || link == ".." || strings.HasPrefix(link, "../") {
+				return errors.New("archive symlink escapes workspace")
+			}
+			if err := os.Symlink(header.Linkname, target); err != nil {
+				return err
+			}
+		default:
+			return errors.New("unsupported archive entry")
+		}
+	}
+}
+
+func exportTree() error {
+	writer := tar.NewWriter(os.Stdout)
+	defer writer.Close()
+	return filepath.Walk(workspace, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(workspace, path)
+		if err != nil {
+			return err
+		}
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
+		header, err := tar.FileInfoHeader(info, link)
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(relative)
+		if err = writer.WriteHeader(header); err != nil || !info.Mode().IsRegular() {
+			return err
+		}
+		input, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, input)
+		closeErr := input.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+}
+
+func approved(command string, values []string) bool {
+	for _, value := range values {
+		if command == value {
+			return true
+		}
+	}
+	return false
+}
+
+func failureType(value interface{}) string {
+	raw, _ := json.Marshal(value)
+	lowered := strings.ToLower(string(raw))
+	switch {
+	case strings.Contains(lowered, "rate") && strings.Contains(lowered, "limit"):
+		return "rate_limit"
+	case strings.Contains(lowered, "auth") || strings.Contains(lowered, "unauthorized"):
+		return "authentication"
+	case strings.Contains(lowered, "cancel"):
+		return "cancelled"
+	case strings.Contains(lowered, "timeout") || strings.Contains(lowered, "timed out"):
+		return "timeout"
+	case strings.Contains(lowered, "policy") || strings.Contains(lowered, "permission"):
+		return "policy_denied"
+	default:
+		return "provider_unavailable"
+	}
+}
+
+func parseCodex(raw []byte, request requestEnvelope, started, completed string, exitCode int) (observation, error) {
+	result := observation{Protocol: "codex-exec-jsonl-v1", Status: "failed", StartedAt: started, CompletedAt: completed, Commands: []string{}, Tests: []map[string]interface{}{}, ChangedPaths: []string{}, LogRefs: []string{}, ErrorType: "provider_unavailable"}
+	terminal := false
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 64*1024), outputLimit)
+	for scanner.Scan() {
+		var event map[string]interface{}
+		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			return result, errors.New("malformed Codex JSONL event")
+		}
+		typeName, _ := event["type"].(string)
+		if typeName == "thread.started" {
+			result.ThreadID, _ = event["thread_id"].(string)
+		}
+		if typeName == "turn.completed" {
+			terminal = true
+			result.Status = "completed"
+			result.ErrorType = ""
+		}
+		if typeName == "turn.failed" || typeName == "error" {
+			terminal = true
+			result.Status = "failed"
+			result.ErrorType = failureType(event)
+		}
+		if typeName == "item.completed" {
+			item, _ := event["item"].(map[string]interface{})
+			command, _ := item["command"].(string)
+			exitCode, exitCodeOK := item["exit_code"].(float64)
+			status, statusOK := item["status"].(string)
+			if item["type"] == "command_execution" && approved(command, request.ApprovedCommands) && exitCodeOK && statusOK {
+				result.Commands = append(result.Commands, command)
+				testStatus := "FAIL"
+				if exitCode == 0 && status == "completed" {
+					testStatus = "PASS"
+				}
+				result.Tests = append(result.Tests, map[string]interface{}{
+					"name": "approved command: " + command, "status": testStatus, "command": command,
+				})
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return result, err
+	}
+	if !terminal {
+		return result, errors.New("Codex protocol has no terminal turn event")
+	}
+	if exitCode != 0 && result.Status == "completed" {
+		return result, errors.New("Codex exited nonzero after success event")
+	}
+	return result, nil
+}
+
+func parseClaude(raw []byte, request requestEnvelope, started, completed string, exitCode int) (observation, error) {
+	result := observation{Protocol: "claude-code-stream-json-v1", StopReason: "error", StartedAtC: started, CompletedAtC: completed, CommandsC: []string{}, TestsC: []map[string]interface{}{}, ChangedPathsC: []string{}, EvidenceRefs: []string{}, ErrorTypeC: "provider_unavailable"}
+	terminal := false
+	toolCommands := map[string]string{}
+	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 64*1024), outputLimit)
+	for scanner.Scan() {
+		var event map[string]interface{}
+		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			return result, errors.New("malformed Claude stream-json event")
+		}
+		if event["type"] == "result" {
+			terminal = true
+			result.SessionID, _ = event["session_id"].(string)
+			if turns, ok := event["num_turns"].(float64); ok && turns >= 0 {
+				result.Turns = int(turns)
+			}
+			subtype, _ := event["subtype"].(string)
+			isError, _ := event["is_error"].(bool)
+			if subtype == "success" && !isError {
+				result.StopReason = "end_turn"
+				result.ErrorTypeC = ""
+			}
+			if isError {
+				result.ErrorTypeC = failureType(event)
+			}
+		}
+		if event["type"] == "assistant" {
+			message, _ := event["message"].(map[string]interface{})
+			content, _ := message["content"].([]interface{})
+			for _, rawItem := range content {
+				item, _ := rawItem.(map[string]interface{})
+				input, _ := item["input"].(map[string]interface{})
+				command, _ := input["command"].(string)
+				toolID, _ := item["id"].(string)
+				if item["type"] == "tool_use" && item["name"] == "Bash" && toolID != "" && approved(command, request.ApprovedCommands) {
+					toolCommands[toolID] = command
+				}
+			}
+		}
+		if event["type"] == "user" {
+			message, _ := event["message"].(map[string]interface{})
+			content, _ := message["content"].([]interface{})
+			for _, rawItem := range content {
+				item, _ := rawItem.(map[string]interface{})
+				toolID, _ := item["tool_use_id"].(string)
+				command, exists := toolCommands[toolID]
+				if item["type"] != "tool_result" || !exists {
+					continue
+				}
+				isError, _ := item["is_error"].(bool)
+				status := "PASS"
+				if isError {
+					status = "FAIL"
+				}
+				result.CommandsC = append(result.CommandsC, command)
+				result.TestsC = append(result.TestsC, map[string]interface{}{
+					"name": "approved command: " + command, "status": status, "command": command,
+				})
+				delete(toolCommands, toolID)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return result, err
+	}
+	if !terminal {
+		return result, errors.New("Claude protocol has no terminal result event")
+	}
+	if exitCode != 0 && result.StopReason == "end_turn" {
+		return result, errors.New("Claude exited nonzero after success result")
+	}
+	return result, nil
+}
+
+func executeProvider(args []string) error {
+	request, prompt, err := loadRequest()
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 || (args[0] != "codex" && args[0] != "claude") {
+		return errors.New("launcher is not allowlisted")
+	}
+	command := exec.Command(args[0], args[1:]...)
+	command.Dir = workspace
+	command.Stdin = bytes.NewReader(prompt)
+	gateway := "http://" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT")
+	session := os.Getenv("EXEC_GATEWAY_SESSION_TOKEN")
+	command.Env = []string{"PATH=/opt/sandiva/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/run/exec", "CI=true", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "EXECUTOR_GATEWAY_ENDPOINT=" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT"), "EXEC_GATEWAY_SESSION_TOKEN=" + session}
+	if args[0] == "codex" {
+		command.Env = append(command.Env, "OPENAI_BASE_URL="+gateway+"/v1", "OPENAI_API_KEY="+session)
+	} else {
+		command.Env = append(command.Env, "ANTHROPIC_BASE_URL="+gateway, "ANTHROPIC_AUTH_TOKEN="+session, "ANTHROPIC_API_KEY=")
+	}
+	stdout := &boundedBuffer{limit: outputLimit}
+	stderr := &boundedBuffer{limit: 64 * 1024}
+	command.Stdout = stdout
+	command.Stderr = stderr
+	started := time.Now().UTC().Format(time.RFC3339Nano)
+	runErr := command.Run()
+	completed := time.Now().UTC().Format(time.RFC3339Nano)
+	exitCode := 0
+	if runErr != nil {
+		if exit, ok := runErr.(*exec.ExitError); ok {
+			exitCode = exit.ExitCode()
+		} else {
+			return runErr
+		}
+	}
+	var result observation
+	if args[0] == "codex" {
+		result, err = parseCodex(stdout.buffer.Bytes(), request, started, completed, exitCode)
+	} else {
+		result, err = parseClaude(stdout.buffer.Bytes(), request, started, completed, exitCode)
+	}
+	if err != nil {
+		return fmt.Errorf("provider protocol rejected: %w", err)
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func fileDigest(path string) (string, error) {
+	input, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer input.Close()
+	hash := sha256.New()
+	if _, err = io.Copy(hash, input); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func attest(args []string) error {
+	if len(args) != 4 || (args[0] != "codex" && args[0] != "claude") {
+		return errors.New("attestation arguments are invalid")
+	}
+	launcher, err := exec.LookPath(args[0])
+	if err != nil {
+		return err
+	}
+	executableDigest, err := fileDigest(launcher)
+	if err != nil {
+		return err
+	}
+	runtimeDigest, err := fileDigest("/opt/sandiva/bin/exec01-runtime")
+	if err != nil {
+		return err
+	}
+	versionOutput, err := exec.Command(launcher, "--version").CombinedOutput()
+	if err != nil {
+		return errors.New("executor version observation failed")
+	}
+	value := map[string]string{
+		"runtimeWrapperDigest": runtimeDigest, "executableDigest": executableDigest,
+		"executableVersion": strings.TrimSpace(string(versionOutput)), "launcherVersion": launcherVersion,
+		"model": args[1], "gatewayImplementationDigest": args[2], "gatewayPolicyDigest": args[3],
+	}
+	return json.NewEncoder(os.Stdout).Encode(value)
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: exec01-runtime import|export|execute")
+		os.Exit(2)
+	}
+	var err error
+	switch os.Args[1] {
+	case "import":
+		err = importTree()
+	case "export":
+		err = exportTree()
+	case "execute":
+		args := os.Args[2:]
+		if len(args) > 0 && args[0] == "--" {
+			args = args[1:]
+		}
+		err = executeProvider(args)
+	case "attest":
+		err = attest(os.Args[2:])
+	case "sleep":
+		select {}
+	default:
+		err = errors.New("unsupported runtime operation")
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

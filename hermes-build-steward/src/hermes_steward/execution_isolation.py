@@ -713,6 +713,17 @@ class ContainerProviderRunner:
         self.policy = policy
         self.sealed_request_root = sealed_request_root.resolve()
         self.runner = runner or DockerContainerJobRunner(policy)
+        self._gateway_sessions: dict[tuple[str, str], str] = {}
+        self._session_lock = threading.Lock()
+
+    def bind_gateway_session(self, request: NormalizedExecutionRequest, token: str) -> None:
+        if not isinstance(token, str) or len(token) < 64:
+            raise WorkspaceError("trusted gateway session token is invalid")
+        key = (request.task_fingerprint, request.attempt_id)
+        with self._session_lock:
+            if key in self._gateway_sessions:
+                raise WorkspaceError("gateway session replay binding is denied")
+            self._gateway_sessions[key] = token
 
     def invoke(
         self,
@@ -721,16 +732,23 @@ class ContainerProviderRunner:
         workspace: str,
     ) -> Mapping[str, object]:
         environment = sanitized_executor_environment(os.environ, request, self.policy)
+        key = (request.task_fingerprint, request.attempt_id)
+        with self._session_lock:
+            gateway_token = self._gateway_sessions.pop(key, None)
+        if gateway_token is not None:
+            environment["EXEC_GATEWAY_SESSION_TOKEN"] = gateway_token
         outcome = self.runner.run_container(profile, self.policy, request, workspace, environment)
         if outcome.termination_reason is not None:
             failure_type = "resource_limit" if outcome.termination_reason == "WORKSPACE_LIMIT" else "timeout"
             if profile.provider == "codex":
                 return {
+                    "protocol": "codex-exec-jsonl-v1",
                     "status": "failed" if failure_type == "resource_limit" else "timed_out", "started_at": "1970-01-01T00:00:00Z",
                     "completed_at": "1970-01-01T00:00:00Z", "commands": [], "tests": [],
                     "changed_paths": [], "patch_digest": None, "log_refs": [], "error_type": failure_type,
                 }
             return {
+                "protocol": "claude-code-stream-json-v1",
                 "stop_reason": "error" if failure_type == "resource_limit" else "timeout", "startedAt": "1970-01-01T00:00:00Z",
                 "completedAt": "1970-01-01T00:00:00Z", "commandsExecuted": [], "testOutcomes": [],
                 "changedPaths": [], "patchDigest": None, "evidenceReferences": [], "errorType": failure_type,

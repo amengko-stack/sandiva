@@ -94,7 +94,8 @@ def successful_result(request):
         "branch": None, "commitSha": None, "draftPr": None,
         "evidenceReferences": ["evidence://exec-01/synthetic"], "failureClassification": "NONE",
         "provenance": {"runtimeName": "synthetic", "runtimeVersion": "1", "model": "synthetic",
-                       "launcherVersion": "1", "profileFingerprint": request.executor_profile_fingerprint},
+                       "launcherVersion": "1", "profileFingerprint": request.executor_profile_fingerprint,
+                       "observedExecutorIdentity": __import__("json").loads(request.observed_executor_identity_json)},
         "auditProvenanceId": request.audit_provenance_id,
     }
 

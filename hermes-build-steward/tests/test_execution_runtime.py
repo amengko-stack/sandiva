@@ -54,6 +54,9 @@ def runtime_mapping():
         output_limit_bytes=raw["outputLimitBytes"], network_name=raw["networkName"],
         allowed_endpoints=tuple(raw["allowedEndpoints"]),
     ).network_policy_fingerprint
+    for configured in value["executorProfiles"].values():
+        configured["gateway_policy_digest"] = value["gatewayBinding"]["policyFingerprint"]
+        configured["gateway_implementation_digest"] = "a" * 64
     return value
 
 
@@ -77,13 +80,15 @@ class ExecutionRuntimeTests(unittest.TestCase):
         parser = build_parser()
         dispatch = parser.parse_args([
             "exec-dispatch", "--config", "hermes.json", "--execution-config", "exec.json",
-            "--task", "task.json", "--specification", "spec.md", "--acceptance-contract", "contract.md",
+            "--task", "task.json", "--pm-instruction", "pm.md", "--specification", "spec.md", "--acceptance-contract", "contract.md",
         ])
         resume = parser.parse_args([
             "exec-resume", "--config", "hermes.json", "--execution-config", "exec.json", "--task", "task.json",
+            "--pm-instruction", "pm.md", "--specification", "spec.md", "--acceptance-contract", "contract.md",
         ])
         cancel = parser.parse_args([
             "exec-cancel", "--config", "hermes.json", "--execution-config", "exec.json", "--task", "task.json",
+            "--pm-instruction", "pm.md", "--specification", "spec.md", "--acceptance-contract", "contract.md",
         ])
         self.assertEqual(dispatch.command, "exec-dispatch")
         self.assertEqual(resume.command, "exec-resume")

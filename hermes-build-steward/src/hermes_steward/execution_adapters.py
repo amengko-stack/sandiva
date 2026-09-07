@@ -98,6 +98,7 @@ class _BaseExecutionAdapter:
                 "model": self.profile.model,
                 "launcherVersion": self.profile.launcher_version,
                 "profileFingerprint": self.profile.fingerprint,
+                "observedExecutorIdentity": __import__("json").loads(request.observed_executor_identity_json),
             },
             "auditProvenanceId": request.audit_provenance_id,
         }
@@ -117,7 +118,13 @@ class CodexExecutionAdapter(_BaseExecutionAdapter):
     }
 
     def _normalize_provider_result(self, raw: Mapping[str, Any], request: NormalizedExecutionRequest) -> dict[str, Any]:
-        if not isinstance(raw, Mapping) or raw.get("status") not in self._DISPOSITIONS:
+        if isinstance(raw, Mapping) and ("output" in raw or str(raw.get("id", "")).startswith("resp_")):
+            raise ExecutionContractError("raw Responses API object is not a completed Codex execution protocol")
+        if (
+            not isinstance(raw, Mapping)
+            or raw.get("protocol") != "codex-exec-jsonl-v1"
+            or raw.get("status") not in self._DISPOSITIONS
+        ):
             raise ExecutionContractError("malformed Codex execution result")
         return self._common_result(
             request, disposition=self._DISPOSITIONS[raw["status"]],
@@ -137,7 +144,11 @@ class ClaudeCodeExecutionAdapter(_BaseExecutionAdapter):
     }
 
     def _normalize_provider_result(self, raw: Mapping[str, Any], request: NormalizedExecutionRequest) -> dict[str, Any]:
-        if not isinstance(raw, Mapping) or raw.get("stop_reason") not in self._DISPOSITIONS:
+        if (
+            not isinstance(raw, Mapping)
+            or raw.get("protocol") != "claude-code-stream-json-v1"
+            or raw.get("stop_reason") not in self._DISPOSITIONS
+        ):
             raise ExecutionContractError("malformed Claude Code execution result")
         return self._common_result(
             request, disposition=self._DISPOSITIONS[raw["stop_reason"]],

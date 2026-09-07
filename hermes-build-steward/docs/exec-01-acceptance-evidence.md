@@ -10,32 +10,32 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 |---|---|---|---|
 | AC-01 | `contracts.py`, `coordinator.py`; canonical task v2 schema | v1/v2 task tests; R1 production dispatch; hostile 01–03, 05 | PASS |
 | AC-02 | `execution_adapters.py` | adapter conformance tests | PASS |
-| AC-03 | `ExecutorProfileRegistry` | profile tests; hostile 04–05 | PASS |
-| AC-04 | frozen `NormalizedExecutionRequest`; request schema | request fingerprint/immutability tests; hostile 06 | PASS |
+| AC-03 | `ExecutorProfileRegistry`, `DockerExecutorProfileAttestor`; wrapper/executable/image/gateway identity bound into the profile | Q7; profile tests; hostile 04–05 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
+| AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified PM/spec/contract content plus scope, criteria, evaluation, QA and policy envelope | Q1; request fingerprint/content tests; hostile 06 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-05 | `validate_execution_result`; result schema | Codex/Claude normalization; hostile 27–28 | PASS |
 | AC-06 | `ProductionExecutionService`, `WorkspaceFactory` | R1 real service dispatch, trusted-origin clone, exact-base/reuse/cleanup tests | PASS |
-| AC-07 | `TrustedExecutorGateway`; Codex/Claude gateway backends; empty-by-default executor environment | gateway task/profile binding and credential-reflection tests; hostile 11; Linux R2 | PASS subject to current-head Linux CI |
+| AC-07 | source-controlled `exec01-gateway`; attempt-bound HMAC capability; raw credentials exist only in provider-specific trusted proxies | Q3, Q15; gateway task/profile/replay/cross-task tests; hostile 11; Linux R2 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW AND CURRENT-HEAD LINUX CI |
 | AC-08 | no-mount executor runtime; preserved trusted Git metadata; hook/config-denying publisher | publisher hook/URL-rewrite probe; hostile 12–15; Linux R2 | PASS subject to current-head Linux CI |
-| AC-09 | internal-network attestation with exactly one digest-pinned gateway | policy/attestation tests; hostile 17; Linux R4 direct-egress probes | PASS subject to current-head Linux CI |
+| AC-09 | internal network with no default route and exactly one attested, digest-pinned source gateway | Q3; policy/attestation tests; hostile 17; Linux R4 probes | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW AND CURRENT-HEAD LINUX CI |
 | AC-10 | bounded tmpfs/container/runner and explicit `exec-cancel` | hostile 18–19; local descendant termination; Linux R3 quota/cancellation | PASS subject to current-head Linux CI |
 | AC-11 | `PrepublicationInspector`; trusted diff replacement and pre-publish recomputation | R5 omitted/false/overstated claims and drift; hostile 07–10; artifact controls | PASS |
 | AC-12 | concrete `GitHubPublisherGateway`; closed `PublisherAuthority`; hardened `SubprocessGit` | R6 immutable readback and malicious Git metadata tests; hostile 12, 30–31 | PASS |
-| AC-13 | deterministic branch and PR identity | duplicate/conflict tests; hostile 25–26 | PASS |
+| AC-13 | deterministic branch/PR identity plus strict attempt ownership; open/draft/unmerged readback | Q13–Q14; duplicate/conflict tests; hostile 25–26 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-14 | execution store and publication reconciliation | duplicate test; hostile 20 | PASS |
 | AC-15 | authority callback at privileged checkpoints | stale-fence tests; hostile 21 | PASS |
 | AC-16 | `ExecutionCoordinator` staged recovery | eight-case recovery matrix; hostile 22–24 | PASS |
 | AC-17 | immutable max-attempt enforcement | recovery retry test | PASS |
-| AC-18 | `CodexExecutionAdapter`, `CodexGatewayBackend` and fingerprinted profile | normalized conformance and exact trusted provider protocol tests | PASS code QA; actual Hostinger backend deferred to AC-28 |
-| AC-19 | `ClaudeCodeExecutionAdapter`, `ClaudeGatewayBackend` and fingerprinted profile | normalized conformance and exact trusted provider protocol tests | PASS code QA; actual Hostinger backend deferred to AC-28 |
-| AC-20 | stable adapter protocol | cross-adapter synthetic equivalence | PASS |
-| AC-21 | ordered exact-profile selection | fallback/no-downgrade tests; hostile 29 | PASS |
-| AC-22 | result acceptance fixed to `NOT_EVALUATED` | hostile 28; Hermes F/G regression | PASS |
+| AC-18 | source-controlled `exec01-runtime`; fixed Codex CLI argv; explicit Codex JSONL terminal-event parser | Q2, Q4, Q6, Q16; Go protocol tests | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW; EXTERNAL BACKEND DEFERRED TO AC-28 |
+| AC-19 | source-controlled `exec01-runtime`; fixed Claude Code CLI argv; explicit stream-JSON result parser | Q2, Q5, Q6, Q16; Go protocol tests | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW; EXTERNAL BACKEND DEFERRED TO AC-28 |
+| AC-20 | stable provider-neutral adapter/result contract; raw Responses/Messages objects rejected | Q4–Q6; cross-adapter synthetic equivalence | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
+| AC-21 | durable trusted primary-unavailability transition and fresh-attempt ordered fallback | Q8–Q9; fallback/no-downgrade tests; hostile 29 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
+| AC-22 | result acceptance fixed to `NOT_EVALUATED`; Hermes evidence separately acquired and PASS-only for qualification | Q10–Q12; hostile 28; Hermes F/G regression | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests and its dedicated workflow | 983/983 application regression; scoped diff inspection | PASS |
 | AC-25 | accepted Hermes behavior retained | complete 214-test local Hermes/EXEC run: 210 pass, four Linux/Docker tests skipped locally; includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS subject to current-head Linux CI |
 | AC-26 | application/type/build/CI | 983/983 application tests; TypeScript and production build pass; CI workflow requires Go and a working Docker daemon | PASS locally; current-head GitHub checks are authoritative for CI |
-| AC-27 | `build_execution_audit_record` | end-to-end provenance test | PASS |
-| AC-28 | HMAC-attested, task/base/head/profile/fence/PR/Hermes-bound `run_exec01_vm_qualification.py` | actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED — separate PM authorization required |
+| AC-27 | `build_execution_audit_record`; observed profile, fallback and strict publication-attempt provenance | Q7–Q9, Q13; end-to-end provenance tests | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
+| AC-28 | durable-authority collector plus repository-scoped GitHub readback; signing only after acquisition; Hermes disposition must be PASS | Q10–Q12, Q14; actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED / NOT AUTHORIZED |
 
 ## R1–R8 rework regressions
 
@@ -54,17 +54,38 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 
 `tests/test_exec01_hostile_fixtures.py` contains 31 separately named tests in canonical order. Each asserts its expected denial, failure classification or idempotent recovery behavior. The final builder report records the observed result for every fixture rather than relying on an aggregate count.
 
+## Q1–Q16 focused second-rework fixtures
+
+| Fixture | Evidence | Local observation |
+|---|---|---|
+| Q1 | exact task content and identity mutation test | PASS |
+| Q2 | source runtime sealed-request Go test and Linux container test | Go PASS; Linux container mandatory in CI |
+| Q3 | production composition to source gateway control plane and source gateway image test | composition PASS; Linux image test mandatory in CI |
+| Q4 | Codex JSONL parser plus representative source-runtime container task | Go PASS; Linux container mandatory in CI |
+| Q5 | Claude Code stream-JSON parser plus equivalent container task | Go PASS; Linux container mandatory in CI |
+| Q6 | raw OpenAI Responses and Anthropic Messages objects lack valid terminal build protocol | PASS |
+| Q7 | observed executable/profile mismatch | PASS: denied before provider invocation |
+| Q8 | trusted primary outage and authorized ordered fallback | PASS: fresh attempt and durable failure provenance |
+| Q9 | unauthorized/silent fallback | PASS: denied |
+| Q10 | signed Hermes FAIL/unresolved/missing/wrong-task/executor-origin evidence | PASS: all denied |
+| Q11 | correctly signed but fabricated occurrence claims | PASS: independent acquisition mismatch |
+| Q12 | concrete durable-store collector and repository-scoped GitHub branch/PR/check readback | PASS |
+| Q13 | publication from another attempt under strict attempt ownership | PASS: conflict |
+| Q14 | closed draft PR | PASS: denied |
+| Q15 | success/error response floods through Codex and Claude trusted proxies | PASS: reads stop at limit + 1 |
+| Q16 | source edit, shell tool, assertion and generated output on noexec workspace | Linux/Docker mandatory in CI |
+
 ## Verification record
 
 Observed locally on the authorized branch during post-QA rework:
 
-- complete Hermes/EXEC suite: 214 tests run, 210 passed, four Linux/Docker tests skipped because Docker is unavailable on the Windows builder;
+- complete Hermes/EXEC suite: 231 tests run, 223 passed, eight Linux/Docker tests skipped because Docker is unavailable on the Windows builder;
 - hostile matrix: 31 separately named fixtures passed;
 - application regression: 62 files and 983 tests passed, preserving the accepted 983/983 baseline;
 - TypeScript: `npx.cmd tsc --noEmit` passed;
 - production build: Next.js 14.2.35 compiled, typechecked and generated 65/65 static pages;
-- Python: compileall passed; all five JSON schemas parsed;
-- package: `sandiva_hermes_build_steward-0.2.0-py3-none-any.whl` built, SHA-256 `7893876ca955b5d899ea2f1ccf65cdbb9e35e202febef2e482aae964bab9ca13`;
+- Python: compileall passed; all five JSON schemas and the production example parsed;
+- package: `sandiva_hermes_build_steward-0.2.0-py3-none-any.whl` built, SHA-256 `61ab0b6368a3dc5f002dea3c8a1a8da6c57cff278bf62a6d163feaaa26f57350`;
 - diff hygiene: `git diff --check` passed (line-ending notices only).
 
 The current-head GitHub `Hermes Build Steward / deterministic` check is the required Linux/Docker evidence. Its workflow explicitly installs Go and asserts a working Docker daemon before discovery, so R2–R4 cannot be silently skipped there. The `sln-litigation-drafter` check remains the authoritative CI readback for the application suite. Vercel, if triggered by the draft PR, is a non-production preview only and is not production deployment or activation.

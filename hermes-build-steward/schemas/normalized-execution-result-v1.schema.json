@@ -65,13 +65,14 @@
     "failureClassification": {"type": "string", "minLength": 1},
     "provenance": {
       "type": "object", "additionalProperties": false,
-      "required": ["runtimeName", "runtimeVersion", "model", "launcherVersion", "profileFingerprint"],
+      "required": ["runtimeName", "runtimeVersion", "model", "launcherVersion", "profileFingerprint", "observedExecutorIdentity"],
       "properties": {
         "runtimeName": {"type": "string", "minLength": 1},
         "runtimeVersion": {"type": "string", "minLength": 1},
         "model": {"type": "string", "minLength": 1},
         "launcherVersion": {"type": "string", "minLength": 1},
-        "profileFingerprint": {"$ref": "#/$defs/sha256"}
+        "profileFingerprint": {"$ref": "#/$defs/sha256"},
+        "observedExecutorIdentity": {"type": "object"}
       }
     },
     "auditProvenanceId": {"type": "string", "minLength": 1}

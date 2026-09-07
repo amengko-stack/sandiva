@@ -12,7 +12,8 @@
     "repository", "baseSha", "permittedRepositoryAreas", "prohibitedRepositoryAreas",
     "approvedCommands", "executorProfile", "attemptId", "lease", "retryPolicy",
     "fallbackPolicy", "riskLevel", "permissionEnvelopeRef", "networkPolicyRef",
-    "resourcePolicyRef", "publisherPolicyRef", "auditProvenanceId"
+    "resourcePolicyRef", "publisherPolicyRef", "auditProvenanceId",
+    "executionContent", "executionContentFingerprint", "observedExecutorIdentity", "fallbackContext"
   ],
   "properties": {
     "schemaVersion": {"const": "1.0"},
@@ -65,7 +66,69 @@
     "networkPolicyRef": {"type": "string", "minLength": 1},
     "resourcePolicyRef": {"type": "string", "minLength": 1},
     "publisherPolicyRef": {"type": "string", "minLength": 1},
-    "auditProvenanceId": {"type": "string", "minLength": 1}
+    "auditProvenanceId": {"type": "string", "minLength": 1},
+    "executionContentFingerprint": {"$ref": "#/$defs/sha256"},
+    "executionContent": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "pmInstruction", "repository", "immutableBaseSha", "scope", "acceptanceCriteria", "criterionEvidencePolicy",
+        "evaluationRequirements", "qaRequirements", "specification", "acceptanceContract",
+        "permittedRepositoryAreas", "prohibitedRepositoryAreas", "approvedCommands", "authorityReferences"
+      ],
+      "properties": {
+        "pmInstruction": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1},
+        "immutableBaseSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "scope": {"$ref": "#/$defs/strings"},
+        "acceptanceCriteria": {"$ref": "#/$defs/strings"},
+        "criterionEvidencePolicy": {"type": "object"},
+        "evaluationRequirements": {"$ref": "#/$defs/strings"},
+        "qaRequirements": {"$ref": "#/$defs/strings"},
+        "specification": {"type": "string", "minLength": 1},
+        "acceptanceContract": {"type": "string", "minLength": 1},
+        "permittedRepositoryAreas": {"$ref": "#/$defs/strings"},
+        "prohibitedRepositoryAreas": {"$ref": "#/$defs/strings"},
+        "approvedCommands": {"$ref": "#/$defs/strings"},
+        "authorityReferences": {
+          "type": "object", "additionalProperties": false,
+          "required": ["permissionEnvelopeRef", "networkPolicyRef", "resourcePolicyRef", "publisherPolicyRef"],
+          "properties": {
+            "permissionEnvelopeRef": {"type": "string", "minLength": 1},
+            "networkPolicyRef": {"type": "string", "minLength": 1},
+            "resourcePolicyRef": {"type": "string", "minLength": 1},
+            "publisherPolicyRef": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "observedExecutorIdentity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["image", "runtimeWrapperDigest", "executableDigest", "executableVersion", "launcherVersion", "model", "gatewayImplementationDigest", "gatewayPolicyDigest"],
+      "properties": {
+        "image": {"type": "string", "minLength": 1},
+        "runtimeWrapperDigest": {"$ref": "#/$defs/sha256"},
+        "executableDigest": {"$ref": "#/$defs/sha256"},
+        "executableVersion": {"type": "string", "minLength": 1},
+        "launcherVersion": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "gatewayImplementationDigest": {"$ref": "#/$defs/sha256"},
+        "gatewayPolicyDigest": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "fallbackContext": {
+      "oneOf": [
+        {"type": "object", "maxProperties": 0},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["primaryAttemptId", "unavailableProfileId", "failureClassification"],
+          "properties": {
+            "primaryAttemptId": {"type": "string", "minLength": 1},
+            "unavailableProfileId": {"type": "string", "minLength": 1},
+            "failureClassification": {"const": "PROVIDER_UNAVAILABLE"}
+          }
+        }
+      ]
+    }
   },
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},

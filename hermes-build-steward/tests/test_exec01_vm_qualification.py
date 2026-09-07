@@ -46,6 +46,7 @@ class Exec01QualificationTests(unittest.TestCase):
                 "head": record["branch"],
                 "commitSha": commit,
                 "base": "main",
+                "state": "open",
                 "isDraft": True,
                 "merged": False,
                 "checksReadbackFingerprint": ("b" if provider == "codex" else "c") * 64,
@@ -84,6 +85,16 @@ class Exec01QualificationTests(unittest.TestCase):
         }
         return sign_evidence(unsigned, self.key)
 
+    @staticmethod
+    def _resolver(evidence):
+        unsigned = {key: value for key, value in evidence.items() if key != "attestation"}
+        class Resolver:
+            def resolve(self):
+                value = copy.deepcopy(unsigned)
+                value.pop("profileFingerprints", None)
+                return value
+        return Resolver()
+
     def test_plan_binds_both_exact_profiles_and_all_later_gate_checks(self):
         plan = qualification_plan(self.profiles)
         self.assertEqual(set(plan["profiles"]), {"codex", "claude-code"})
@@ -94,7 +105,10 @@ class Exec01QualificationTests(unittest.TestCase):
 
     def test_r8_only_signed_task_bound_records_and_readbacks_can_qualify(self):
         evidence = self._evidence()
-        self.assertEqual(verify_evidence(self.profiles, evidence, attestation_key=self.key)["status"], "QUALIFIED")
+        self.assertEqual(verify_evidence(
+            self.profiles, evidence, attestation_key=self.key,
+            trusted_resolver=self._resolver(evidence),
+        )["status"], "QUALIFIED")
 
         mutations = {
             "invented PR": lambda value: value["pullRequestReadback"].__setitem__(0, {**value["pullRequestReadback"][0], "number": 999}),
@@ -112,14 +126,37 @@ class Exec01QualificationTests(unittest.TestCase):
             mutate(candidate)
             candidate = sign_evidence(candidate, self.key)
             with self.subTest(label=label), self.assertRaises(SystemExit):
-                verify_evidence(self.profiles, candidate, attestation_key=self.key)
+                verify_evidence(
+                    self.profiles, candidate, attestation_key=self.key,
+                    trusted_resolver=self._resolver(evidence),
+                )
 
         with self.assertRaises(SystemExit):
             verify_evidence(
                 self.profiles,
                 {"buildId": "EXEC-01", "checks": {name: True for name in REQUIRED_CHECKS}},
-                attestation_key=self.key,
+                attestation_key=self.key, trusted_resolver=self._resolver(evidence),
             )
+
+    def test_hermes_non_pass_missing_wrong_task_or_executor_origin_never_qualifies(self):
+        baseline = self._evidence()
+        mutations = {
+            "FAIL": lambda value: value["hermesEvidence"].update(disposition="FAIL"),
+            "unresolved": lambda value: value["hermesEvidence"].update(disposition="UNRESOLVED"),
+            "missing": lambda value: value.pop("hermesEvidence"),
+            "wrong task": lambda value: value["hermesEvidence"].update(taskFingerprint="0" * 64),
+            "executor supplied": lambda value: value["hermesEvidence"].update(origin="executor-self-assertion"),
+        }
+        for label, mutate in mutations.items():
+            candidate = copy.deepcopy(baseline)
+            candidate.pop("attestation")
+            mutate(candidate)
+            candidate = sign_evidence(candidate, self.key)
+            with self.subTest(label=label), self.assertRaises(SystemExit):
+                verify_evidence(
+                    self.profiles, candidate, attestation_key=self.key,
+                    trusted_resolver=self._resolver(candidate),
+                )
 
 
 if __name__ == "__main__":

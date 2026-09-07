@@ -39,11 +39,14 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 - audit/provenance retained with the durable task record and recursive secret-field redaction.
 - an explicit Canonical Build Task v2.0 dispatch contract while accepted v1.0 remains non-dispatch;
 - fingerprinted Codex and Claude Code profiles behind one normalized `ExecutionAdapter` boundary;
+- exact hash-verified PM/specification/acceptance content, task scope, criteria and QA requirements carried read-only in the normalized request;
+- source-controlled reproducible executor-wrapper and credential-gateway images, explicit Codex JSONL and Claude stream-JSON parsing, observed profile attestation and deterministic protocol emulators;
 - exact-base attempt workspaces, executor/control-plane credential separation, explicit network/resource containment, and complete pre-publication enforcement;
 - a concrete `exec-dispatch`/`exec-resume`/`exec-cancel` production composition path with external CAS execution/result stores, exact trusted-source origin verification and task-bound forced container removal;
 - no-host-mount, non-root, quota-backed container execution through one attested internal-network gateway, with host-created Git metadata preserved across export;
 - deterministic task-bound draft-PR publication through a separate repository-scoped publisher that disables repository hooks/config injection; and
-- CAS-shaped execution checkpoints, duplicate idempotency, stale-fence denial, bounded retry/fallback, crash reconciliation and bounded provenance.
+- CAS-shaped execution checkpoints, duplicate idempotency, stale-fence denial, explicit new-attempt ordered fallback, strict publication-attempt ownership, crash reconciliation and bounded provenance;
+- trusted qualification evidence acquisition before signing, with independent resolution and Hermes `PASS` mandatory.
 
 ## Deliberate exclusions
 
@@ -63,7 +66,7 @@ The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A d
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
 
-EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`; R1–R8 rework regressions are distributed across the `test_exec01_*`, runtime, gateway, publisher and recovery suites. The Linux-only Docker runtime tests are mandatory in GitHub Actions: CI explicitly installs Go, asserts a working Docker daemon and therefore cannot silently skip them. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
+EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`; R1–R8 and Q1–Q16 are distributed across the `test_exec01_*`, runtime, gateway, publisher and recovery suites plus the source-controlled Go runtime tests. The Linux-only Docker runtime tests are mandatory in GitHub Actions: CI explicitly installs Go, asserts a working Docker daemon and therefore cannot silently skip them. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
 
 ## Runtime configuration
 

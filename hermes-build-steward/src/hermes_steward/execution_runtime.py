@@ -6,13 +6,19 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlparse
 
 from .contracts import fingerprint, validate_dispatch_build_task, validate_reference_hashes
 from .coordinator import Coordinator, Lease, StaleFenceError
 from .execution_adapters import ClaudeCodeExecutionAdapter, CodexExecutionAdapter
-from .execution_contracts import ExecutorProfile, ExecutorProfileRegistry, normalize_execution_request
+from .execution_contracts import (
+    ExecutorProfile,
+    ExecutorProfileRegistry,
+    ResolvedExecutionArtifacts,
+    ObservedExecutorIdentity,
+    normalize_execution_request,
+)
 from .execution_coordinator import (
     CasExecutionRecordStore,
     ExecutionCoordinator,
@@ -40,6 +46,114 @@ from .store import RecordNotFound, StateStore, StoreConflict
 
 class ExecutionRuntimeConfigurationError(ValueError):
     pass
+
+
+class TrustedArtifactResolver(Protocol):
+    def resolve(self, task: Mapping[str, Any]) -> ResolvedExecutionArtifacts: ...
+
+
+class ExecutorProfileAttestor(Protocol):
+    def attest(self, profile: ExecutorProfile) -> ObservedExecutorIdentity: ...
+
+
+class ExecutorGatewayController(Protocol):
+    def prepare(self, profile: ExecutorProfile, request: Any) -> str: ...
+
+
+class DockerExecutorGatewayController:
+    """Trusted host control path into the reviewed, pinned gateway container."""
+
+    def __init__(self, binding: GatewayNetworkBinding):
+        self.binding = binding
+
+    def _run(self, args: list[str]) -> str:
+        try:
+            return subprocess.check_output(
+                ["docker", "exec", self.binding.container_name, "/opt/sandiva/bin/exec01-gateway", *args],
+                text=True, stderr=subprocess.PIPE, timeout=30,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8"},
+            ).strip()
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            raise ExecutionRuntimeConfigurationError("trusted executor gateway control path failed") from error
+
+    def prepare(self, profile: ExecutorProfile, request: Any) -> str:
+        try:
+            health = json.loads(self._run(["health"]))
+        except json.JSONDecodeError as error:
+            raise ExecutionRuntimeConfigurationError("trusted executor gateway health is malformed") from error
+        expected = {"policyFingerprint": profile.gateway_policy_digest, "implementationDigest": profile.gateway_implementation_digest}
+        if health.get("status") != "READY" or health.get("profiles", {}).get(profile.fingerprint) != expected:
+            raise ExecutionRuntimeConfigurationError("trusted executor gateway identity/policy mismatch")
+        token = self._run([
+            "issue", "--task-fingerprint", request.task_fingerprint,
+            "--attempt-id", request.attempt_id,
+            "--profile-fingerprint", profile.fingerprint,
+        ])
+        if len(token) < 64:
+            raise ExecutionRuntimeConfigurationError("trusted executor gateway returned an invalid session")
+        return token
+
+
+class DockerExecutorProfileAttestor:
+    """Observe the pinned image's wrapper and executable before dispatch."""
+
+    def attest(self, profile: ExecutorProfile) -> ObservedExecutorIdentity:
+        try:
+            raw = subprocess.check_output(
+                [
+                    "docker", "run", "--rm", "--network", "none", "--read-only",
+                    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                    "--entrypoint", "/opt/sandiva/bin/exec01-runtime", profile.image,
+                    "attest", profile.fixed_argv[0], profile.model,
+                    profile.gateway_implementation_digest, profile.gateway_policy_digest,
+                ],
+                stderr=subprocess.PIPE,
+                env={"PATH": os.defpath, "LANG": "C.UTF-8"},
+                timeout=30,
+            )
+            value = json.loads(raw)
+            observed = ObservedExecutorIdentity(image=profile.image, **{
+                "runtime_wrapper_digest": value["runtimeWrapperDigest"],
+                "executable_digest": value["executableDigest"],
+                "executable_version": value["executableVersion"],
+                "launcher_version": value["launcherVersion"],
+                "model": value["model"],
+                "gateway_implementation_digest": value["gatewayImplementationDigest"],
+                "gateway_policy_digest": value["gatewayPolicyDigest"],
+            })
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError) as error:
+            raise ExecutionRuntimeConfigurationError("executor profile attestation failed") from error
+        observed.assert_matches(profile)
+        return observed
+
+
+class BoundArtifactResolver:
+    """Operator/trusted-store supplied artifacts bound to the exact task references."""
+
+    def __init__(
+        self,
+        *,
+        pm_ref: str,
+        pm_instruction: bytes,
+        specification_ref: str,
+        specification: bytes,
+        acceptance_contract_ref: str,
+        acceptance_contract: bytes,
+    ):
+        self._refs = (pm_ref, specification_ref, acceptance_contract_ref)
+        self._artifacts = ResolvedExecutionArtifacts(pm_instruction, specification, acceptance_contract)
+
+    def resolve(self, task: Mapping[str, Any]) -> ResolvedExecutionArtifacts:
+        observed = (
+            task.get("originatingPmInstructionRef"),
+            task.get("specificationRef"),
+            task.get("acceptanceContractRef"),
+        )
+        if observed != self._refs:
+            raise ExecutionRuntimeConfigurationError("task artifact references do not match trusted resolver binding")
+        # Hash verification occurs again while constructing the normalized request.
+        self._artifacts.verified_content(task)
+        return self._artifacts
 
 
 def _verify_source_repository(path: Path, expected_repository: str) -> None:
@@ -154,6 +268,11 @@ class ExecutionRuntimeConfig:
             raise ExecutionRuntimeConfigurationError("gateway binding is invalid") from error
         if gateway.network_name != policy.network_name or gateway.policy_fingerprint != policy.network_policy_fingerprint:
             raise ExecutionRuntimeConfigurationError("gateway binding and containment network mismatch")
+        gateway_image_digest = gateway.image.rsplit("sha256:", 1)[-1]
+        if any(profile.gateway_policy_digest != gateway.policy_fingerprint for profile in profiles.values()):
+            raise ExecutionRuntimeConfigurationError("executor profile gateway policy digest mismatch")
+        if any(profile.gateway_implementation_digest != gateway_image_digest for profile in profiles.values()):
+            raise ExecutionRuntimeConfigurationError("executor profile gateway implementation digest mismatch")
         publisher = raw["githubPublisher"]
         if not isinstance(publisher, Mapping) or set(publisher) != {"repository", "askpassPath"}:
             raise ExecutionRuntimeConfigurationError("GitHub publisher fields are invalid")
@@ -222,6 +341,9 @@ class ProductionExecutionService:
         result_sink: CasResultSink,
         runner: ContainerProviderRunner,
         publisher: TrustedGitHubPublisher,
+        artifact_resolver: TrustedArtifactResolver,
+        profile_attestor: ExecutorProfileAttestor | None = None,
+        gateway_controller: ExecutorGatewayController | None = None,
     ):
         self.config = config
         self.hermes = hermes
@@ -229,6 +351,9 @@ class ProductionExecutionService:
         self.result_sink = result_sink
         self.runner = runner
         self.publisher = publisher
+        self.artifact_resolver = artifact_resolver
+        self.profile_attestor = profile_attestor
+        self.gateway_controller = gateway_controller
         self.registry = ExecutorProfileRegistry(config.profiles.values())
         self.workspace_factory = WorkspaceFactory(Path(config.workspace_root))
         self.inspector = PrepublicationInspector()
@@ -245,11 +370,30 @@ class ProductionExecutionService:
             task["taskId"], task["taskVersion"], self.hermes.config.worker_identity, lease_ttl
         )
 
-    def _execute(self, task: Mapping[str, Any], lease: Lease, *, resume: bool) -> ExecutionRecord:
+    def _execute(
+        self, task: Mapping[str, Any], lease: Lease, *, resume: bool,
+        unavailable: frozenset[str] = frozenset(),
+        fallback_context: Mapping[str, Any] | None = None,
+    ) -> ExecutionRecord:
         if task["repository"] != self.config.repository:
             raise ExecutionRuntimeConfigurationError("task repository does not match trusted runtime configuration")
-        selected = select_executor_profile(task, self.registry, frozenset())
-        request = normalize_execution_request(task, fingerprint(task), selected, lease)
+        selected = select_executor_profile(task, self.registry, unavailable)
+        artifacts = self.artifact_resolver.resolve(task)
+        observed = (
+            self.profile_attestor.attest(selected)
+            if self.profile_attestor is not None
+            else ObservedExecutorIdentity.from_profile(selected)
+        )
+        request = normalize_execution_request(
+            task, fingerprint(task), selected, lease, artifacts, observed,
+            fallback_context,
+        )
+        if self.gateway_controller is not None:
+            token = self.gateway_controller.prepare(selected, request)
+            binder = getattr(self.runner, "bind_gateway_session", None)
+            if not callable(binder):
+                raise ExecutionRuntimeConfigurationError("provider runner cannot bind a trusted gateway session")
+            binder(request, token)
         authority = HermesExecutionAuthority(self.hermes, request)
         adapter = (
             CodexExecutionAdapter(selected, self.runner)
@@ -266,6 +410,49 @@ class ProductionExecutionService:
             self.result_sink.put(f"audit:{record.identity}", build_execution_audit_record(request, record))
         return record
 
+    def _run_with_authorized_fallback(
+        self, task: Mapping[str, Any], lease: Lease, *, resume: bool,
+    ) -> ExecutionRecord:
+        unavailable: set[str] = set()
+        context: Mapping[str, Any] | None = None
+        current_lease = lease
+        should_resume = resume
+        while True:
+            record = self._execute(
+                task, current_lease, resume=should_resume,
+                unavailable=frozenset(unavailable), fallback_context=context,
+            )
+            if record.failure_classification != "PROVIDER_UNAVAILABLE":
+                return record
+            result = record.execution_result or {}
+            executor = result.get("executorProfile") if isinstance(result, Mapping) else None
+            unavailable_profile = executor.get("profileId") if isinstance(executor, Mapping) else None
+            if not isinstance(unavailable_profile, str):
+                return record
+            self.hermes.record_execution_unavailable(
+                task["taskId"], task["taskVersion"], current_lease.lease_id,
+                current_lease.fencing_token, unavailable_profile,
+            )
+            unavailable.add(unavailable_profile)
+            references = [
+                task["dispatchPolicy"]["executorProfile"],
+                *task["dispatchPolicy"]["permittedFallbackProfiles"],
+            ]
+            remaining = [item for item in references if item["profileId"] not in unavailable]
+            if task["dispatchPolicy"]["fallbackMode"] != "ORDERED" or not remaining:
+                return record
+            primary_attempt = current_lease.attempt_id
+            lease_ttl = max(3600, self.config.containment_policy.wall_time_seconds + 300)
+            current_lease = self.hermes.claim(
+                task["taskId"], task["taskVersion"], self.hermes.config.worker_identity, lease_ttl,
+            )
+            context = {
+                "primaryAttemptId": primary_attempt,
+                "unavailableProfileId": unavailable_profile,
+                "failureClassification": "PROVIDER_UNAVAILABLE",
+            }
+            should_resume = False
+
     def cancel(self, raw_task: Mapping[str, Any]) -> ExecutionRecord:
         task = validate_dispatch_build_task(raw_task)
         key = f"{self.hermes.config.task_namespace}:{task['taskId']}:{task['taskVersion']}"
@@ -273,7 +460,11 @@ class ProductionExecutionService:
         if durable.task_fingerprint != fingerprint(task) or durable.active_lease is None:
             raise StaleFenceError("task does not have the expected current execution lease")
         selected = select_executor_profile(task, self.registry, frozenset())
-        request = normalize_execution_request(task, durable.task_fingerprint, selected, durable.active_lease)
+        request = normalize_execution_request(
+            task, durable.task_fingerprint, selected, durable.active_lease,
+            self.artifact_resolver.resolve(task),
+            self.profile_attestor.attest(selected) if self.profile_attestor is not None else ObservedExecutorIdentity.from_profile(selected),
+        )
         self.runner.cancel(request)
         authority = HermesExecutionAuthority(self.hermes, request)
         adapter = (
@@ -288,11 +479,12 @@ class ProductionExecutionService:
         )
         return coordinator.cancel(request)
 
-    def dispatch(self, raw_task: Mapping[str, Any], specification: bytes, acceptance_contract: bytes) -> ExecutionRecord:
+    def dispatch(self, raw_task: Mapping[str, Any]) -> ExecutionRecord:
         task = validate_dispatch_build_task(raw_task)
-        validate_reference_hashes(task, specification, acceptance_contract)
-        lease = self._lease_for_dispatch(task, specification, acceptance_contract)
-        return self._execute(task, lease, resume=False)
+        artifacts = self.artifact_resolver.resolve(task)
+        validate_reference_hashes(task, artifacts.specification, artifacts.acceptance_contract)
+        lease = self._lease_for_dispatch(task, artifacts.specification, artifacts.acceptance_contract)
+        return self._run_with_authorized_fallback(task, lease, resume=False)
 
     def resume(self, raw_task: Mapping[str, Any]) -> ExecutionRecord:
         task = validate_dispatch_build_task(raw_task)
@@ -300,7 +492,7 @@ class ProductionExecutionService:
         record = self.hermes.store.get(key).value
         if record.task_fingerprint != fingerprint(task) or record.active_lease is None:
             raise StaleFenceError("task does not have the expected current execution lease")
-        return self._execute(task, record.active_lease, resume=True)
+        return self._run_with_authorized_fallback(task, record.active_lease, resume=True)
 
 
 def build_production_execution_service(
@@ -308,10 +500,14 @@ def build_production_execution_service(
     config: ExecutionRuntimeConfig,
     graph_token_provider: Callable[[], str],
     github_credential_provider: Callable[[], str],
+    artifact_resolver: TrustedArtifactResolver,
 ) -> ProductionExecutionService:
     for executor_profile in config.profiles.values():
         if (
             executor_profile.executable_digest == "0" * 64
+            or executor_profile.runtime_wrapper_digest == "0" * 64
+            or executor_profile.gateway_implementation_digest == "0" * 64
+            or executor_profile.gateway_policy_digest == "0" * 64
             or executor_profile.image.endswith("sha256:" + "0" * 64)
             or executor_profile.image.startswith("registry.example/")
         ):
@@ -354,5 +550,6 @@ def build_production_execution_service(
     )
     return ProductionExecutionService(
         config, hermes, CasExecutionRecordStore(execution_state), CasResultSink(result_state),
-        provider_runner, TrustedGitHubPublisher(gateway),
+        provider_runner, TrustedGitHubPublisher(gateway), artifact_resolver,
+        DockerExecutorProfileAttestor(), DockerExecutorGatewayController(config.gateway_binding),
     )

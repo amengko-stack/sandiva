@@ -6,7 +6,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from helpers import AC_BYTES, SPEC_BYTES
+from helpers import AC_BYTES, PM_BYTES, SPEC_BYTES
 from hermes_steward.config import RuntimeConfig
 from hermes_steward.coordinator import Coordinator
 from hermes_steward.execution_coordinator import (
@@ -16,7 +16,7 @@ from hermes_steward.execution_coordinator import (
 )
 from hermes_steward.execution_isolation import ContainmentPolicy, GatewayNetworkBinding
 from hermes_steward.execution_publisher import TrustedGitHubPublisher
-from hermes_steward.execution_runtime import ExecutionRuntimeConfig, ProductionExecutionService
+from hermes_steward.execution_runtime import BoundArtifactResolver, ExecutionRuntimeConfig, ProductionExecutionService
 from hermes_steward.prepublication import ChangeSet
 from hermes_steward.store import InMemoryStateStore
 from test_execution_adapters import profile, request_for
@@ -71,6 +71,7 @@ class Exec01RuntimeCompositionTests(unittest.TestCase):
                         "implemented\n", encoding="utf-8"
                     )
                     return {
+                        "protocol": "codex-exec-jsonl-v1",
                         "status": "completed",
                         "started_at": "2026-09-06T10:00:00+00:00",
                         "completed_at": "2026-09-06T10:00:01+00:00",
@@ -113,9 +114,14 @@ class Exec01RuntimeCompositionTests(unittest.TestCase):
             service = ProductionExecutionService(
                 config, hermes, InMemoryExecutionRecordStore(), ResultSink(), runner,
                 TrustedGitHubPublisher(InMemoryGitHubGateway()),
+                BoundArtifactResolver(
+                    pm_ref=task["originatingPmInstructionRef"], pm_instruction=PM_BYTES,
+                    specification_ref=task["specificationRef"], specification=SPEC_BYTES,
+                    acceptance_contract_ref=task["acceptanceContractRef"], acceptance_contract=AC_BYTES,
+                ),
             )
 
-            record = service.dispatch(task, SPEC_BYTES, AC_BYTES)
+            record = service.dispatch(task)
 
             self.assertEqual(record.stage, ExecutionStage.RESULT_PERSISTED)
             self.assertEqual(runner.calls, 1)

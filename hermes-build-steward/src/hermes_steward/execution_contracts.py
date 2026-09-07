@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -59,6 +60,9 @@ class ExecutorProfile:
     credential_mode: str
     gateway_endpoint: str
     allowed_endpoints: tuple[str, ...]
+    runtime_wrapper_digest: str
+    gateway_implementation_digest: str
+    gateway_policy_digest: str
 
     def __post_init__(self) -> None:
         if not _PROFILE_ID.fullmatch(self.profile_id):
@@ -67,8 +71,12 @@ class ExecutorProfile:
             raise ExecutionContractError("executor provider is not supported")
         for field in ("runtime_name", "runtime_version", "model", "launcher_version"):
             _nonempty(getattr(self, field), field)
-        if not _HASH.fullmatch(self.executable_digest):
-            raise ExecutionContractError("executableDigest must be a lowercase SHA-256 digest")
+        for field in (
+            "executable_digest", "runtime_wrapper_digest",
+            "gateway_implementation_digest", "gateway_policy_digest",
+        ):
+            if not _HASH.fullmatch(getattr(self, field)):
+                raise ExecutionContractError(f"{field} must be a lowercase SHA-256 digest")
         if not self.fixed_argv or any(not isinstance(item, str) or not item for item in self.fixed_argv):
             raise ExecutionContractError("fixed_argv must be a non-empty argument vector")
         expected_launcher = "codex" if self.provider == "codex" else "claude"
@@ -104,6 +112,9 @@ class ExecutorProfile:
             "credential_mode": self.credential_mode,
             "gateway_endpoint": self.gateway_endpoint,
             "allowed_endpoints": tuple(self.allowed_endpoints),
+            "runtime_wrapper_digest": self.runtime_wrapper_digest,
+            "gateway_implementation_digest": self.gateway_implementation_digest,
+            "gateway_policy_digest": self.gateway_policy_digest,
         }
 
     def identity_dict(self) -> dict[str, Any]:
@@ -120,11 +131,55 @@ class ExecutorProfile:
             "credentialMode": self.credential_mode,
             "gatewayEndpoint": self.gateway_endpoint,
             "allowedEndpoints": list(self.allowed_endpoints),
+            "runtimeWrapperDigest": self.runtime_wrapper_digest,
+            "gatewayImplementationDigest": self.gateway_implementation_digest,
+            "gatewayPolicyDigest": self.gateway_policy_digest,
         }
 
     @property
     def fingerprint(self) -> str:
         return fingerprint(self.identity_dict())
+
+
+@dataclass(frozen=True)
+class ObservedExecutorIdentity:
+    image: str
+    runtime_wrapper_digest: str
+    executable_digest: str
+    executable_version: str
+    launcher_version: str
+    model: str
+    gateway_implementation_digest: str
+    gateway_policy_digest: str
+
+    @classmethod
+    def from_profile(cls, profile: ExecutorProfile) -> "ObservedExecutorIdentity":
+        return cls(
+            image=profile.image,
+            runtime_wrapper_digest=profile.runtime_wrapper_digest,
+            executable_digest=profile.executable_digest,
+            executable_version=profile.runtime_version,
+            launcher_version=profile.launcher_version,
+            model=profile.model,
+            gateway_implementation_digest=profile.gateway_implementation_digest,
+            gateway_policy_digest=profile.gateway_policy_digest,
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "image": self.image,
+            "runtimeWrapperDigest": self.runtime_wrapper_digest,
+            "executableDigest": self.executable_digest,
+            "executableVersion": self.executable_version,
+            "launcherVersion": self.launcher_version,
+            "model": self.model,
+            "gatewayImplementationDigest": self.gateway_implementation_digest,
+            "gatewayPolicyDigest": self.gateway_policy_digest,
+        }
+
+    def assert_matches(self, profile: ExecutorProfile) -> None:
+        if self != ObservedExecutorIdentity.from_profile(profile):
+            raise ExecutionContractError("observed executor identity does not match fingerprint-bound profile")
 
 
 class ExecutorProfileRegistry:
@@ -142,6 +197,65 @@ class ExecutorProfileRegistry:
         if profile.fingerprint != expected_fingerprint:
             raise ExecutionContractError("executor profile fingerprint mismatch")
         return profile
+
+
+@dataclass(frozen=True)
+class ResolvedExecutionArtifacts:
+    """Canonical bytes resolved by the trusted coordinator, never by the executor."""
+
+    pm_instruction: bytes
+    specification: bytes
+    acceptance_contract: bytes
+
+    def __post_init__(self) -> None:
+        for field in ("pm_instruction", "specification", "acceptance_contract"):
+            value = getattr(self, field)
+            if not isinstance(value, bytes) or not value:
+                raise ExecutionContractError(f"resolved {field} must be non-empty bytes")
+            if len(value) > 512 * 1024:
+                raise ExecutionContractError(f"resolved {field} exceeds the trusted content bound")
+
+    @staticmethod
+    def _text(value: bytes, field: str) -> str:
+        try:
+            text = value.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ExecutionContractError(f"resolved {field} must be UTF-8") from error
+        if "\x00" in text:
+            raise ExecutionContractError(f"resolved {field} contains a prohibited NUL")
+        return text
+
+    def verified_content(self, task: Mapping[str, Any]) -> dict[str, Any]:
+        expected = {
+            "pm_instruction": task["originatingPmInstructionFingerprint"],
+            "specification": task["specificationHash"],
+            "acceptance_contract": task["acceptanceContractHash"],
+        }
+        for field, digest in expected.items():
+            if hashlib.sha256(getattr(self, field)).hexdigest() != digest:
+                label = "PM instruction fingerprint" if field == "pm_instruction" else field.replace("_", " ") + " hash"
+                raise ExecutionContractError(f"{label} does not match resolved canonical bytes")
+        return {
+            "pmInstruction": self._text(self.pm_instruction, "pm instruction"),
+            "repository": task["repository"],
+            "immutableBaseSha": task["baseRef"],
+            "scope": list(task["scope"]),
+            "acceptanceCriteria": list(task["acceptanceCriteria"]),
+            "criterionEvidencePolicy": json.loads(json.dumps(task["criterionEvidencePolicy"])),
+            "evaluationRequirements": list(task["evaluationRequirements"]),
+            "qaRequirements": list(task["qaRequirements"]),
+            "specification": self._text(self.specification, "specification"),
+            "acceptanceContract": self._text(self.acceptance_contract, "acceptance contract"),
+            "permittedRepositoryAreas": list(task["permittedRepositoryAreas"]),
+            "prohibitedRepositoryAreas": list(task["prohibitedRepositoryAreas"]),
+            "approvedCommands": list(task["executorPolicy"]["approvedCommands"]),
+            "authorityReferences": {
+                "permissionEnvelopeRef": task["permissionEnvelopeRef"],
+                "networkPolicyRef": task["dispatchPolicy"]["networkPolicyRef"],
+                "resourcePolicyRef": task["dispatchPolicy"]["resourcePolicyRef"],
+                "publisherPolicyRef": task["dispatchPolicy"]["publisherPolicyRef"],
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -176,6 +290,10 @@ class NormalizedExecutionRequest:
     resource_policy_ref: str
     publisher_policy_ref: str
     audit_provenance_id: str
+    execution_content_json: str
+    execution_content_fingerprint: str
+    observed_executor_identity_json: str
+    fallback_context_json: str
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -211,6 +329,10 @@ class NormalizedExecutionRequest:
             "resourcePolicyRef": self.resource_policy_ref,
             "publisherPolicyRef": self.publisher_policy_ref,
             "auditProvenanceId": self.audit_provenance_id,
+            "executionContent": json.loads(self.execution_content_json),
+            "executionContentFingerprint": self.execution_content_fingerprint,
+            "observedExecutorIdentity": json.loads(self.observed_executor_identity_json),
+            "fallbackContext": json.loads(self.fallback_context_json),
         }
 
 
@@ -219,6 +341,9 @@ def normalize_execution_request(
     task_fingerprint: str,
     profile: ExecutorProfile,
     lease: Any,
+    artifacts: ResolvedExecutionArtifacts,
+    observed_identity: ObservedExecutorIdentity | None = None,
+    fallback_context: Mapping[str, Any] | None = None,
 ) -> NormalizedExecutionRequest:
     if fingerprint(task) != task_fingerprint:
         raise ExecutionContractError("task fingerprint does not match validated task")
@@ -236,6 +361,16 @@ def normalize_execution_request(
     fencing_token = getattr(lease, "fencing_token", None)
     if not isinstance(fencing_token, int) or isinstance(fencing_token, bool) or fencing_token < 1:
         raise ExecutionContractError("fencingToken must be a positive integer")
+    if not isinstance(artifacts, ResolvedExecutionArtifacts):
+        raise ExecutionContractError("trusted resolved execution artifacts are required")
+    execution_content = artifacts.verified_content(task)
+    observed = observed_identity or ObservedExecutorIdentity.from_profile(profile)
+    observed.assert_matches(profile)
+    context = {} if fallback_context is None else json.loads(json.dumps(dict(fallback_context)))
+    if set(context) not in (set(), {"primaryAttemptId", "unavailableProfileId", "failureClassification"}):
+        raise ExecutionContractError("fallback context fields are invalid")
+    if context and context["failureClassification"] != "PROVIDER_UNAVAILABLE":
+        raise ExecutionContractError("fallback context must record trusted primary unavailability")
     return NormalizedExecutionRequest(
         task_id=task["taskId"], task_version=task["taskVersion"], task_fingerprint=task_fingerprint,
         originating_pm_instruction_ref=task["originatingPmInstructionRef"],
@@ -261,6 +396,10 @@ def normalize_execution_request(
         resource_policy_ref=policy["resourcePolicyRef"],
         publisher_policy_ref=policy["publisherPolicyRef"],
         audit_provenance_id=policy["auditProvenanceId"],
+        execution_content_json=canonical_json(execution_content).decode("ascii"),
+        execution_content_fingerprint=fingerprint(execution_content),
+        observed_executor_identity_json=canonical_json(observed.as_dict()).decode("ascii"),
+        fallback_context_json=canonical_json(context).decode("ascii"),
     )
 
 
@@ -362,13 +501,18 @@ def validate_execution_result(
     if value["disposition"] != "EXECUTION_SUCCEEDED" and classification == "NONE":
         raise ExecutionContractError("unsuccessful execution requires a failure classification")
     provenance = value["provenance"]
-    expected_provenance_fields = {"runtimeName", "runtimeVersion", "model", "launcherVersion", "profileFingerprint"}
+    expected_provenance_fields = {
+        "runtimeName", "runtimeVersion", "model", "launcherVersion", "profileFingerprint",
+        "observedExecutorIdentity",
+    }
     if not isinstance(provenance, dict) or set(provenance) != expected_provenance_fields:
         raise ExecutionContractError("execution provenance fields are invalid")
     if provenance["profileFingerprint"] != request.executor_profile_fingerprint:
         raise ExecutionContractError("execution provenance profile fingerprint mismatch")
-    for field in expected_provenance_fields - {"profileFingerprint"}:
+    for field in expected_provenance_fields - {"profileFingerprint", "observedExecutorIdentity"}:
         _nonempty(provenance[field], f"provenance.{field}")
+    if provenance["observedExecutorIdentity"] != json.loads(request.observed_executor_identity_json):
+        raise ExecutionContractError("execution provenance observed identity mismatch")
     return value
 
 

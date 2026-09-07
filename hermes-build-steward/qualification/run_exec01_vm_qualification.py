@@ -13,9 +13,14 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Any, Callable, Mapping, Protocol
+from urllib.parse import quote
 
 from hermes_steward.contracts import canonical_json, fingerprint
+from hermes_steward.contracts import validate_dispatch_build_task
 from hermes_steward.execution_contracts import ExecutorProfile
+from hermes_steward.execution_publisher import GitHubTransport
+from hermes_steward.store import StateStore
 
 
 CONTRACT_SHA256 = "527dcd77c93ffc75482ca5633469d455d83f38351c6183e67d3ca2aee88ebad0"
@@ -97,12 +102,199 @@ def sign_evidence(evidence: dict, attestation_key: bytes) -> dict:
     return value
 
 
+class TrustedQualificationResolver(Protocol):
+    def resolve(self) -> Mapping[str, Any]: ...
+
+
+class TrustedGitHubQualificationReadPath:
+    """Acquire branch, PR and check evidence through a repository-scoped trusted transport."""
+
+    def __init__(self, repository: str, transport: GitHubTransport):
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+            raise ValueError("qualification GitHub repository identity is invalid")
+        self.repository = repository
+        self.transport = transport
+
+    def read(self, provider: str, record: Mapping[str, Any]) -> dict[str, Any]:
+        branch = record["branch"]
+        commit_sha = record["commitSha"]
+        status, value = self.transport.request("GET", f"/git/ref/heads/{quote(str(branch), safe='')}")
+        observed_sha = (
+            value.get("object", {}).get("sha")
+            if status == 200 and isinstance(value, Mapping) and isinstance(value.get("object"), Mapping)
+            else None
+        )
+        if observed_sha != commit_sha:
+            _fail("trusted GitHub branch readback conflicts with the durable commit")
+        owner = self.repository.split("/", 1)[0]
+        status, values = self.transport.request(
+            "GET", f"/pulls?state=all&head={quote(owner + ':' + str(branch), safe=':')}"
+        )
+        matches = [
+            item for item in values
+            if isinstance(item, Mapping) and item.get("number") == record["draftPrNumber"]
+        ] if status == 200 and isinstance(values, list) else []
+        if len(matches) != 1:
+            _fail("trusted GitHub qualification readback requires exactly one task PR")
+        pull_request = matches[0]
+        head, base = pull_request.get("head"), pull_request.get("base")
+        if not isinstance(head, Mapping) or not isinstance(base, Mapping):
+            _fail("trusted GitHub pull-request readback is malformed")
+        status, value = self.transport.request("GET", f"/commits/{commit_sha}/check-runs")
+        check_runs = value.get("check_runs") if status == 200 and isinstance(value, Mapping) else None
+        if (
+            not isinstance(check_runs, list) or not check_runs
+            or any(
+                not isinstance(item, Mapping) or item.get("head_sha") != commit_sha
+                or item.get("conclusion") != "success"
+                for item in check_runs
+            )
+        ):
+            _fail("trusted GitHub check readback is missing, unbound, or unsuccessful")
+        normalized_checks = sorted(
+            ({"id": item.get("id"), "name": item.get("name"), "headSha": item.get("head_sha"),
+              "conclusion": item.get("conclusion")} for item in check_runs),
+            key=lambda item: (str(item["id"]), str(item["name"])),
+        )
+        return {
+            "provider": provider, "number": pull_request.get("number"), "head": head.get("ref"),
+            "commitSha": observed_sha, "base": base.get("ref"), "state": pull_request.get("state"),
+            "isDraft": pull_request.get("draft"),
+            "merged": pull_request.get("merged", pull_request.get("merged_at") is not None),
+            "checksReadbackFingerprint": fingerprint(normalized_checks),
+        }
+
+
+class DurableQualificationEvidenceCollector:
+    """Resolve qualification facts from durable authorities before signing."""
+
+    def __init__(
+        self, *, task_store: StateStore[Any], task_key: str,
+        result_store: StateStore[Mapping[str, Any]], probe_store: StateStore[Mapping[str, Any]],
+        check_store: StateStore[Mapping[str, Any]],
+        hermes_evidence_store: StateStore[Mapping[str, Any]],
+        github_reader: TrustedGitHubQualificationReadPath,
+        implementation_head_loader: Callable[[], str],
+    ):
+        self.task_store = task_store
+        self.task_key = task_key
+        self.result_store = result_store
+        self.probe_store = probe_store
+        self.check_store = check_store
+        self.hermes_evidence_store = hermes_evidence_store
+        self.github_reader = github_reader
+        self.implementation_head_loader = implementation_head_loader
+
+    @staticmethod
+    def _values(store: StateStore[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        values = []
+        for item in store.list_records():
+            if not isinstance(item.value, Mapping):
+                _fail("qualification durable store contains a malformed record")
+            values.append(dict(item.value))
+        return values
+
+    def resolve(self) -> Mapping[str, Any]:
+        value = self.task_store.get(self.task_key).value
+        raw_task = getattr(value, "task", value)
+        if not isinstance(raw_task, Mapping):
+            _fail("qualification task authority record is malformed")
+        task = validate_dispatch_build_task(raw_task)
+        task_fingerprint = fingerprint(task)
+        task_identity = {"id": task["taskId"], "version": task["taskVersion"], "fingerprint": task_fingerprint}
+        durable_values = self._values(self.result_store)
+        results = {
+            (item.get("taskFingerprint"), item.get("attemptId")): item
+            for item in durable_values if item.get("schemaVersion") == "1.0" and "disposition" in item
+        }
+        audits = [
+            item for item in durable_values
+            if item.get("schemaVersion") == "1.0" and isinstance(item.get("task"), Mapping)
+            and item["task"].get("fingerprint") == task_fingerprint
+            and isinstance(item.get("attempt"), Mapping)
+            and isinstance(item.get("publication"), Mapping)
+            and isinstance(item.get("executor"), Mapping)
+        ]
+        head_sha = self.implementation_head_loader()
+        records, pull_requests = [], []
+        for audit in audits:
+            attempt, publication, executor = audit["attempt"], audit["publication"], audit["executor"]
+            result = results.get((task_fingerprint, attempt.get("attemptId")))
+            draft_pr, repository = publication.get("draftPr"), audit.get("repository")
+            audit_result = audit.get("result")
+            if (
+                result is None or not isinstance(draft_pr, Mapping) or not isinstance(repository, Mapping)
+                or not isinstance(audit_result, Mapping) or repository.get("url") != task["repository"]
+                or repository.get("baseSha") != task["baseRef"]
+                or result.get("disposition") != audit_result.get("disposition")
+                or result.get("taskId") != task["taskId"] or result.get("taskVersion") != task["taskVersion"]
+                or result.get("baseSha") != task["baseRef"]
+                or result.get("auditProvenanceId") != audit.get("auditProvenanceId")
+                or not isinstance(result.get("executorProfile"), Mapping)
+                or result["executorProfile"].get("profileFingerprint") != executor.get("profileFingerprint")
+                or result.get("branch") != publication.get("branch")
+                or result.get("commitSha") != publication.get("commitSha")
+                or not isinstance(result.get("draftPr"), Mapping)
+                or result["draftPr"].get("number") != draft_pr.get("number")
+            ):
+                _fail("durable result and audit provenance do not agree")
+            record = {
+                "task": task_identity, "attemptId": attempt.get("attemptId"),
+                "leaseId": attempt.get("leaseId"), "fencingToken": attempt.get("fencingToken"),
+                "profileFingerprint": executor.get("profileFingerprint"), "baseSha": task["baseRef"],
+                "headSha": head_sha, "branch": publication.get("branch"),
+                "commitSha": publication.get("commitSha"), "draftPrNumber": draft_pr.get("number"),
+                "disposition": result.get("disposition"),
+            }
+            record["recordFingerprint"] = fingerprint(record)
+            records.append(record)
+            provider = executor.get("provider")
+            if not isinstance(provider, str):
+                _fail("durable executor provider provenance is missing")
+            pull_requests.append(self.github_reader.read(provider, record))
+
+        probes = [item for item in self._values(self.probe_store) if item.get("taskFingerprint") == task_fingerprint]
+        hermes_values = [
+            item for item in self._values(self.hermes_evidence_store)
+            if item.get("taskFingerprint") == task_fingerprint
+        ]
+        if len(hermes_values) != 1:
+            _fail("qualification requires exactly one independently acquired Hermes disposition")
+        checks: dict[str, Any] = {}
+        for item in self._values(self.check_store):
+            if item.get("taskFingerprint") != task_fingerprint:
+                continue
+            if set(item) != {"taskFingerprint", "name", "origin", "evidenceFingerprint"}:
+                _fail("qualification check authority record is malformed")
+            if item["name"] in checks:
+                _fail("qualification check authority contains duplicates")
+            checks[str(item["name"])] = {
+                "origin": item["origin"], "evidenceFingerprint": item["evidenceFingerprint"]
+            }
+        return {
+            "buildId": "EXEC-01", "contractSha256": CONTRACT_SHA256,
+            "classification": "synthetic-non-client", "repository": task["repository"],
+            "baseSha": task["baseRef"], "headSha": head_sha, "task": task_identity,
+            "profileFingerprints": {}, "executionRecords": records,
+            "pullRequestReadback": pull_requests, "containmentProbeEvidence": probes,
+            "checks": checks, "hermesEvidence": hermes_values[0],
+            "restrictions": {"draftPrOnly": True, "merged": False, "deployment": False,
+                             "productionActivation": False, "clientDocuments": False},
+        }
+
+    def collect_and_sign(self, profiles: Mapping[str, ExecutorProfile], attestation_key: bytes) -> dict:
+        value = dict(self.resolve())
+        value["profileFingerprints"] = {provider: item.fingerprint for provider, item in profiles.items()}
+        return sign_evidence(value, attestation_key)
+
+
 def _fail(message: str) -> None:
     raise SystemExit(message)
 
 
 def verify_evidence(
-    profiles: dict[str, ExecutorProfile], evidence: dict, *, attestation_key: bytes
+    profiles: dict[str, ExecutorProfile], evidence: dict, *, attestation_key: bytes,
+    trusted_resolver: TrustedQualificationResolver | None = None,
 ) -> dict:
     if not isinstance(evidence, dict) or set(evidence) != {
         "buildId", "contractSha256", "classification", "repository", "baseSha", "headSha", "task",
@@ -119,6 +311,12 @@ def verify_evidence(
         or not hmac.compare_digest(str(attestation.get("digest", "")), expected_signature)
     ):
         _fail("qualification evidence attestation is invalid")
+    if trusted_resolver is None:
+        _fail("qualification requires independent trusted evidence acquisition")
+    resolved = json.loads(json.dumps(dict(trusted_resolver.resolve())))
+    resolved["profileFingerprints"] = {provider: item.fingerprint for provider, item in profiles.items()}
+    if resolved != unsigned:
+        _fail("signed qualification package does not match independently acquired trusted evidence")
     if evidence.get("buildId") != "EXEC-01" or evidence.get("classification") != "synthetic-non-client":
         raise SystemExit("qualification evidence must be EXEC-01 synthetic-non-client")
     if evidence.get("contractSha256") != CONTRACT_SHA256:
@@ -131,7 +329,8 @@ def verify_evidence(
     if (
         not isinstance(task, dict) or set(task) != {"id", "version", "fingerprint"}
         or not isinstance(task.get("id"), str) or not task["id"]
-        or task.get("version") != 2 or not re.fullmatch(r"[0-9a-f]{64}", str(task.get("fingerprint", "")))
+        or not isinstance(task.get("version"), int) or isinstance(task.get("version"), bool) or task["version"] < 1
+        or not re.fullmatch(r"[0-9a-f]{64}", str(task.get("fingerprint", "")))
     ):
         _fail("qualification task identity is invalid")
     observed = evidence.get("profileFingerprints")
@@ -188,14 +387,15 @@ def verify_evidence(
     seen_prs = set()
     for item in pull_requests:
         if not isinstance(item, dict) or set(item) != {
-            "provider", "number", "head", "commitSha", "base", "isDraft", "merged", "checksReadbackFingerprint",
+            "provider", "number", "head", "commitSha", "base", "state", "isDraft", "merged", "checksReadbackFingerprint",
         }:
             _fail("trusted pull-request readback fields are invalid")
         record = record_by_provider.get(item["provider"])
         if (
             record is None or item["number"] in seen_prs or item["number"] != record["draftPrNumber"]
             or item["head"] != record["branch"] or item["commitSha"] != record["commitSha"]
-            or item["base"] != "main" or item["isDraft"] is not True or item["merged"] is not False
+            or item["base"] != "main" or item["state"] != "open"
+            or item["isDraft"] is not True or item["merged"] is not False
             or not re.fullmatch(r"[0-9a-f]{64}", str(item["checksReadbackFingerprint"]))
         ):
             _fail("trusted pull-request readback conflicts with durable execution provenance")
@@ -225,7 +425,7 @@ def verify_evidence(
         or hermes["origin"] != "trusted-hermes-independent"
         or not isinstance(hermes["evidenceIdentity"], str) or not hermes["evidenceIdentity"].startswith("hermes://")
         or hermes["taskFingerprint"] != task["fingerprint"]
-        or hermes["disposition"] not in {"PASS", "FAIL"}
+        or hermes["disposition"] != "PASS"
     ):
         _fail("qualification requires independently sourced Hermes evidence")
     if evidence.get("restrictions") != {

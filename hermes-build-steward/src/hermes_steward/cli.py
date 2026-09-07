@@ -10,7 +10,7 @@ from .contracts import validate_build_task, validate_dispatch_build_task, valida
 from .coordinator import Coordinator
 from .health_server import create_health_server
 from .identity import build_graph_token_provider
-from .execution_runtime import ExecutionRuntimeConfig, build_production_execution_service
+from .execution_runtime import BoundArtifactResolver, ExecutionRuntimeConfig, build_production_execution_service
 from .sharepoint_store import SharePointListStateStore
 
 
@@ -59,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--config", required=True)
     dispatch.add_argument("--execution-config", required=True)
     dispatch.add_argument("--task", required=True)
+    dispatch.add_argument("--pm-instruction", required=True)
     dispatch.add_argument("--specification", required=True)
     dispatch.add_argument("--acceptance-contract", required=True)
     for name, help_text in (
@@ -69,6 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--config", required=True)
         command.add_argument("--execution-config", required=True)
         command.add_argument("--task", required=True)
+        command.add_argument("--pm-instruction", required=True)
+        command.add_argument("--specification", required=True)
+        command.add_argument("--acceptance-contract", required=True)
     return parser
 
 
@@ -105,12 +109,20 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("trusted GitHub publisher credential is unavailable")
             return value
 
-        service = build_production_execution_service(hermes, execution_config, token_provider, publisher_credential)
         task = _read_json(arguments.task)
+        artifact_resolver = BoundArtifactResolver(
+            pm_ref=task["originatingPmInstructionRef"],
+            pm_instruction=Path(arguments.pm_instruction).read_bytes(),
+            specification_ref=task["specificationRef"],
+            specification=Path(arguments.specification).read_bytes(),
+            acceptance_contract_ref=task["acceptanceContractRef"],
+            acceptance_contract=Path(arguments.acceptance_contract).read_bytes(),
+        )
+        service = build_production_execution_service(
+            hermes, execution_config, token_provider, publisher_credential, artifact_resolver,
+        )
         if arguments.command == "exec-dispatch":
-            record = service.dispatch(
-                task, Path(arguments.specification).read_bytes(), Path(arguments.acceptance_contract).read_bytes()
-            )
+            record = service.dispatch(task)
         elif arguments.command == "exec-resume":
             record = service.resume(task)
         else:

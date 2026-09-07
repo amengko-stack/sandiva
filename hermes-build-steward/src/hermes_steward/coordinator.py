@@ -214,6 +214,32 @@ class Coordinator:
 
         return self._mutate(key, mutation)
 
+    def record_execution_unavailable(
+        self, task_id: str, task_version: int, lease_id: str, fencing_token: int,
+        profile_id: str,
+    ) -> TaskRecord:
+        """Close one technical attempt so an authorized fallback gets a fresh fence/attempt."""
+        if not isinstance(profile_id, str) or not profile_id:
+            raise CoordinatorError("unavailable executor profile identity is required")
+        key = self._key(task_id, task_version)
+
+        def mutation(record: TaskRecord) -> TaskRecord:
+            lease = self._assert_fence(record, lease_id, fencing_token)
+            if record.status != TaskStatus.LEASED:
+                raise CoordinatorError("executor unavailability can only close a leased attempt")
+            record.failure_history.append({
+                "attemptId": lease.attempt_id,
+                "disposition": "PROVIDER_UNAVAILABLE",
+                "profileId": profile_id,
+                "at": self.clock().isoformat(),
+            })
+            self._transition(record, TaskStatus.REWORK_REQUIRED, "trusted executor profile unavailable")
+            self._event(record, "EXECUTOR_PROFILE_UNAVAILABLE", attemptId=lease.attempt_id, profileId=profile_id)
+            record.active_lease = None
+            return record
+
+        return self._mutate(key, mutation)
+
     def begin_verification(self, task_id: str, task_version: int, lease_id: str, fencing_token: int) -> TaskRecord:
         key = self._key(task_id, task_version)
 

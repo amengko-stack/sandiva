@@ -32,8 +32,13 @@ class InMemoryGitHubGateway:
         self.crash_point = None
         self.prepared_commits = {}
 
-    def get_prepared_commit(self, pr_identity):
-        return self.prepared_commits.get(pr_identity)
+    def get_prepared_commit(self, pr_identity, expected_metadata):
+        value = self.prepared_commits.get(pr_identity)
+        if value is None:
+            return None
+        if value["metadata"] != dict(expected_metadata):
+            raise PublicationConflict("conflicting prepared commit ownership")
+        return value["sha"]
 
     def get_branch(self, branch):
         return self.branches.get(branch)
@@ -43,7 +48,7 @@ class InMemoryGitHubGateway:
         self.commit_calls += 1
         sha = f"{self.commit_calls:040x}"
         self.commits[sha] = {"branch": branch, **metadata}
-        self.prepared_commits[metadata["prIdentity"]] = sha
+        self.prepared_commits[metadata["prIdentity"]] = {"sha": sha, "metadata": dict(metadata)}
         if self.crash_point == "AFTER_COMMIT":
             raise RuntimeError("crash after local commit")
         return sha
@@ -63,6 +68,8 @@ class InMemoryGitHubGateway:
             "number": self.pr_calls,
             "url": f"https://github.com/amengko-stack/sandiva/pull/{self.pr_calls}",
             "isDraft": True,
+            "state": "open",
+            "merged": False,
             "head": branch,
             "base": base,
             "title": title,

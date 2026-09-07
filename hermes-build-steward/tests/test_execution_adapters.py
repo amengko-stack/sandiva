@@ -13,8 +13,10 @@ from hermes_steward.execution_contracts import (
     ExecutorProfile,
     ExecutorProfileRegistry,
     normalize_execution_request,
+    ResolvedExecutionArtifacts,
     validate_execution_result,
 )
+from helpers import AC_BYTES, PM_BYTES, SPEC_BYTES
 from test_execution_task_contract import dispatch_task
 
 
@@ -27,13 +29,16 @@ def profile(provider: str) -> ExecutorProfile:
         runtime_name=f"{name}-cli",
         runtime_version="synthetic-1.0.0",
         model="synthetic-conformance-model",
-        launcher_version="exec-01.1",
+        launcher_version="exec01-runtime-v1.0.0",
         executable_digest=("c" if provider == "codex" else "d") * 64,
         fixed_argv=(launcher, "--non-interactive", "--model", "synthetic-conformance-model"),
         image="registry.example/sandiva/executor@sha256:" + ("e" if provider == "codex" else "f") * 64,
         credential_mode="trusted-egress-gateway",
         gateway_endpoint="executor-gateway.sandiva.internal:8443",
         allowed_endpoints=("executor-gateway.sandiva.internal:8443", "registry.npmjs.org:443"),
+        runtime_wrapper_digest=("8" if provider == "codex" else "9") * 64,
+        gateway_implementation_digest="a" * 64,
+        gateway_policy_digest="b" * 64,
     )
 
 
@@ -47,7 +52,10 @@ def request_for(executor_profile: ExecutorProfile):
     task["dispatchPolicy"]["fallbackMode"] = "NONE"
     validated = validate_dispatch_build_task(task)
     lease = SimpleNamespace(attempt_id="attempt-exec-01", lease_id="lease-01", fencing_token=7)
-    return normalize_execution_request(validated, fingerprint(validated), executor_profile, lease)
+    return normalize_execution_request(
+        validated, fingerprint(validated), executor_profile, lease,
+        ResolvedExecutionArtifacts(PM_BYTES, SPEC_BYTES, AC_BYTES),
+    )
 
 
 class SyntheticRunner:
@@ -59,7 +67,12 @@ class SyntheticRunner:
         del workspace
         if profile.provider != self.provider:
             raise AssertionError("wrong provider adapter invoked the runner")
-        return dict(self.response)
+        value = dict(self.response)
+        value.setdefault(
+            "protocol",
+            "codex-exec-jsonl-v1" if self.provider == "codex" else "claude-code-stream-json-v1",
+        )
+        return value
 
 
 class ExecutorProfileTests(unittest.TestCase):
@@ -83,6 +96,9 @@ class ExecutorProfileTests(unittest.TestCase):
             },
             "launcher": {"launcher_version": "changed"},
             "executable": {"executable_digest": "1" * 64},
+            "runtime wrapper": {"runtime_wrapper_digest": "3" * 64},
+            "gateway implementation": {"gateway_implementation_digest": "4" * 64},
+            "gateway policy": {"gateway_policy_digest": "5" * 64},
             "argv": {"fixed_argv": ("codex", "exec", "--dangerously-bypass", baseline.model)},
             "image": {"image": "registry.example/x@sha256:" + "2" * 64},
             "network": {"allowed_endpoints": ("executor-gateway.sandiva.internal:8443", "attacker.example:443")},

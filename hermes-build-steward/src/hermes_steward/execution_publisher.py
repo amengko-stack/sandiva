@@ -232,7 +232,7 @@ class GitHubPublisherGateway:
             raise PublicationConflict("publisher workspace is not bound")
         return self._workspace
 
-    def get_prepared_commit(self, pr_identity: str) -> str | None:
+    def get_prepared_commit(self, pr_identity: str, expected_metadata: Mapping[str, Any]) -> str | None:
         workspace = self._require_workspace()
         try:
             message = self._git.run(workspace, ("log", "-1", "--format=%B"))
@@ -241,6 +241,9 @@ class GitHubPublisherGateway:
             return None
         if metadata.get("prIdentity") != pr_identity:
             return None
+        for field, expected in expected_metadata.items():
+            if metadata.get(field) != expected:
+                raise PublicationConflict("conflicting prepared commit ownership")
         commit_sha = self._git.run(workspace, ("rev-parse", "HEAD"))
         return commit_sha if re.fullmatch(r"[0-9a-f]{40}", commit_sha) else None
 
@@ -329,6 +332,7 @@ class GitHubPublisherGateway:
         item, metadata = matches[0]
         return {
             "number": item.get("number"), "url": item.get("html_url"), "isDraft": item.get("draft"),
+            "state": item.get("state"),
             "merged": item.get("merged", False),
             "head": item.get("head", {}).get("ref") if isinstance(item.get("head"), dict) else None,
             "base": item.get("base", {}).get("ref") if isinstance(item.get("base"), dict) else None,
@@ -384,7 +388,7 @@ class TrustedGitHubPublisher:
     ) -> None:
         for field in (
             "taskFingerprint", "baseSha", "patchDigest", "specificationHash",
-            "acceptanceContractHash", "executorProfileFingerprint", "prIdentity",
+            "acceptanceContractHash", "executorProfileFingerprint", "prIdentity", "attemptId",
         ):
             if value.get(field) != expected[field]:
                 raise PublicationConflict(f"conflicting {kind} ownership")
@@ -422,7 +426,7 @@ class TrustedGitHubPublisher:
                 raise PublicationConflict("conflicting branch commit identity")
         else:
             prepared_reader = getattr(self._gateway, "get_prepared_commit", None)
-            commit_sha = prepared_reader(pr_identity) if callable(prepared_reader) else None
+            commit_sha = prepared_reader(pr_identity, metadata) if callable(prepared_reader) else None
             if commit_sha is None:
                 assert_current_authority()
                 self._authority.require("create_task_commit")
@@ -471,11 +475,14 @@ class TrustedGitHubPublisher:
 
         self._assert_metadata(draft_pr, metadata, "pull request")
         if (
+            draft_pr.get("state") != "open"
+            or draft_pr.get("merged", False) is not False
+            or
             draft_pr.get("isDraft") is not True
             or draft_pr.get("head") != branch
             or draft_pr.get("base") != "main"
         ):
-            raise PublicationConflict("pull request is not the expected task-bound draft")
+            raise PublicationConflict("pull request must be open, draft, unmerged, and task-bound")
         return PublicationRecord(
             branch=branch,
             commit_sha=commit_sha,

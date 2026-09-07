@@ -37,6 +37,9 @@ jobs:
         env:
           PYTHONPATH: src
         run: python -m unittest discover -s tests -v
+      - name: Source-controlled executor runtime protocol tests
+        run: go test ./...
+        working-directory: hermes-build-steward/runtime/exec01-runtime
       - name: Syntax and bytecode compilation
         run: python -m compileall -q src tests qualification
       - name: Secret-pattern and local-path hygiene

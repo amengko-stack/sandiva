@@ -32,6 +32,17 @@ class ProviderHTTPTransport(Protocol):
 
 
 class UrlLibProviderHTTPTransport:
+    def __init__(self, response_limit_bytes: int = 1024 * 1024):
+        if not isinstance(response_limit_bytes, int) or response_limit_bytes < 64:
+            raise ValueError("provider response limit is invalid")
+        self.response_limit_bytes = response_limit_bytes
+
+    def _read_bounded(self, stream: Any) -> bytes:
+        raw = stream.read(self.response_limit_bytes + 1)
+        if len(raw) > self.response_limit_bytes:
+            raise ExecutorGatewayDenied("provider response exceeds its size bound")
+        return raw
+
     def request(
         self, url: str, headers: Mapping[str, str], body: Mapping[str, Any], timeout_seconds: int
     ) -> tuple[int, Mapping[str, Any]]:
@@ -41,16 +52,22 @@ class UrlLibProviderHTTPTransport:
         )
         try:
             with urlopen(request, timeout=timeout_seconds) as response:
-                raw = response.read()
-                value = json.loads(raw)
+                raw = self._read_bounded(response)
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError as error:
+                    raise ExecutorGatewayDenied("provider returned malformed JSON") from error
                 return response.status, value
         except HTTPError as error:
-            raw = error.read()
             try:
-                value = json.loads(raw)
-            except json.JSONDecodeError:
-                value = {"error": "provider returned a non-JSON error"}
-            return error.code, value
+                raw = self._read_bounded(error)
+                try:
+                    value = json.loads(raw)
+                except json.JSONDecodeError:
+                    value = {"error": "provider returned a non-JSON error"}
+                return error.code, value
+            finally:
+                error.close()
 
 
 class CodexGatewayBackend:
@@ -61,23 +78,10 @@ class CodexGatewayBackend:
         self, profile: ExecutorProfile, request: NormalizedExecutionRequest,
         credential: str, timeout_seconds: int,
     ) -> Mapping[str, Any]:
-        if profile.provider != "codex":
-            raise ExecutorGatewayDenied("Codex backend profile mismatch")
-        status, value = self.transport.request(
-            "https://api.openai.com/v1/responses",
-            {"Authorization": f"Bearer {credential}", "Content-Type": "application/json"},
-            {
-                "model": profile.model,
-                "input": json.dumps(request.as_dict(), sort_keys=True, separators=(",", ":")),
-                "metadata": {"taskFingerprint": request.task_fingerprint, "attemptId": request.attempt_id},
-                "max_output_tokens": 32768,
-                "store": False,
-            },
-            timeout_seconds,
+        del profile, request, credential, timeout_seconds
+        raise ExecutorGatewayDenied(
+            "one-shot Codex API responses are not software-build executions; use the reviewed CLI proxy gateway"
         )
-        if status < 200 or status >= 300 or not isinstance(value, Mapping):
-            raise ExecutorGatewayDenied(f"Codex provider returned HTTP {status}")
-        return dict(value)
 
 
 class ClaudeGatewayBackend:
@@ -88,25 +92,10 @@ class ClaudeGatewayBackend:
         self, profile: ExecutorProfile, request: NormalizedExecutionRequest,
         credential: str, timeout_seconds: int,
     ) -> Mapping[str, Any]:
-        if profile.provider != "claude-code":
-            raise ExecutorGatewayDenied("Claude backend profile mismatch")
-        status, value = self.transport.request(
-            "https://api.anthropic.com/v1/messages",
-            {"x-api-key": credential, "anthropic-version": "2023-06-01", "Content-Type": "application/json"},
-            {
-                "model": profile.model,
-                "max_tokens": 32768,
-                "messages": [{"role": "user", "content": json.dumps(request.as_dict(), sort_keys=True, separators=(",", ":"))}],
-                "metadata": {"user_id": fingerprint({
-                    "taskFingerprint": request.task_fingerprint,
-                    "attemptId": request.attempt_id,
-                })},
-            },
-            timeout_seconds,
+        del profile, request, credential, timeout_seconds
+        raise ExecutorGatewayDenied(
+            "one-shot Claude Messages responses are not software-build executions; use the reviewed CLI proxy gateway"
         )
-        if status < 200 or status >= 300 or not isinstance(value, Mapping):
-            raise ExecutorGatewayDenied(f"Claude provider returned HTTP {status}")
-        return dict(value)
 
 
 def gateway_request(request: NormalizedExecutionRequest, profile: ExecutorProfile) -> dict[str, Any]:
