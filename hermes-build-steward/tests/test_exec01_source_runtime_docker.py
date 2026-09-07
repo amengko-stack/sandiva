@@ -22,6 +22,23 @@ from test_execution_task_contract import dispatch_task
 
 @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("docker") and shutil.which("go"), "requires Linux Docker and Go")
 class SourceControlledRuntimeDockerTests(unittest.TestCase):
+    @staticmethod
+    def _reproducible_build(tag, dockerfile, context, build_args):
+        command = [
+            "docker", "buildx", "build", "--pull=false", "--no-cache", "--provenance=false",
+            "--build-arg", "SOURCE_DATE_EPOCH=1704067200",
+        ]
+        for key, value in build_args.items():
+            command.extend(("--build-arg", f"{key}={value}"))
+        command.extend((
+            "--output", f"type=docker,name={tag},rewrite-timestamp=true",
+            "-f", str(dockerfile), str(context),
+        ))
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+        return subprocess.check_output(
+            ["docker", "image", "inspect", tag, "--format", "{{.Id}}"], text=True
+        ).strip()
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -32,17 +49,37 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             values = json.loads(subprocess.check_output(["docker", "image", "inspect", tag], text=True))[0]["RepoDigests"]
             return next(value for value in values if "@sha256:" in value)
         build_image, runtime_image, python_image = pinned("golang:1.23-alpine"), pinned("alpine:3.20"), pinned("python:3.11-alpine")
-        cls.image = subprocess.check_output([
-            "docker", "build", "-q", "--pull=false", "--build-arg", f"BUILD_IMAGE={build_image}",
-            "--build-arg", f"RUNTIME_IMAGE={runtime_image}", "-f", str(runtime / "Dockerfile.emulator"), str(runtime),
-        ], text=True).strip()
+        cls.image = cls._reproducible_build(
+            "sandiva-exec01-runtime:repro-test",
+            runtime / "Dockerfile.emulator",
+            runtime,
+            {"BUILD_IMAGE": build_image, "RUNTIME_IMAGE": runtime_image},
+        )
+        repeated_runtime = cls._reproducible_build(
+            "sandiva-exec01-runtime:repro-test",
+            runtime / "Dockerfile.emulator",
+            runtime,
+            {"BUILD_IMAGE": build_image, "RUNTIME_IMAGE": runtime_image},
+        )
+        if repeated_runtime != cls.image:
+            raise RuntimeError("runtime image build is not reproducible")
         if not cls.image.startswith("sha256:"): raise RuntimeError("runtime image is not content-addressed")
         print(f"EXEC01_CODE_QA_RUNTIME_IMAGE={cls.image}")
         repository = Path(__file__).parents[1]
-        cls.gateway_image = subprocess.check_output([
-            "docker", "build", "-q", "--pull=false", "--build-arg", f"PYTHON_IMAGE={python_image}",
-            "-f", str(repository / "runtime" / "executor-gateway" / "Dockerfile"), str(repository),
-        ], text=True).strip()
+        cls.gateway_image = cls._reproducible_build(
+            "sandiva-exec01-gateway:repro-test",
+            repository / "runtime" / "executor-gateway" / "Dockerfile",
+            repository,
+            {"PYTHON_IMAGE": python_image},
+        )
+        repeated_gateway = cls._reproducible_build(
+            "sandiva-exec01-gateway:repro-test",
+            repository / "runtime" / "executor-gateway" / "Dockerfile",
+            repository,
+            {"PYTHON_IMAGE": python_image},
+        )
+        if repeated_gateway != cls.gateway_image:
+            raise RuntimeError("gateway image build is not reproducible")
         if not cls.gateway_image.startswith("sha256:"): raise RuntimeError("gateway image is not content-addressed")
         print(f"EXEC01_CODE_QA_GATEWAY_IMAGE={cls.gateway_image}")
 

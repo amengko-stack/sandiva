@@ -3,5 +3,9 @@ set -eu
 case "${1:-}" in *@sha256:????????????????????????????????????????????????????????????????) ;; *) echo "python image must be digest pinned" >&2; exit 2;; esac
 tag="${2:-sandiva-exec01-gateway:code-qa}"
 root="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
-docker build --pull=false --build-arg "PYTHON_IMAGE=$1" -f "$root/runtime/executor-gateway/Dockerfile" -t "$tag" "$root"
+epoch="${SOURCE_DATE_EPOCH:-1704067200}"
+docker buildx build --pull=false --provenance=false \
+  --build-arg "SOURCE_DATE_EPOCH=$epoch" --build-arg "PYTHON_IMAGE=$1" \
+  --output "type=docker,name=$tag,rewrite-timestamp=true" \
+  -f "$root/runtime/executor-gateway/Dockerfile" "$root"
 docker image inspect "$tag" --format '{{.Id}}'
