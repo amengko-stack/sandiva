@@ -144,9 +144,11 @@ func main() {
 	}
 	execution, actionErr := action(sequence, "Bash", map[string]interface{}{"command": command, "cwd": "/workspace"})
 	sequence++
-	exitCode, exitCodeOK := 0.0, false
+	exitCode, exitCodeOK := 0.0, true
 	if execution != nil {
-		exitCode, exitCodeOK = execution["exitCode"].(float64)
+		if rawExitCode, present := execution["exitCode"]; present {
+			exitCode, exitCodeOK = rawExitCode.(float64)
+		}
 	}
 	if actionErr != nil || execution["disposition"] != "authorized_and_executed" || !exitCodeOK || exitCode != 0 {
 		if execution != nil && execution["disposition"] == "denied_before_execution" {

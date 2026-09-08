@@ -326,7 +326,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         _, result, _ = self._run_bcf(
             "printf forged > hermes-build-steward/forged-ledger\n"
             "rm /run/exec/authority/action-ledger.jsonl 2>/dev/null && rm_result=ALLOWED || rm_result=DENIED\n"
-            ": > /run/exec/authority/action-ledger.jsonl 2>/dev/null && truncate_result=ALLOWED || truncate_result=DENIED\n"
+            "dd if=/dev/null of=/run/exec/authority/action-ledger.jsonl 2>/dev/null && truncate_result=ALLOWED || truncate_result=DENIED\n"
             "mv hermes-build-steward/forged-ledger /run/exec/authority/action-ledger.jsonl 2>/dev/null && rename_result=ALLOWED || rename_result=DENIED\n"
             "printf '%s,%s,%s\\n' \"$rm_result\" \"$truncate_result\" \"$rename_result\" > hermes-build-steward/bcf-observation.txt\n"
         )
