@@ -105,6 +105,22 @@ beforeEach(() => {
 });
 
 describe("H-9 frozen fixture map: deterministic input and completion", () => {
+  it("N01: extraction-engine identity changes provenance, not normalized coverage behavior", async () => {
+    const baseline = prepareNarrativeInput(input("Normalized synthetic source text."));
+    for (const mode of ["pdf-text", "ocr", "markitdown", "synthetic-future-extractor"]) {
+      const source = input("Normalized synthetic source text.");
+      source.extractReport = { ...report(), files: report().files.map((f) => ({ ...f, extractionMode: mode })) };
+      const prepared = prepareNarrativeInput(source);
+      expect(prepared.docsText).toBe(baseline.docsText);
+      expect(prepared.coverage.files).toEqual(baseline.coverage.files);
+      expect(prepared.coverage.status).toBe("full_supplied_input");
+      // Producer metadata remains provenance-sensitive, never an engine allowlist.
+      expect(prepared.coverage.sourceFingerprint).not.toBe(baseline.coverage.sourceFingerprint);
+      const n = await run(source);
+      expect(n.coverage?.status).toBe("full_supplied_input");
+    }
+    expect(fake.create).toHaveBeenCalledTimes(4); // Four explicitly requested fake calls, no external provider.
+  });
   it("F01: zero, one and multiple files have exact body/header accounting", () => {
     const zero = prepareNarrativeInput({ ...input(), classified: [], contentByFile: new Map(), extractReport: report([]) });
     expect(zero.coverage.includedChars).toBe(0);
