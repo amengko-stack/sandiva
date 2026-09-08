@@ -356,16 +356,24 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "0\n")
 
     def test_bcf_06_repository_command_cannot_contact_gateway(self):
+        gateway_state = json.loads(subprocess.check_output(["docker", "inspect", self.gateway], text=True))[0]
+        gateway_ip = gateway_state["NetworkSettings"]["Networks"][self.network]["IPAddress"]
         _, result, _ = self._run_bcf(
-            "if busybox wget -q -O hermes-build-steward/gateway-response http://executor-gateway.sandiva.internal:8443/ 2>hermes-build-steward/gateway-stderr; then outcome=ALLOWED; else outcome=DENIED; fi\n"
-            "printf '%s\\n' \"$outcome\" > hermes-build-steward/bcf-observation.txt\n"
+            "if busybox wget -q -O hermes-build-steward/gateway-host-response http://executor-gateway.sandiva.internal:8443/ 2>hermes-build-steward/gateway-host-stderr; then host=ALLOWED; else host=DENIED; fi\n"
+            f"if busybox wget -q -O hermes-build-steward/gateway-ip-response http://{gateway_ip}:8443/ 2>hermes-build-steward/gateway-ip-stderr; then ip=ALLOWED; else ip=DENIED; fi\n"
+            "printf '%s,%s\\n' \"$host\" \"$ip\" > hermes-build-steward/bcf-observation.txt\n"
         )
         self._assert_bcf_success(result)
-        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED\n")
-        self.assertFalse((self.workspace/"hermes-build-steward"/"gateway-response").exists())
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED,DENIED\n")
+        self.assertFalse((self.workspace/"hermes-build-steward"/"gateway-host-response").exists())
+        self.assertFalse((self.workspace/"hermes-build-steward"/"gateway-ip-response").exists())
+        self.assertIn(
+            "bad address",
+            (self.workspace/"hermes-build-steward"/"gateway-host-stderr").read_text().lower(),
+        )
         self.assertIn(
             "operation not permitted",
-            (self.workspace/"hermes-build-steward"/"gateway-stderr").read_text().lower(),
+            (self.workspace/"hermes-build-steward"/"gateway-ip-stderr").read_text().lower(),
         )
 
     def test_bcf_07_action_capability_cannot_be_recovered_or_replayed(self):
