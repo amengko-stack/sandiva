@@ -1,13 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { inflateRawSync } from "node:zlib";
 import { readFileSync } from "node:fs";
+import * as React from "react";
+import * as jsxRuntime from "react/jsx-runtime";
+import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
 import type Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import { extractNarrativeSectionI, parseNarrativeResponse } from "@/lib/dd/narrative";
 import { coverageNotes, emptyNarrative, parseNarrativeCoverage, prepareNarrativeInput, reconcileNarrative, type NarrativeInput } from "@/lib/dd/narrative-coverage";
 import { renderNarrativeSectionI } from "@/lib/dd/narrative-render";
 import { ddKeys } from "@/lib/dd/blob-keys";
-import type { DDClassifiedDoc, DDNarrativeSectionI, DDTransaction } from "@/types/dd";
+import type { DDClassifiedDoc, DDNarrativeSectionI, DDReportFormat, DDTransaction } from "@/types/dd";
+import type { NarrativeNotice } from "@/components/dd/DDStage5Review";
+
+// The application's Vitest config preserves JSX for Next.js. Compile the actual
+// caller module with the installed TypeScript compiler, then execute its real
+// stream consumer and notice component. Unused surrounding UI imports cannot run.
+const uiExports: Record<string, unknown> = {};
+const uiCode = ts.transpileModule(readFileSync("components/dd/DDStage5Review.tsx", "utf8"), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+}).outputText;
+new Function("require", "exports", uiCode)((name: string) => {
+  if (name === "react") return React;
+  if (name === "react/jsx-runtime") return jsxRuntime;
+  if (name === "@/context/DDContext") return { useDD: () => { throw new Error("Context not part of notice test"); } };
+  if (name === "@/components/dd/DDSourcePreview") return { default: () => null };
+  if (name === "@/config/ddAspects") return { aspectLabel: () => "synthetic" };
+  throw new Error(`Unexpected UI import: ${name}`);
+}, uiExports);
+const { consumeNarrativeStream, NarrativeCoverageNotice, narrativeNoticeFromResponse } = uiExports as typeof import("@/components/dd/DDStage5Review");
 
 const fake = vi.hoisted(() => ({ blobs: new Map<string, string>(), create: vi.fn(), read: vi.fn(), write: vi.fn(), construct: vi.fn() }));
 vi.mock("@/lib/blob", async (original) => ({
@@ -18,7 +40,7 @@ vi.mock("@anthropic-ai/sdk", () => ({ default: class {
   constructor() { fake.construct(); }
   messages = { create: fake.create };
 } }));
-import { POST } from "@/app/api/dd/narrative/route";
+import { GET, POST } from "@/app/api/dd/narrative/route";
 import { loadEntityResults } from "@/lib/dd/load-results";
 import { buildDdReportDocx } from "@/lib/dd/dd-docx-builder";
 
@@ -145,6 +167,13 @@ describe("H-9 frozen fixture map: deterministic input and completion", () => {
     expect(parseNarrativeResponse("```json\n" + generated() + "\n```", "end_turn", { entityId: "e1" }).entityId).toBe("e1");
     expect(() => parseNarrativeResponse("Here is JSON: " + generated(), "end_turn", { entityId: "e1" })).toThrow();
   });
+  it.each(["{}", generated({ establishment: "refusal" }), generated({ amendments: null }), generated({ businessPurpose: 7 }), generated({ directors: [{ name: "incomplete" }] }), generated({ businessActivities: [null] })])("F10-schema: semantically incomplete JSON %s is not completed", async (raw) => {
+    seed(); fake.create.mockResolvedValue(response("end_turn", raw));
+    const r = await request();
+    expect(r.messages.some((m) => m.type === "error")).toBe(true);
+    expect(r.messages.some((m) => m.type === "done")).toBe(false);
+    expect(fake.write).not.toHaveBeenCalled();
+  });
   it.each([["F12", "perlu_ocr", "memerlukan OCR"], ["F13", "gagal", "belum berhasil diekstrak"]])("%s: supplied unreadable document is not absent", async (_, status, phrase) => {
     const n = await run({ ...input("stale text"), extractReport: report([{ name: "a", status }]) });
     expect(fake.create).not.toHaveBeenCalled();
@@ -152,10 +181,26 @@ describe("H-9 frozen fixture map: deterministic input and completion", () => {
     expect(textBlocks(n)).not.toContain("[DOKUMEN TIDAK TERSEDIA]");
   });
   it("F14: classified source without matching text remains an unresolved reference", async () => {
-    const n = await run({ ...input(), contentByFile: new Map() });
+    const n = await run({ ...input(), contentByFile: new Map(), extractReport: report([]) });
     expect(n.coverage?.files[0].availability).toBe("missing_text");
     expect(n.notes[0].text).not.toContain("[TIDAK DITEMUKAN]");
     expect(fake.create).not.toHaveBeenCalled();
+  });
+  it("F14-known-supplied: extraction record proves provision even when the body is unavailable", async () => {
+    const n = await run({ ...input(), contentByFile: new Map() });
+    expect(n.coverage?.files[0].availability).toBe("supplied_missing_text");
+    expect(textBlocks(n)).toContain("dokumen ini telah disediakan dan tercatat telah diekstrak");
+    expect(textBlocks(n)).not.toContain("Keberadaan dan status ekstraksinya");
+    expect(fake.create).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["gagal", "gagal"], ["perlu_ocr", "perlu_ocr"], ["selesai", "gagal"], ["gagal", "selesai"],
+  ])("F13/F16/F17-duplicates: %s + %s cannot supply stale body text", async (first, second) => {
+    const n = await run({ ...input("STALE_BODY"), extractReport: report([{ name: "a", status: first }, { name: "a", status: second }]) });
+    expect(n.coverage?.includedChars).toBe(0);
+    expect(n.coverage?.modelCompletion).toBe("not_called");
+    expect(fake.create).not.toHaveBeenCalled();
+    if (first === second) expect(n.coverage?.files[0].availability).toBe(first);
   });
   it("F15: absent extraction report does not certify full coverage", async () => {
     const n = await run({ ...input(), extractReport: undefined });
@@ -223,6 +268,44 @@ describe("H-9 frozen fixture map: persistence, report, caller and scope", () => 
     expect(word).toContain("batas pemrosesan"); expect(word).toContain("scan.pdf"); expect(word).toContain("memerlukan OCR");
     expect(word.indexOf("batas pemrosesan")).toBeLessThan(word.indexOf("Data Korporasi"));
   });
+  it.each([undefined, "pendahuluan_led", "exec_summary_led", "lut_pasar_modal", "findings_only"] as (DDReportFormat | undefined)[])("F22-formats: %s cannot omit coverage or describe extraction as examination", async (format) => {
+    seed({ ...input("A".repeat(100100)), extractReport: report([{ name: "a", status: "selesai" }, { name: "scan.pdf", status: "perlu_ocr" }]) });
+    await request();
+    const loaded = await loadEntityResults(SID);
+    loaded.transaction.reportFormat = format;
+    loaded.results[0].narrative!.notes = [];
+    const word = wordText(await buildDdReportDocx(loaded));
+    expect(word).toContain("batas pemrosesan"); expect(word).toContain("scan.pdf"); expect(word).toContain("memerlukan OCR");
+    expect(word).not.toContain("diekstrak dan diperiksa");
+  });
+  it("F21-caller: actual route stream and readback both render mandatory UI notices", async () => {
+    seed(input("A".repeat(100100)));
+    const res = await POST(new NextRequest("http://localhost/api/dd/narrative", { method: "POST", body: JSON.stringify({ sessionId: SID, entityId: "e1" }) }));
+    let displayed: NarrativeNotice | null = null;
+    await consumeNarrativeStream(res, vi.fn(), (n) => { displayed = n; }, vi.fn());
+    expect(renderToStaticMarkup(React.createElement(NarrativeCoverageNotice, { notice: displayed! }))).toContain("batas pemrosesan");
+    fake.blobs.set(ddKeys.extracted(SID, "e1"), block("a", "UPDATED"));
+    fake.create.mockClear(); fake.write.mockClear();
+    const get = await GET(new NextRequest(`http://localhost/api/dd/narrative?sessionId=${SID}&entityId=e1`));
+    const hydrated = narrativeNoticeFromResponse(await get.json());
+    expect(renderToStaticMarkup(React.createElement(NarrativeCoverageNotice, { notice: hydrated }))).toContain("telah berubah");
+    expect(fake.create).not.toHaveBeenCalled(); expect(fake.write).not.toHaveBeenCalled();
+  });
+  it("F21/F23-caller: unavailable success is visible; failed regeneration retains old notice and original timestamp", async () => {
+    seed({ ...input(), extractReport: report([{ name: "a", status: "gagal" }]) });
+    const post = () => POST(new NextRequest("http://localhost/api/dd/narrative", { method: "POST", body: JSON.stringify({ sessionId: SID, entityId: "e1" }) }));
+    let displayed: NarrativeNotice = { generatedAt: null, notes: [] };
+    await consumeNarrativeStream(await post(), vi.fn(), (n) => { displayed = n; }, vi.fn());
+    expect(renderToStaticMarkup(React.createElement(NarrativeCoverageNotice, { notice: displayed }))).toContain("belum berhasil diekstrak");
+    seed(); await consumeNarrativeStream(await post(), vi.fn(), (n) => { displayed = n; }, vi.fn());
+    const before = displayed;
+    fake.create.mockResolvedValue(response("max_tokens"));
+    const prior = vi.fn();
+    await expect(consumeNarrativeStream(await post(), vi.fn(), (n) => { displayed = n; }, prior)).rejects.toThrow();
+    expect(displayed).toBe(before); expect(prior).toHaveBeenCalledWith(before.generatedAt);
+    expect(renderToStaticMarkup(React.createElement(NarrativeCoverageNotice, { notice: displayed }))).toContain("Hasil tersimpan");
+    await expect(consumeNarrativeStream(new Response('{"type":"start"}\n'), vi.fn(), vi.fn(), vi.fn())).rejects.toThrow("terputus");
+  });
   it("F23: failed rerun preserves prior bytes and identifies original saved time", async () => {
     seed(); await request();
     const before = fake.blobs.get(ddKeys.narrative(SID, "e1"))!;
@@ -258,6 +341,15 @@ describe("H-9 frozen fixture map: persistence, report, caller and scope", () => 
     finish(response()); await first;
     expect((await loadEntityResults(SID)).results[0].narrative?.coverage?.status).toBe("legacy_unassessed");
   });
+  it("F25-same-input: overlapping writes preserve the returned generation time and unchanged-input coverage", async () => {
+    seed(); let finish!: (r: ReturnType<typeof response>) => void;
+    fake.create.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const first = request(); await vi.waitFor(() => expect(fake.create).toHaveBeenCalledTimes(1));
+    await request(); finish(response()); const last = await first;
+    const loaded = (await loadEntityResults(SID)).results[0].narrative!;
+    expect(loaded.coverage?.status).toBe("full_supplied_input");
+    expect(loaded.generatedAt).toBe(last.messages.find((m) => m.type === "done").narrative.generatedAt);
+  });
   it("F26: legacy and malformed coverage cannot silently become fully covered; no migration", async () => {
     seed(); fake.blobs.set(ddKeys.narrative(SID, "e1"), generated());
     const loaded = await loadEntityResults(SID);
@@ -285,5 +377,13 @@ describe("H-9 frozen fixture map: persistence, report, caller and scope", () => 
     expect(fake.blobs.get("other-record")).toBe("UNCHANGED");
     const mismatch = reconcileNarrative({ ...JSON.parse(generated()), entityId: "e2", businessPurpose: "OTHER_ENTITY_SECRET" }, input());
     expect(JSON.stringify(mismatch)).not.toContain("OTHER_ENTITY_SECRET");
+  });
+  it("F27/F28-readback: GET validates identifiers and entity membership before reading entity stores", async () => {
+    expect((await GET(new NextRequest("http://localhost/api/dd/narrative?sessionId=../bad&entityId=e1"))).status).toBe(400);
+    expect(fake.read).not.toHaveBeenCalled();
+    seed(); fake.read.mockClear();
+    expect((await GET(new NextRequest(`http://localhost/api/dd/narrative?sessionId=${SID}&entityId=e2`))).status).toBe(400);
+    expect(fake.read.mock.calls.map((x) => x[0])).toEqual([ddKeys.transaction(SID)]);
+    expect(fake.create).not.toHaveBeenCalled(); expect(fake.write).not.toHaveBeenCalled();
   });
 });

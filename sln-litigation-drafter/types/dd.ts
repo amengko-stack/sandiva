@@ -441,7 +441,7 @@ export interface DDNarrativeCoverage {
   files: {
     fileName: string;
     relevant: boolean;
-    availability: "usable" | "perlu_ocr" | "gagal" | "missing_text" | "unknown";
+    availability: "usable" | "perlu_ocr" | "gagal" | "supplied_missing_text" | "missing_text" | "unknown";
     availableChars: number;
     includedChars: number;
   }[];

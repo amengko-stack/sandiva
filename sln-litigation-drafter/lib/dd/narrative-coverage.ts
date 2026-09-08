@@ -58,8 +58,10 @@ export function prepareNarrativeInput(args: NarrativeInput) {
   const statuses = new Map<string, string>();
   for (const r of rows) {
     if (!record(r) || typeof r.name !== "string") continue;
-    // Duplicate/conflicting extraction records cannot certify successful extraction.
-    statuses.set(r.name, statuses.has(r.name) ? "unknown" : typeof r.status === "string" ? r.status : "unknown");
+    const status = typeof r.status === "string" ? r.status : "unknown";
+    const prior = statuses.get(r.name);
+    // Identical records retain known unreadability; contradictory records cannot supply stale text.
+    statuses.set(r.name, prior === undefined || prior === status ? status : "conflicting");
   }
   const names = new Set(relevant);
   for (const [name, status] of Array.from(statuses)) if (status !== "selesai") names.add(name);
@@ -74,12 +76,13 @@ export function prepareNarrativeInput(args: NarrativeInput) {
     const text = args.contentByFile.get(fileName) ?? "";
     const status = statuses.get(fileName);
     const availability = status === "perlu_ocr" || status === "gagal" ? status
-      : !text.trim() ? "missing_text" : reportValid && status === "selesai" ? "usable" : "unknown";
+      : !text.trim() ? status === "selesai" ? "supplied_missing_text" : "missing_text"
+      : reportValid && status === "selesai" ? "usable" : "unknown";
     if (availability === "perlu_ocr" || availability === "gagal") limitations.add("unreadable");
-    if (availability === "missing_text") limitations.add("missing_text");
+    if (availability === "missing_text" || availability === "supplied_missing_text") limitations.add("missing_text");
     if (availability === "unknown") limitations.add("extraction_uncertain");
     // Known extraction failures are never passed off as usable text, even if a stale block exists.
-    const eligible = relevant.has(fileName) && text.trim().length > 0 && availability !== "perlu_ocr" && availability !== "gagal";
+    const eligible = relevant.has(fileName) && text.trim().length > 0 && availability !== "perlu_ocr" && availability !== "gagal" && status !== "conflicting";
     let included = "";
     if (eligible) {
       const header = `${docsText ? "\n\n" : ""}=== ${fileName} ===\n`;
@@ -124,7 +127,7 @@ export function parseNarrativeCoverage(value: unknown): DDNarrativeCoverage | nu
   const names = new Set<string>();
   for (const f of value.files) {
     if (!record(f) || typeof f.fileName !== "string" || !f.fileName || names.has(f.fileName) ||
-      typeof f.relevant !== "boolean" || !["usable", "perlu_ocr", "gagal", "missing_text", "unknown"].includes(String(f.availability)) ||
+      typeof f.relevant !== "boolean" || !["usable", "perlu_ocr", "gagal", "supplied_missing_text", "missing_text", "unknown"].includes(String(f.availability)) ||
       !count(f.availableChars) || !count(f.includedChars) || f.includedChars > f.availableChars ||
       (!f.relevant && (f.availableChars !== 0 || f.includedChars !== 0))) return null;
     names.add(f.fileName);
@@ -155,6 +158,7 @@ export function coverageNotes(value: unknown): DDNarrativeNote[] {
     for (const f of c.files) {
       if (f.availability === "perlu_ocr") texts.push(`${f.fileName}: dokumen ini telah disediakan dan memerlukan OCR; isinya belum dapat diperiksa. [PERLU VERIFIKASI]`);
       else if (f.availability === "gagal") texts.push(`${f.fileName}: dokumen ini telah disediakan, tetapi teksnya belum berhasil diekstrak; isinya belum diperiksa. [PERLU VERIFIKASI]`);
+      else if (f.availability === "supplied_missing_text") texts.push(`${f.fileName}: dokumen ini telah disediakan dan tercatat telah diekstrak, tetapi teksnya tidak tersedia untuk penyusunan Profil Perseroan; isinya belum diperiksa dalam narasi ini. [PERLU VERIFIKASI]`);
       else if (f.availability === "missing_text") texts.push(`${f.fileName}: rujukan dokumen tercatat, tetapi teksnya belum tersedia untuk diperiksa. Keberadaan dan status ekstraksinya perlu dikonfirmasi. [PERLU VERIFIKASI]`);
       if (f.availableChars > f.includedChars) texts.push(`${f.fileName}: ${f.includedChars} dari ${f.availableChars} karakter teks disertakan; ${f.availableChars - f.includedChars} karakter teks belum diperiksa.`);
     }

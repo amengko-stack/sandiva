@@ -13,6 +13,7 @@ import {
 } from "@/lib/dd/report-boilerplate";
 import { obligationsForLayer, resolveRegime, type DDObligation } from "@/lib/dd/regime";
 import { renderNarrativeSectionI, type DDNarrativeBlock } from "@/lib/dd/narrative-render";
+import { coverageNotes } from "@/lib/dd/narrative-coverage";
 import { citationIssueNote, isReportableFinding, renderFindingsTable, renderVerdictLine } from "@/lib/dd/findings-render";
 import { renderSupplementSections } from "@/lib/dd/supplement-render";
 import { chapterDisclaimer, chapterPendahuluan } from "@/lib/dd/report-chapters";
@@ -668,7 +669,7 @@ function renderRingkasanChapter(
     out.push(
       p(
         `Cakupan ekstraksi dokumen: dari ${rep.files.length} dokumen yang disediakan, ${counts.processed} berhasil ` +
-          `diekstrak dan diperiksa` +
+          `diekstrak` +
           (counts.ocrRequired ? `, ${counts.ocrRequired} memerlukan pengenalan karakter optis (OCR)` : "") +
           (counts.failed ? `, ${counts.failed} gagal diekstrak` : "") +
           "."
@@ -1011,6 +1012,16 @@ export async function buildDdReportDocx(args: {
       );
     }
 
+    // Summary/findings formats may omit the profile chapter entirely. Their
+    // layout choice cannot remove qualifications attached to a saved narrative.
+    if (r.narrative && !plan.some((chapter) => chapter.kind === "profil")) {
+      children.push(p(`Cakupan Profil Perseroan — ${r.entity.name}`, { bold: true }));
+      for (const note of coverageNotes(r.narrative.coverage)) children.push(p(note.text));
+      if (Number.isFinite(Date.parse(r.narrative.generatedAt))) {
+        children.push(p(`Waktu penyusunan narasi tersimpan: ${new Date(r.narrative.generatedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB.`));
+      }
+    }
+
     let chNo = 0;
     for (const chapter of plan) {
       if (chapter.kind === "lampiran" || chapter.kind === "disclaimer") continue; // rendered once, globally, below
@@ -1153,7 +1164,7 @@ export async function buildDdReportDocx(args: {
       const counts = extractionCounts(rep);
       children.push(
         p(
-          `Jumlah dokumen yang disediakan: ${rep.files.length}. Berhasil diekstrak dan diperiksa: ` +
+          `Jumlah dokumen yang disediakan: ${rep.files.length}. Berhasil diekstrak: ` +
             `${counts.processed}.` +
             (counts.ocrRequired ? ` Memerlukan pengenalan karakter optis (OCR): ${counts.ocrRequired}.` : "") +
             (counts.failed ? ` Gagal diekstrak: ${counts.failed}.` : "")

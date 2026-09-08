@@ -326,9 +326,23 @@ export function parseNarrativeResponse(
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Bentuk hasil Profil Perseroan tidak valid.");
   const p = parsed as Record<string, unknown>;
-  const itemObject = (x: unknown) => x !== null && typeof x === "object" && !Array.isArray(x);
-  for (const key of ["amendments", "capitalHistory", "shareholders", "directors", "commissioners", "notes"]) {
-    if (p[key] !== undefined && (!Array.isArray(p[key]) || !(p[key] as unknown[]).every(itemObject))) {
+  const strings = (x: unknown, keys: string[]) => x !== null && typeof x === "object" && !Array.isArray(x) &&
+    keys.every((k) => typeof (x as Record<string, unknown>)[k] === "string");
+  const deedKeys = ["number", "dateISO", "notary", "purpose", "menkumhamRef", "registrationRef", "bnriRef", "sourceFile", "verbatim"];
+  if (!strings(p, ["businessPurpose", "businessBasis"]) ||
+      !(p.establishment === null || strings(p.establishment, deedKeys)) ||
+      !Array.isArray(p.businessActivities) || !p.businessActivities.every((x) => typeof x === "string")) {
+    throw new Error("Hasil Profil Perseroan belum memuat rincian yang lengkap dan dapat dibaca.");
+  }
+  for (const [key, keys] of [
+    ["amendments", deedKeys],
+    ["capitalHistory", ["basis", "authorized", "issued", "paidUp", "shareCount", "nominalPerShare", "sourceFile"]],
+    ["shareholders", ["name", "shares", "amount", "percentage", "sourceFile"]],
+    ["directors", ["role", "name", "appointedBy", "termUntil", "sourceFile"]],
+    ["commissioners", ["role", "name", "appointedBy", "termUntil", "sourceFile"]],
+    ["notes", ["anchor", "text"]],
+  ] as [string, string[]][]) {
+    if (!Array.isArray(p[key]) || !(p[key] as unknown[]).every((x) => strings(x, keys))) {
       throw new Error("Rincian hasil Profil Perseroan tidak valid.");
     }
   }
