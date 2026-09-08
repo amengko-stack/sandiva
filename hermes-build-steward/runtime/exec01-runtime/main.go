@@ -866,7 +866,13 @@ func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, st
 	status := <-statusResult
 	started := bytes.Equal(status, []byte("executed\n"))
 	if !started {
-		return actionChildOutcome{err: errors.New("action executor did not attest command start")}
+		detail := "unknown status"
+		if waitErr == nil {
+			detail = "zero exit"
+		} else if exit, ok := waitErr.(*exec.ExitError); ok {
+			detail = fmt.Sprintf("exit %d", exit.ExitCode())
+		}
+		return actionChildOutcome{err: fmt.Errorf("action executor did not attest command start (%s)", detail)}
 	}
 	if timedOut {
 		return actionChildOutcome{commandStarted: started, exitCode: -1, timedOut: true}
