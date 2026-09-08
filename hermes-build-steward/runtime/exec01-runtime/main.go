@@ -847,10 +847,12 @@ func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, st
 	defer timer.Stop()
 	waitErr := error(nil)
 	timedOut := false
+	timeoutChildObserved := false
 	select {
 	case waitErr = <-waitResult:
 	case <-timer.C:
 		timedOut = true
+		timeoutChildObserved = actionProcessHasChild(command.Process.Pid)
 		killActionProcessGroup(command.Process.Pid)
 		_ = command.Process.Kill()
 		waitErr = <-waitResult
@@ -861,6 +863,17 @@ func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, st
 	killActionProcessGroup(command.Process.Pid)
 	statusValue, statusErr := os.ReadFile(statusPath)
 	started := statusErr == nil && bytes.Equal(statusValue, []byte("executed\n"))
+	if !started && timedOut {
+		started = timeoutChildObserved
+	}
+	if !started && waitErr == nil {
+		started = true
+	}
+	if !started {
+		if exit, ok := waitErr.(*exec.ExitError); ok && exit.ExitCode() != 125 {
+			started = true
+		}
+	}
 	if !started {
 		detail := "unknown status"
 		if waitErr == nil {

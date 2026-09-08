@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -17,6 +20,17 @@ func configureActionProcess(command *exec.Cmd) {
 
 func killActionProcessGroup(pid int) {
 	_ = syscall.Kill(-pid, syscall.SIGKILL)
+}
+
+func actionProcessHasChild(pid int) bool {
+	paths, _ := filepath.Glob("/proc/" + strconv.Itoa(pid) + "/task/*/children")
+	for _, path := range paths {
+		value, err := os.ReadFile(path)
+		if err == nil && strings.TrimSpace(string(value)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Linux Landlock ABI. The provider process tree receives read-only runtime

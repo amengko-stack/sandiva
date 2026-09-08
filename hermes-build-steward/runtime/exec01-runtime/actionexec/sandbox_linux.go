@@ -250,9 +250,14 @@ func runSandboxedAction(mode string, arguments []string, scratch, statusPath str
 	_ = status.Close()
 	if err := command.Wait(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
+			// 125 is reserved for trusted pre-start failure so the broker can
+			// independently distinguish it from an action that actually ran.
+			if exit.ExitCode() == 125 {
+				return 124
+			}
 			return exit.ExitCode()
 		}
-		return 125
+		return 122
 	}
 	return 0
 }
