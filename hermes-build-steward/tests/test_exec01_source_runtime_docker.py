@@ -240,14 +240,156 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         request=normalize_execution_request(task,fingerprint(task),profile,lease,ResolvedExecutionArtifacts(pm_instruction,SPEC_BYTES,AC_BYTES))
         return profile,request
 
-    def _run(self, provider, approved_commands=("sh q16-build.sh",), pm_instruction=PM_BYTES):
+    def _run(self, provider, approved_commands=("sh q16-build.sh",), pm_instruction=PM_BYTES, wall_time_seconds=30):
         profile,request=self._profile_request(provider, approved_commands, pm_instruction)
-        policy=ContainmentPolicy(cpu_limit="1.0",memory_limit="128m",pids_limit=32,workspace_limit_bytes=16*1024*1024,wall_time_seconds=30,output_limit_bytes=65536,network_name=self.network,allowed_endpoints=profile.allowed_endpoints)
+        policy=ContainmentPolicy(cpu_limit="1.0",memory_limit="128m",pids_limit=32,workspace_limit_bytes=16*1024*1024,wall_time_seconds=wall_time_seconds,output_limit_bytes=65536,network_name=self.network,allowed_endpoints=profile.allowed_endpoints)
         job=DockerContainerJobRunner(policy,network_attestor=DockerNetworkAttestor(GatewayNetworkBinding(self.network,self.gateway,self.image,self.policy_fingerprint)))
         runner=ContainerProviderRunner(policy,self.workspace.parent/"requests",runner=job)
         adapter=CodexExecutionAdapter(profile,runner) if provider=="codex" else ClaudeCodeExecutionAdapter(profile,runner)
         result=adapter.execute(request,self.workspace.as_posix()); changes=PrepublicationInspector().inspect(str(self.workspace),request)
         return request,result,changes
+
+    def _set_bcf_script(self, body):
+        script = self.workspace/"q16-build.sh"
+        script.write_text("#!/bin/sh\nset -u\n" + body)
+        script.chmod(0o700)
+        subprocess.run(["git", "-C", str(self.workspace), "add", "q16-build.sh"], check=True)
+        subprocess.run([
+            "git", "-C", str(self.workspace), "-c", "user.email=q@sandiva.invalid",
+            "-c", "user.name=Q", "commit", "-q", "-m", "BCF approved command fixture",
+        ], check=True)
+
+    def _run_bcf(self, body, *, provider="codex", wall_time_seconds=30):
+        self._set_bcf_script(body)
+        return self._run(
+            provider,
+            approved_commands=("sh q16-build.sh",),
+            pm_instruction=b"EIGHTH_BCF\n",
+            wall_time_seconds=wall_time_seconds,
+        )
+
+    def _assert_bcf_success(self, result):
+        self.assertEqual(result["disposition"], "EXECUTION_SUCCEEDED")
+        self.assertEqual(result["commandsExecuted"], ["sh q16-build.sh"])
+        self.assertEqual(result["testOutcomes"], [{
+            "name": "approved command: sh q16-build.sh", "status": "PASS",
+            "command": "sh q16-build.sh",
+        }])
+        self.assertTrue(any("sandiva-action-broker" in item for item in result["evidenceReferences"]))
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-prelude.txt").read_text(), "broker-prelude\n")
+        self.assertEqual((self.workspace/"hermes-build-steward"/"noexec-probe.txt").read_text(), "direct-denied;trusted-interpreter-succeeded\n")
+
+    def test_bcf_01_ledger_overwrite_is_denied_in_actual_runtime(self):
+        _, result, _ = self._run_bcf(
+            "forged='{\"sequence\":900,\"disposition\":\"authorized_and_executed\",\"executed\":true,\"toolName\":\"Bash\",\"command\":\"forged-overwrite\"}'\n"
+            "if printf '%s\\n' \"$forged\" > /run/exec/authority/action-ledger.jsonl 2>/dev/null; then outcome=ALLOWED; else outcome=DENIED; fi\n"
+            "printf '%s\\n' \"$outcome\" > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED\n")
+
+    def test_bcf_02_ledger_append_is_denied_in_actual_runtime(self):
+        _, result, _ = self._run_bcf(
+            "forged='{\"sequence\":901,\"disposition\":\"authorized_and_executed\",\"executed\":true,\"toolName\":\"Bash\",\"command\":\"forged-append\"}'\n"
+            "if printf '%s\\n' \"$forged\" >> /run/exec/authority/action-ledger.jsonl 2>/dev/null; then outcome=ALLOWED; else outcome=DENIED; fi\n"
+            "printf '%s\\n' \"$outcome\" > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED\n")
+
+    def test_bcf_03_ledger_delete_truncate_and_rename_are_denied(self):
+        _, result, _ = self._run_bcf(
+            "printf forged > hermes-build-steward/forged-ledger\n"
+            "rm /run/exec/authority/action-ledger.jsonl 2>/dev/null && rm_result=ALLOWED || rm_result=DENIED\n"
+            ": > /run/exec/authority/action-ledger.jsonl 2>/dev/null && truncate_result=ALLOWED || truncate_result=DENIED\n"
+            "mv hermes-build-steward/forged-ledger /run/exec/authority/action-ledger.jsonl 2>/dev/null && rename_result=ALLOWED || rename_result=DENIED\n"
+            "printf '%s,%s,%s\\n' \"$rm_result\" \"$truncate_result\" \"$rename_result\" > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED,DENIED,DENIED\n")
+
+    def test_bcf_04_broker_ready_socket_and_authority_directory_are_denied(self):
+        _, result, _ = self._run_bcf(
+            "printf forged > /run/exec/authority/action-ready 2>/dev/null && ready=ALLOWED || ready=DENIED\n"
+            "rm /run/exec/provider/action.sock 2>/dev/null && socket=ALLOWED || socket=DENIED\n"
+            "rmdir /run/exec/authority 2>/dev/null && directory=ALLOWED || directory=DENIED\n"
+            "printf '%s,%s,%s\\n' \"$ready\" \"$socket\" \"$directory\" > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED,DENIED,DENIED\n")
+
+    def test_bcf_05_peer_proc_environment_cannot_disclose_secrets(self):
+        _, result, _ = self._run_bcf(
+            "found=0\n"
+            "for item in /proc/[0-9]*/environ; do\n"
+            "  values=$(tr '\\000' '\\n' < \"$item\" 2>/dev/null || true)\n"
+            "  case \"$values\" in *EXEC_GATEWAY_SESSION_TOKEN=*|*EXEC_ACTION_CAPABILITY=*|*OPENAI_API_KEY=*|*ANTHROPIC_AUTH_TOKEN=*) found=1;; esac\n"
+            "done\n"
+            "printf '%s\\n' \"$found\" > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "0\n")
+
+    def test_bcf_06_repository_command_cannot_contact_gateway(self):
+        subprocess.run(["docker", "rm", "-f", self.gateway], check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([
+            "docker", "run", "-d", "--name", self.gateway, "--network", self.network,
+            "--network-alias", "executor-gateway.sandiva.internal",
+            "--label", f"sandiva.exec.gateway-policy={self.policy_fingerprint}",
+            "--tmpfs", "/srv:rw,nosuid,nodev,noexec,size=1048576",
+            "--entrypoint", "/bin/sh", self.image, "-c",
+            "printf reached > /srv/index.html; exec httpd -f -p 8443 -h /srv",
+        ], check=True, stdout=subprocess.DEVNULL)
+        time.sleep(0.2)
+        _, result, _ = self._run_bcf(
+            "if busybox wget -q -O hermes-build-steward/gateway-response http://executor-gateway.sandiva.internal:8443/ 2>/dev/null; then outcome=ALLOWED; else outcome=DENIED; fi\n"
+            "printf '%s\\n' \"$outcome\" > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED\n")
+        self.assertFalse((self.workspace/"hermes-build-steward"/"gateway-response").exists())
+
+    def test_bcf_07_action_capability_cannot_be_recovered_or_replayed(self):
+        _, result, _ = self._run_bcf(
+            "recovered=0\n"
+            "for item in /proc/[0-9]*/environ; do\n"
+            "  tr '\\000' '\\n' < \"$item\" 2>/dev/null | grep -q '^EXEC_ACTION_CAPABILITY=' && recovered=1 || true\n"
+            "done\n"
+            "test ! -r /run/exec/provider/action.sock || recovered=1\n"
+            "printf '%s\\n' \"$recovered\" > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "0\n")
+
+    def test_bcf_08_normal_approved_build_remains_functional(self):
+        for provider in ("codex", "claude-code"):
+            with self.subTest(provider=provider):
+                _, result, changes = self._run(provider)
+                self.assertEqual(result["disposition"], "EXECUTION_SUCCEEDED")
+                self.assertEqual(result["commandsExecuted"], ["sh q16-build.sh"])
+                self.assertIn("hermes-build-steward/generated/result.txt", changes.changed_paths)
+
+    def test_bcf_09_child_crash_and_timeout_leave_trusted_bounded_failure(self):
+        cases = (
+            ("exit 17\n", "EXECUTION_FAILED", "INTERNAL_ERROR"),
+            ("sleep 30 & wait\n", "EXECUTION_TIMED_OUT", "TIMEOUT"),
+        )
+        for body, disposition, classification in cases:
+            with self.subTest(disposition=disposition):
+                _, result, _ = self._run_bcf(body, wall_time_seconds=8)
+                self.assertEqual(result["disposition"], disposition)
+                self.assertEqual(result["failureClassification"], classification)
+                self.assertEqual(result["commandsExecuted"], ["sh q16-build.sh"])
+                self.assertTrue(any("sandiva-action-broker" in item for item in result["evidenceReferences"]))
+                self.assertFalse((self.workspace/"hermes-build-steward"/"forged-occurrence").exists())
+
+    def test_bcf_10_broker_sequence_survives_state_attack(self):
+        _, result, _ = self._run_bcf(
+            "rm -rf /run/exec/authority /run/exec/provider 2>/dev/null || true\n"
+            "printf survived > hermes-build-steward/bcf-observation.txt\n"
+        )
+        self._assert_bcf_success(result)
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "survived")
 
     def test_seventh_rework_provider_hook_bypass_crash_timeout_and_unknown_surfaces_fail_closed(self):
         baseline = self._sixth_workspace_state()

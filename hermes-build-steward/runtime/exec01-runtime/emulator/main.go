@@ -94,6 +94,7 @@ func main() {
 	}
 	command := "sh q16-build.sh"
 	provider := filepath.Base(os.Args[0])
+	eighthBCF := bytes.Contains(prompt, []byte("EIGHTH_BCF"))
 	if bytes.Contains(prompt, []byte("SEVENTH_NO_BROKER_SUCCESS")) {
 		if provider == "codex" {
 			emit(map[string]interface{}{"type": "thread.started", "thread_id": "bypass"})
@@ -130,7 +131,19 @@ func main() {
 		}
 		return
 	}
-	execution, actionErr := action(1, "Bash", map[string]interface{}{"command": command, "cwd": "/workspace"})
+	sequence := 1
+	if eighthBCF {
+		prelude, preludeErr := action(sequence, "Write", map[string]interface{}{
+			"path": "hermes-build-steward/bcf-prelude.txt", "content": "broker-prelude\n",
+		})
+		if preludeErr != nil || prelude["disposition"] != "authorized_and_executed" {
+			fmt.Fprintln(os.Stderr, "Sandiva action broker prelude failed")
+			os.Exit(3)
+		}
+		sequence++
+	}
+	execution, actionErr := action(sequence, "Bash", map[string]interface{}{"command": command, "cwd": "/workspace"})
+	sequence++
 	if actionErr != nil || execution["disposition"] != "authorized_and_executed" {
 		if execution != nil && execution["disposition"] == "denied_before_execution" {
 			if provider == "codex" {
@@ -144,11 +157,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Sandiva action broker failed")
 		os.Exit(3)
 	}
-	if written, err := action(2, "Write", map[string]interface{}{"path": "hermes-build-steward/provider-prompt.json", "content": string(prompt)}); err != nil || written["disposition"] != "authorized_and_executed" {
+	if written, err := action(sequence, "Write", map[string]interface{}{"path": "hermes-build-steward/provider-prompt.json", "content": string(prompt)}); err != nil || written["disposition"] != "authorized_and_executed" {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if written, err := action(3, "Write", map[string]interface{}{"path": "hermes-build-steward/noexec-probe.txt", "content": "direct-denied;trusted-interpreter-succeeded\n"}); err != nil || written["disposition"] != "authorized_and_executed" {
+	sequence++
+	if written, err := action(sequence, "Write", map[string]interface{}{"path": "hermes-build-steward/noexec-probe.txt", "content": "direct-denied;trusted-interpreter-succeeded\n"}); err != nil || written["disposition"] != "authorized_and_executed" {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
