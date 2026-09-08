@@ -824,27 +824,23 @@ func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, st
 	}
 	defer os.RemoveAll(scratch)
 
-	statusReader, statusWriter, err := os.Pipe()
+	statusPath := filepath.Join(filepath.Dir(brokerLedger), "action-status-"+hex.EncodeToString(identifier))
+	status, err := os.OpenFile(statusPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return actionChildOutcome{err: errors.New("action status channel could not be created")}
 	}
-	defer statusReader.Close()
+	if err := status.Close(); err != nil {
+		return actionChildOutcome{err: errors.New("action status channel could not be sealed")}
+	}
+	defer os.Remove(statusPath)
 	command := exec.Command(actionExecutor, append([]string{mode}, arguments...)...)
 	command.Dir = authorizationWorkspaceHost
 	command.Stdin, command.Stdout, command.Stderr = stdin, stdout, stderr
-	command.Env = []string{"EXEC01_ACTION_SCRATCH=" + scratch}
-	command.ExtraFiles = []*os.File{statusWriter}
+	command.Env = []string{"EXEC01_ACTION_SCRATCH=" + scratch, "EXEC01_ACTION_STATUS=" + statusPath}
 	configureActionProcess(command)
 	if err := command.Start(); err != nil {
-		statusWriter.Close()
 		return actionChildOutcome{err: errors.New("action executor could not start")}
 	}
-	statusWriter.Close()
-	statusResult := make(chan []byte, 1)
-	go func() {
-		value, _ := io.ReadAll(io.LimitReader(statusReader, 32))
-		statusResult <- value
-	}()
 	waitResult := make(chan error, 1)
 	go func() { waitResult <- command.Wait() }()
 	timer := time.NewTimer(actionTimeout())
@@ -863,8 +859,8 @@ func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, st
 	// denied by the child seccomp filter, so this also removes background work
 	// after a normal shell exit or crash.
 	killActionProcessGroup(command.Process.Pid)
-	status := <-statusResult
-	started := bytes.Equal(status, []byte("executed\n"))
+	statusValue, statusErr := os.ReadFile(statusPath)
+	started := statusErr == nil && bytes.Equal(statusValue, []byte("executed\n"))
 	if !started {
 		detail := "unknown status"
 		if waitErr == nil {

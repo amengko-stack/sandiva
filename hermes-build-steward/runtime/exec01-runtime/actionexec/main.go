@@ -20,5 +20,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "action-exec scratch identity is invalid")
 		os.Exit(125)
 	}
-	os.Exit(runSandboxedAction(os.Args[1], os.Args[2:], cleanScratch))
+	statusPath := filepath.Clean(os.Getenv("EXEC01_ACTION_STATUS"))
+	if !strings.HasPrefix(statusPath, "/run/exec/authority/action-status-") {
+		fmt.Fprintln(os.Stderr, "action-exec status identity is invalid")
+		os.Exit(125)
+	}
+	os.Exit(runSandboxedAction(os.Args[1], os.Args[2:], cleanScratch, statusPath))
 }

@@ -291,11 +291,12 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             "--tmpfs", "/run/exec:rw,nosuid,nodev,noexec,size=1048576,uid=65532,gid=65532,mode=0700",
             "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=1048576,uid=65532,gid=65532,mode=0700",
             "--entrypoint", "/bin/sh", self.image, "-c",
-            "mkdir -p /run/exec/action/probe; "
-            "exec 3>/tmp/action-status; "
+            "mkdir -p /run/exec/action/probe /run/exec/authority; "
+            ": > /run/exec/authority/action-status-probe; "
             "EXEC01_ACTION_SCRATCH=/run/exec/action/probe "
+            "EXEC01_ACTION_STATUS=/run/exec/authority/action-status-probe "
             "/opt/sandiva/bin/exec01-action-exec shell 'printf confined-command-started'; "
-            "exit_code=$?; printf ':'; cat /tmp/action-status; exit $exit_code",
+            "exit_code=$?; printf ':'; cat /run/exec/authority/action-status-probe; exit $exit_code",
         ], text=True, capture_output=True)
         self.assertEqual(
             completed.returncode, 0,

@@ -198,17 +198,17 @@ func restrictActionSyscalls() error {
 	return nil
 }
 
-func runSandboxedAction(mode string, arguments []string, scratch string) int {
+func runSandboxedAction(mode string, arguments []string, scratch, statusPath string) int {
 	// Landlock and seccomp attach to the calling thread. Keep the entire
 	// restriction and fork/exec sequence on one OS thread so the untrusted
 	// command cannot inherit an unrestricted Go runtime thread.
 	runtime.LockOSThread()
-	status := os.NewFile(3, "action-status")
-	if status == nil {
+	status, err := os.OpenFile(statusPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
 		return 125
 	}
 	defer status.Close()
-	syscall.CloseOnExec(3)
+	syscall.CloseOnExec(int(status.Fd()))
 	if err := restrictActionFilesystem(scratch); err != nil {
 		fmt.Fprintln(os.Stderr, "action filesystem confinement failed")
 		return 125
