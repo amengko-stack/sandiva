@@ -144,7 +144,11 @@ func main() {
 	}
 	execution, actionErr := action(sequence, "Bash", map[string]interface{}{"command": command, "cwd": "/workspace"})
 	sequence++
-	if actionErr != nil || execution["disposition"] != "authorized_and_executed" {
+	exitCode, exitCodeOK := 0.0, false
+	if execution != nil {
+		exitCode, exitCodeOK = execution["exitCode"].(float64)
+	}
+	if actionErr != nil || execution["disposition"] != "authorized_and_executed" || !exitCodeOK || exitCode != 0 {
 		if execution != nil && execution["disposition"] == "denied_before_execution" {
 			if provider == "codex" {
 				emit(map[string]interface{}{"type": "thread.started", "thread_id": "emulator-thread"})
