@@ -12,11 +12,11 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-02 | `execution_adapters.py` | adapter conformance tests | PASS |
 | AC-03 | `ExecutorProfileRegistry`, `DockerExecutorProfileAttestor`; wrapper/executable/image/gateway identity bound into the profile | Q7; profile tests; hostile 04–05 | IMPLEMENTED — PENDING INDEPENDENT RE-REVIEW |
 | AC-04 | frozen `NormalizedExecutionRequest`; exact hash-verified content/authority; separately running Sandiva action broker owns all repository effects; provider process tree has no `/workspace` access | Q1, Q40–Q41; S1–S20; seventh-rework no-broker/direct/unknown-surface Docker sentinels; hostile 06 | PASS in builder code QA; pending independent QA |
-| AC-05 | `validate_execution_result`; full result schema independently reapplied; executed/denied/runtime-failure evidence comes from the protected broker ledger, not provider assertions; terminal success without an occurrence fails | Q19–Q20, Q40–Q41; Go broker tests; Codex/Claude normalization; hostile 27–28 | PASS in builder code QA; pending independent QA |
+| AC-05 | `validate_execution_result`; full result schema independently reapplied; executed/denied/runtime-failure evidence comes from the protected broker ledger, not provider assertions; command child cannot access that ledger; terminal success without an occurrence fails | Q19–Q20, Q40–Q41; BCF-01–BCF-05, BCF-09–BCF-10; Go broker tests; Codex/Claude normalization; hostile 27–28 | PASS in builder code QA and exact Linux/Docker runtime; pending independent QA |
 | AC-06 | `ProductionExecutionService`, `WorkspaceFactory` | R1 real service dispatch, trusted-origin clone, exact-base/reuse/cleanup tests | PASS |
-| AC-07 | source-controlled `exec01-gateway`; task/attempt/profile-bound capability; raw credentials exist only in provider-specific trusted proxies; reflected secrets discarded across bounded streams | Q3, Q15, Q21–Q24, Q37–Q39, Q42; hostile 11; Linux R2 | PASS in builder code QA and Linux/Docker CI; pending independent QA |
+| AC-07 | source-controlled `exec01-gateway`; task/attempt/profile-bound capability; raw credentials exist only in provider-specific trusted proxies; command-child Landlock/seccomp denies provider/broker process state and direct gateway access; reflected secrets discarded across bounded streams | Q3, Q15, Q21–Q24, Q37–Q39, Q42; BCF-05–BCF-07; hostile 11; Linux R2 | PASS in builder code QA and exact Linux/Docker runtime; pending independent QA |
 | AC-08 | no-mount executor runtime; preserved trusted Git metadata; hook/config-denying publisher | publisher hook/URL-rewrite probe; hostile 12–15; Linux R2 | PASS; CURRENT-HEAD LINUX CI PASS |
-| AC-09 | internal network with no default route and exactly one attested, digest-pinned source gateway; separate gateway-upstream network; exact Graph-list pagination boundary | Q3, Q21–Q24, Q42; policy/attestation and malicious-nextLink tests; hostile 17; Linux R4 probes | PASS in builder code QA; pending independent QA and exact-head Linux/Docker CI |
+| AC-09 | internal network with no default route and exactly one attested, digest-pinned source gateway; separate gateway-upstream network; command-child socket denial; exact Graph-list pagination boundary | Q3, Q21–Q24, Q42; BCF-06 hostname/direct-IP denial; policy/attestation and malicious-nextLink tests; hostile 17; Linux R4 probes | PASS in builder code QA and exact Linux/Docker runtime; pending independent QA |
 | AC-10 | bounded tmpfs/container/runner and explicit `exec-cancel` | hostile 18–19; local descendant termination; Linux R3 quota/cancellation | PASS; CURRENT-HEAD LINUX CI PASS |
 | AC-11 | source runtime pre-tool path authorization plus `PrepublicationInspector` defense-in-depth; trusted diff replacement and pre-publish recomputation | S1–S10; R5 omitted/false/overstated claims and drift; hostile 07–10; artifact controls | PASS in builder code QA; pending independent QA |
 | AC-12 | concrete `GitHubPublisherGateway`; closed `PublisherAuthority`; hardened `SubprocessGit` | R6 immutable readback and malicious Git metadata tests; hostile 12, 30–31 | PASS |
@@ -32,9 +32,9 @@ Authorized base: `9ef9143479090bedc698b77fa7bf2cbc70b37b16`. This repository doe
 | AC-22 | result acceptance fixed to `NOT_EVALUATED`; complete criterion-authorized Hermes evidence is created only by the independent PFX occurrence producer, separately acquired, exact-policy/support/profile bound and PASS-only | Q10–Q12, Q31, Q42; fifth/sixth provenance plus seventh PFX suites; hostile 28; Hermes F/G regression | PASS in builder code QA; pending independent QA |
 | AC-23 | publisher has no merge/deploy/main authority | hostile 30–31 | PASS |
 | AC-24 | diff limited to build-plane Hermes code/docs/tests and its dedicated workflow | 983/983 application regression; scoped diff inspection | PASS |
-| AC-25 | accepted Hermes behavior retained | complete 287-test Hermes/EXEC run on Linux/Docker; includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS in builder code QA and Linux/Docker CI; pending independent QA |
+| AC-25 | accepted Hermes behavior retained | complete 298-test Hermes/EXEC run on Linux/Docker; includes A–X, F1–F7, G1–G9, HA-01–HA-10 and qualification regression | PASS in builder code QA and Linux/Docker CI; pending independent QA |
 | AC-26 | application/type/build/CI | 983/983 application tests; application and legacy-root TypeScript and production builds pass | PASS locally and in exact-head GitHub checks |
-| AC-27 | `build_execution_audit_record`; protected broker action ledger; versioned task/profile/fallback/publication provenance; three distinct PFX-authenticated occurrence producers; exact run/head/type/attempt/selected-profile linkage | Q7–Q9, Q13, Q20, Q25–Q42; S1–S20; seventh bypass and PFX occurrence suites | PASS in builder code QA; pending independent QA |
+| AC-27 | `build_execution_audit_record`; broker-only append ledger plus child-isolated start/failure/timeout provenance; versioned task/profile/fallback/publication provenance; three distinct PFX-authenticated occurrence producers; exact run/head/type/attempt/selected-profile linkage | Q7–Q9, Q13, Q20, Q25–Q42; S1–S20; BCF-01–BCF-10; seventh bypass and PFX occurrence suites | PASS in builder code QA and exact Linux/Docker runtime; pending independent QA |
 | AC-28 | runnable trusted collect/verify modes; authoritative execution/result/audit/probe and repository-scoped GitHub metadata readback; Hermes PASS mandatory | Q10–Q14, Q17–Q20, Q31, Q42; actual Hostinger synthetic Codex/Claude qualification | NOT EXECUTED / BLOCKED / NOT AUTHORIZED |
 
 ## R1–R8 rework regressions
@@ -186,6 +186,33 @@ missing, role credentials cannot cross-sign, a plausible manually staged row can
 verify, crashes write nothing, and duplicate/restart production reuses one authenticated
 occurrence. The existing exact-profile and supporting-evidence checks run after this
 producer-origin proof. AC-28 remains `NOT EXECUTED / NOT AUTHORIZED / BLOCKED`.
+
+## Eighth technical closure
+
+The trusted broker no longer executes repository-controlled commands in its own
+filesystem/process authority domain. A source-controlled `exec01-action-exec` helper
+opens one broker-created start-occurrence channel and then, on a locked OS thread,
+applies child-only Landlock and seccomp confinement before launching the exact approved
+command. The resulting child can read/write the bounded noexec workspace and required
+system runtimes, but cannot resolve `/run/exec/authority`, `/run/exec/provider` or
+`/proc`; create or use network sockets; signal/inspect peer processes; or escape its
+broker-controlled process group. The ledger and occurrence channel remain broker-owned,
+and helper exit/status plus kernel child observation distinguish pre-start failure,
+actual execution, command failure and timeout. The existing 32-PID ceiling remains in
+force; trusted Go control processes use one scheduler thread.
+
+| Fixture | Adversary | Exact Linux/Docker observation |
+|---|---|---|
+| BCF-01 | overwrite ledger | write denied; broker-only ledger remains valid |
+| BCF-02 | append forged occurrence | append denied; forged JSON absent |
+| BCF-03 | delete, truncate and rename over ledger | all operations denied |
+| BCF-04 | alter ready state, socket or authority directory | all operations denied |
+| BCF-05 | enumerate peer `/proc` environments | `/proc` unavailable; no capability/session/provider secret recovered |
+| BCF-06 | reach gateway by hostname or literal IP | DNS socket and direct-IP connect denied before gateway contact |
+| BCF-07 | recover/replay capability or invoke broker client directly | capability unavailable; direct replay/bypass denied |
+| BCF-08 | normal Codex/Claude representative build | workspace edit, test, bounded output and trusted occurrence succeed |
+| BCF-09 | command exit and timeout | executed command retained; bounded internal/timeout classification; descendants killed |
+| BCF-10 | attack followed by legitimate action | broker survives; sequence and subsequent actions remain valid |
 
 ### Sixth-rework scope fixtures
 
