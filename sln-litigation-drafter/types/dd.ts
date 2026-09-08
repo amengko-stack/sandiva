@@ -430,6 +430,26 @@ export interface DDNarrativeNote {
   sourceFile: string | null;
 }
 
+export interface DDNarrativeCoverage {
+  version: 1;
+  entityId: string;
+  sourceFingerprint: string;
+  status: "full_supplied_input" | "partial" | "unavailable" | "legacy_unassessed";
+  availableChars: number;
+  includedChars: number;
+  promptSourceChars: number;
+  files: {
+    fileName: string;
+    relevant: boolean;
+    availability: "usable" | "perlu_ocr" | "gagal" | "missing_text" | "unknown";
+    availableChars: number;
+    includedChars: number;
+  }[];
+  modelCompletion: "end_turn" | "not_called" | "unassessed";
+  limitations: string[];
+  generatedAt: string;
+}
+
 export interface DDNarrativeSectionI {
   entityId: string;
   establishment: DDDeedRef | null;
@@ -444,6 +464,8 @@ export interface DDNarrativeSectionI {
   commissioners: DDOfficerEntry[];
   notes: DDNarrativeNote[];
   generatedAt: string;         // ISO
+  /** Server-owned processing evidence; absent on older saved narratives. */
+  coverage?: DDNarrativeCoverage;
 }
 
 /**

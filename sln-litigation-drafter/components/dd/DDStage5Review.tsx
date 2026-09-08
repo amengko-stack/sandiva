@@ -256,10 +256,11 @@ export default function DDStage5Review() {
    * persisted by the time this runs, so throwing it away would cost the expensive
    * work for the sake of the cheap. But a silent failure puts us straight back to
    * the defect being fixed — a report quietly missing its profile chapter — so the
-   * lawyer is told, in the terms that matter to them: Bab II will be empty.
+   * lawyer is told that this attempt failed and an earlier artifact may remain.
    */
   const runNarrative = async (eid: string) => {
     setProgress((p) => ({ ...p, [eid]: "Menyusun Profil Perseroan (Bab II)…" }));
+    let previousGeneratedAt: string | null = null;
     try {
       const res = await fetch("/api/dd/narrative", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -284,21 +285,29 @@ export default function DDStage5Review() {
             // This route names the field "message"; /api/dd/analyze names it "label".
             if (msg.type === "step") setProgress((p) => ({ ...p, [eid]: msg.message }));
             if (msg.type === "done") sawDone = true;
-            if (msg.type === "error") throw new Error(msg.message);
+            if (msg.type === "error") {
+              if (typeof msg.previousGeneratedAt === "string" && Number.isFinite(Date.parse(msg.previousGeneratedAt))) {
+                previousGeneratedAt = msg.previousGeneratedAt;
+              }
+              throw new Error(msg.message);
+            }
           }
         }
       } finally {
         reader.cancel();
       }
-      // The route writes the blob before emitting done, so no done means no blob.
+      // No done means no confirmed new result; an older saved result may remain.
       if (!sawDone) throw new Error("Stream profil terputus sebelum selesai");
     } catch (err) {
       dispatch({
         type: "SET_ERROR",
         error:
           `Analisis entitas selesai dan tersimpan, tetapi Profil Perseroan (Bab II) gagal disusun: ` +
-          `${err instanceof Error ? err.message : "Error"}. Bab II akan kosong pada laporan — ` +
-          `jalankan ulang analisis entitas ini sebelum mengekspor.`,
+          `${err instanceof Error ? err.message : "Penyusunan belum selesai"}. ` +
+          (previousGeneratedAt
+            ? `Hasil sebelumnya yang disimpan pada ${new Date(previousGeneratedAt).toLocaleString("id-ID")} tetap tersedia sebagai hasil terdahulu. `
+            : "Jika sudah ada hasil yang tersimpan, hasil tersebut berasal dari penyusunan sebelumnya. ") +
+          `Periksa catatan cakupannya dan jalankan ulang penyusunan sebelum mengekspor hasil terbaru.`,
       });
     }
   };

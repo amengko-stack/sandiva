@@ -35,6 +35,12 @@ const base = (over: Partial<DDNarrativeSectionI> = {}): DDNarrativeSectionI => (
   commissioners: [],
   notes: [],
   generatedAt: "2026-08-03T00:00:00.000Z",
+  coverage: {
+    version: 1, entityId: "e1", sourceFingerprint: "a".repeat(64), status: "full_supplied_input",
+    availableChars: 10, includedChars: 10, promptSourceChars: 20,
+    files: [{ fileName: "akta16.pdf", relevant: true, availability: "usable", availableChars: 10, includedChars: 10 }],
+    modelCompletion: "end_turn", limitations: [], generatedAt: "2026-08-03T00:00:00.000Z",
+  },
   ...over,
 });
 

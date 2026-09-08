@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { MODELS } from "@/config/models";
-import { repairTruncatedJson } from "@/lib/json-repair";
+import { prepareNarrativeInput, coverageNotes, emptyNarrative, sourcePrefix, NARRATIVE_CHAR_CAP } from "@/lib/dd/narrative-coverage";
 import { checkQuote, isUngrounded, traceCitation } from "@/lib/dd/grounding";
 import { DD_ANCHOR_RULE, DD_DATA_FRAMING } from "@/lib/dd/prompts";
 import type {
@@ -12,10 +12,6 @@ import type {
   DDOfficerEntry,
   DDShareholderEntry,
 } from "@/types/dd";
-
-const NARRATIVE_CHAR_CAP = 100_000; // Bagian I aspects only, but includes full deed text — generous cap
-
-const SECTION_I_ASPECTS = new Set(["pendirian_ad", "permodalan_saham", "pengurus"]);
 
 const NOTE_ANCHORS = new Set([
   "pendirian",
@@ -44,7 +40,7 @@ export function buildNarrativePrompt(args: {
   return `Entitas: ${args.entityName}.
 
 === DOKUMEN BAGIAN I (Pendirian, Anggaran Dasar, Permodalan, Pemegang Saham, Direksi & Dewan Komisaris) ===
-${args.docsText.slice(0, NARRATIVE_CHAR_CAP)}
+${sourcePrefix(args.docsText, NARRATIVE_CHAR_CAP)}
 === AKHIR DOKUMEN ===
 
 Ekstrak fakta berikut dari dokumen di atas.
@@ -318,16 +314,23 @@ export function parseNarrativeResponse(
   stopReason: string | null,
   args: { entityId: string }
 ): DDNarrativeSectionI {
-  const clean = raw.replace(/```json|```/g, "").trim();
-  const match = clean.match(/\{[\s\S]*\}?/);
-  if (!match) throw new Error("Hasil ekstraksi narasi Bagian I bukan JSON");
-  let jsonStr = match[0];
-  if (stopReason === "max_tokens") jsonStr = repairTruncatedJson(jsonStr);
-  let p: Record<string, unknown>;
+  if (stopReason !== "end_turn") {
+    throw new Error("Penyusunan Profil Perseroan terhenti sebelum selesai. Hasil ini belum dapat dinyatakan sebagai hasil penyusunan yang lengkap.");
+  }
+  const clean = raw.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/, "$1").trim();
+  let parsed: unknown;
   try {
-    p = JSON.parse(jsonStr);
+    parsed = JSON.parse(clean) as unknown;
   } catch {
-    p = JSON.parse(repairTruncatedJson(jsonStr));
+    throw new Error("Hasil penyusunan Profil Perseroan belum lengkap atau tidak dapat dibaca. Jalankan ulang penyusunan.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Bentuk hasil Profil Perseroan tidak valid.");
+  const p = parsed as Record<string, unknown>;
+  const itemObject = (x: unknown) => x !== null && typeof x === "object" && !Array.isArray(x);
+  for (const key of ["amendments", "capitalHistory", "shareholders", "directors", "commissioners", "notes"]) {
+    if (p[key] !== undefined && (!Array.isArray(p[key]) || !(p[key] as unknown[]).every(itemObject))) {
+      throw new Error("Rincian hasil Profil Perseroan tidak valid.");
+    }
   }
 
   const establishment =
@@ -409,55 +412,28 @@ export function parseNarrativeResponse(
 }
 
 export async function extractNarrativeSectionI(
-  client: Anthropic,
+  client: Anthropic | (() => Anthropic),
   args: {
     entityId: string;
     entityName: string;
     classified: DDClassifiedDoc[];
     contentByFile: Map<string, string>;
+    extractReport?: unknown;
   }
 ): Promise<DDNarrativeSectionI> {
-  const files = args.classified
-    .filter((d) => d.entityId === args.entityId && SECTION_I_ASPECTS.has(d.aspectId))
-    .map((d) => d.fileName);
-  const uniqueFiles = Array.from(new Set(files));
-
-  const docsText = uniqueFiles
-    .map((f) => `=== ${f} ===\n${args.contentByFile.get(f) ?? "[TIDAK DITEMUKAN]"}`)
-    .join("\n\n");
-
-  if (!docsText.trim()) {
-    // No Bagian I documents classified at all — tolerate, do not throw.
-    return {
-      entityId: args.entityId,
-      establishment: null,
-      amendments: [],
-      businessPurpose: "",
-      businessActivities: [],
-      businessBasis: "",
-      capitalHistory: [],
-      currentCapital: null,
-      shareholders: [],
-      directors: [],
-      commissioners: [],
-      notes: [
-        {
-          anchor: "pendirian",
-          text: "Tidak ada dokumen yang diklasifikasikan pada aspek pendirian, permodalan, atau pengurus dalam dokumen yang diperiksa.",
-          sourceFile: null,
-        },
-      ],
-      generatedAt: new Date().toISOString(),
-    };
+  const input = prepareNarrativeInput(args);
+  const { docsText, coverage } = input;
+  if (!coverage.includedChars) {
+    return { ...emptyNarrative(args.entityId, coverage.generatedAt), coverage, notes: coverageNotes(coverage) };
   }
 
-  const response = await client.messages.create({
+  const response = await (typeof client === "function" ? client() : client).messages.create({
     model: MODELS.ddExtraction,
     max_tokens: 8000,
     system: narrativeSystem(),
     messages: [{ role: "user", content: buildNarrativePrompt({ entityName: args.entityName, docsText }) }],
   });
-  const raw = response.content.find((b) => b.type === "text")?.text ?? "";
+  const raw = response.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
   const narrative = parseNarrativeResponse(raw, response.stop_reason, { entityId: args.entityId });
 
   // Check the citation chain against the documents before it can be stated as
@@ -465,7 +441,7 @@ export async function extractNarrativeSectionI(
   const deeds = narrative.establishment
     ? [narrative.establishment].concat(narrative.amendments)
     : narrative.amendments;
-  const traced = citationNotes(deeds, args.contentByFile);
-  if (traced.length === 0) return narrative;
-  return { ...narrative, notes: narrative.notes.concat(traced) };
+  const traced = citationNotes(deeds, input.contentByFile);
+  coverage.generatedAt = narrative.generatedAt;
+  return { ...narrative, coverage, notes: narrative.notes.concat(traced, coverageNotes(coverage)) };
 }
