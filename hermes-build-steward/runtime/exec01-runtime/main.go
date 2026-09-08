@@ -868,7 +868,7 @@ func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, st
 		} else if exit, ok := waitErr.(*exec.ExitError); ok {
 			detail = fmt.Sprintf("exit %d", exit.ExitCode())
 		}
-		return actionChildOutcome{err: fmt.Errorf("action executor did not attest command start (%s)", detail)}
+		return actionChildOutcome{err: fmt.Errorf("action executor did not attest command start (%s; read=%v; value=%q)", detail, statusErr, statusValue)}
 	}
 	if timedOut {
 		return actionChildOutcome{commandStarted: started, exitCode: -1, timedOut: true}
