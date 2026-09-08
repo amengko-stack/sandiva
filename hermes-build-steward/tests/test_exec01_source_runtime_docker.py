@@ -270,7 +270,9 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         )
 
     def _assert_bcf_success(self, result):
-        self.assertEqual(result["disposition"], "EXECUTION_SUCCEEDED")
+        diagnostic = self.workspace/"hermes-build-steward"/"action-failure.json"
+        detail = diagnostic.read_text() if diagnostic.exists() else "no action diagnostic"
+        self.assertEqual(result["disposition"], "EXECUTION_SUCCEEDED", detail)
         self.assertEqual(result["commandsExecuted"], ["sh q16-build.sh"])
         self.assertEqual(result["testOutcomes"], [{
             "name": "approved command: sh q16-build.sh", "status": "PASS",

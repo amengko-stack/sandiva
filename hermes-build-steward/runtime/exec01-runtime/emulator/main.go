@@ -154,6 +154,12 @@ func main() {
 			}
 			os.Exit(1)
 		}
+		// The deterministic emulator may persist a bounded diagnostic only through
+		// the same broker. Production launchers do not receive this behavior.
+		diagnostic, _ := json.Marshal(map[string]interface{}{"transportError": fmt.Sprint(actionErr), "result": execution})
+		_, _ = action(sequence, "Write", map[string]interface{}{
+			"path": "hermes-build-steward/action-failure.json", "content": string(diagnostic),
+		})
 		fmt.Fprintln(os.Stderr, "Sandiva action broker failed")
 		os.Exit(3)
 	}
