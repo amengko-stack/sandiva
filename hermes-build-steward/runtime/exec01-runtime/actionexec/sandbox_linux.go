@@ -236,7 +236,7 @@ func runSandboxedAction(mode string, arguments []string, scratch, statusPath str
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 	command.Env = []string{
 		"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + scratch, "TMPDIR=" + scratch,
-		"CI=true", "LANG=C.UTF-8", "LC_ALL=C.UTF-8",
+		"CI=true", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "GOMAXPROCS=1",
 	}
 	command.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	if err := command.Start(); err != nil {

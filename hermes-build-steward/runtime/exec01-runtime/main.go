@@ -836,7 +836,10 @@ func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, st
 	command := exec.Command(actionExecutor, append([]string{mode}, arguments...)...)
 	command.Dir = authorizationWorkspaceHost
 	command.Stdin, command.Stdout, command.Stderr = stdin, stdout, stderr
-	command.Env = []string{"EXEC01_ACTION_SCRATCH=" + scratch, "EXEC01_ACTION_STATUS=" + statusPath}
+	command.Env = []string{
+		"EXEC01_ACTION_SCRATCH=" + scratch, "EXEC01_ACTION_STATUS=" + statusPath,
+		"GOMAXPROCS=1",
+	}
 	configureActionProcess(command)
 	if err := command.Start(); err != nil {
 		return actionChildOutcome{err: errors.New("action executor could not start")}
@@ -1636,7 +1639,7 @@ func executeProvider(args []string) error {
 	}
 	capability := hex.EncodeToString(capabilityBytes)
 	broker := exec.Command(runtimeExecutablePath, "broker-serve")
-	broker.Env = append(os.Environ(), "EXEC_ACTION_CAPABILITY="+capability)
+	broker.Env = append(os.Environ(), "EXEC_ACTION_CAPABILITY="+capability, "GOMAXPROCS=1")
 	if err := broker.Start(); err != nil {
 		return errors.New("Sandiva action broker could not start")
 	}
@@ -1683,6 +1686,7 @@ func executeProvider(args []string) error {
 	command.Env = []string{
 		"PATH=/opt/sandiva/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/run/exec", "CI=true",
 		"LANG=C.UTF-8", "LC_ALL=C.UTF-8",
+		"GOMAXPROCS=1",
 		"EXECUTOR_GATEWAY_ENDPOINT=" + os.Getenv("EXECUTOR_GATEWAY_ENDPOINT"),
 		"EXEC_GATEWAY_SESSION_TOKEN=" + session,
 		"EXEC_TASK_FINGERPRINT=" + request.TaskFingerprint,
