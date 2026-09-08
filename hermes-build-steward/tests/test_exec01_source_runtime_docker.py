@@ -294,13 +294,14 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             "mkdir -p /run/exec/action/probe; "
             "exec 3>/tmp/action-status; "
             "EXEC01_ACTION_SCRATCH=/run/exec/action/probe "
-            "/opt/sandiva/bin/exec01-action-exec shell 'printf confined-command-started'",
+            "/opt/sandiva/bin/exec01-action-exec shell 'printf confined-command-started'; "
+            "exit_code=$?; printf ':'; cat /tmp/action-status; exit $exit_code",
         ], text=True, capture_output=True)
         self.assertEqual(
             completed.returncode, 0,
             f"action helper failed: stdout={completed.stdout!r} stderr={completed.stderr!r}",
         )
-        self.assertEqual(completed.stdout, "confined-command-started")
+        self.assertEqual(completed.stdout, "confined-command-started:executed\n")
 
     def test_bcf_01_ledger_overwrite_is_denied_in_actual_runtime(self):
         _, result, _ = self._run_bcf(

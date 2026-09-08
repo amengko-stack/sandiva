@@ -242,7 +242,11 @@ func runSandboxedAction(mode string, arguments []string, scratch string) int {
 	if err := command.Start(); err != nil {
 		return 125
 	}
-	_, _ = status.Write([]byte("executed\n"))
+	if _, err := status.Write([]byte("executed\n")); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return 123
+	}
 	_ = status.Close()
 	if err := command.Wait(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
