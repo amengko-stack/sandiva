@@ -6,9 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"syscall"
 	"unsafe"
 )
+
+func configureActionProcess(command *exec.Cmd) {
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+}
+
+func killActionProcessGroup(pid int) {
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
+}
 
 // Linux Landlock ABI. The provider process tree receives read-only runtime
 // access plus a private scratch directory, but no access at all to /workspace.

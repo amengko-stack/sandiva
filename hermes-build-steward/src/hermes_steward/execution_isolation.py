@@ -241,6 +241,10 @@ def build_executor_container_command(
         "--workdir", "/workspace",
         "--env", f"EXEC_REQUEST_B64={request_payload}",
         "--env", f"EXEC_WORKSPACE_LIMIT_BYTES={policy.workspace_limit_bytes}",
+        # Reserve a bounded cleanup/result window before the outer attempt
+        # deadline. The broker uses this trusted value to terminate the entire
+        # action process group and persist its timeout occurrence.
+        "--env", f"EXEC_ACTION_TIMEOUT_SECONDS={max(1, policy.wall_time_seconds - 4)}",
         "--env", f"EXECUTOR_GATEWAY_ENDPOINT={profile.gateway_endpoint}",
         "--label", f"sandiva.exec.task={request.task_id}",
         "--label", f"sandiva.exec.attempt={request.attempt_id}",

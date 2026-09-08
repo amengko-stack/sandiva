@@ -19,17 +19,20 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const workspace = "/workspace"
 const outputLimit = 4 * 1024 * 1024
-const launcherVersion = "exec01-runtime-v1.3.0"
+const launcherVersion = "exec01-runtime-v1.4.0"
 const denialMarker = "/run/exec/authority/pretool-denied"
 const brokerSocket = "/run/exec/provider/action.sock"
 const brokerLedger = "/run/exec/authority/action-ledger.jsonl"
 const brokerReady = "/run/exec/authority/action-ready"
+const actionExecutor = "/opt/sandiva/bin/exec01-action-exec"
+const actionScratchRoot = "/run/exec/action"
 const hookInputLimit = 64 * 1024
 
 // authorizationWorkspaceHost is compile-time fixed to the isolated attempt
@@ -286,6 +289,7 @@ type hookInput struct {
 }
 
 type toolExecution struct {
+	Sequence    int         `json:"sequence,omitempty"`
 	Disposition string      `json:"disposition"`
 	Executed    bool        `json:"executed"`
 	ToolName    string      `json:"toolName,omitempty"`
@@ -293,6 +297,7 @@ type toolExecution struct {
 	ExitCode    int         `json:"exitCode,omitempty"`
 	Output      interface{} `json:"output,omitempty"`
 	Reason      string      `json:"reason,omitempty"`
+	FailureType string      `json:"failureType,omitempty"`
 }
 
 type brokerRequest struct {
@@ -790,6 +795,91 @@ func toolString(input map[string]interface{}, names ...string) (string, bool) {
 	return "", false
 }
 
+func actionTimeout() time.Duration {
+	seconds, err := strconv.Atoi(os.Getenv("EXEC_ACTION_TIMEOUT_SECONDS"))
+	if err != nil || seconds < 1 || seconds > 3600 {
+		return 30 * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+type actionChildOutcome struct {
+	commandStarted bool
+	exitCode       int
+	timedOut       bool
+	err            error
+}
+
+func runActionChild(mode string, arguments []string, stdin io.Reader, stdout, stderr io.Writer) actionChildOutcome {
+	identifier := make([]byte, 16)
+	if _, err := rand.Read(identifier); err != nil {
+		return actionChildOutcome{err: errors.New("action scratch identity could not be created")}
+	}
+	if err := os.MkdirAll(actionScratchRoot, 0700); err != nil {
+		return actionChildOutcome{err: errors.New("action scratch root could not be created")}
+	}
+	scratch := filepath.Join(actionScratchRoot, hex.EncodeToString(identifier))
+	if err := os.Mkdir(scratch, 0700); err != nil {
+		return actionChildOutcome{err: errors.New("action scratch could not be created")}
+	}
+	defer os.RemoveAll(scratch)
+
+	statusReader, statusWriter, err := os.Pipe()
+	if err != nil {
+		return actionChildOutcome{err: errors.New("action status channel could not be created")}
+	}
+	defer statusReader.Close()
+	command := exec.Command(actionExecutor, append([]string{mode}, arguments...)...)
+	command.Dir = authorizationWorkspaceHost
+	command.Stdin, command.Stdout, command.Stderr = stdin, stdout, stderr
+	command.Env = []string{"EXEC01_ACTION_SCRATCH=" + scratch}
+	command.ExtraFiles = []*os.File{statusWriter}
+	configureActionProcess(command)
+	if err := command.Start(); err != nil {
+		statusWriter.Close()
+		return actionChildOutcome{err: errors.New("action executor could not start")}
+	}
+	statusWriter.Close()
+	statusResult := make(chan []byte, 1)
+	go func() {
+		value, _ := io.ReadAll(io.LimitReader(statusReader, 32))
+		statusResult <- value
+	}()
+	waitResult := make(chan error, 1)
+	go func() { waitResult <- command.Wait() }()
+	timer := time.NewTimer(actionTimeout())
+	defer timer.Stop()
+	waitErr := error(nil)
+	timedOut := false
+	select {
+	case waitErr = <-waitResult:
+	case <-timer.C:
+		timedOut = true
+		killActionProcessGroup(command.Process.Pid)
+		_ = command.Process.Kill()
+		waitErr = <-waitResult
+	}
+	// Every descendant inherits the action process group. setpgid/setsid are
+	// denied by the child seccomp filter, so this also removes background work
+	// after a normal shell exit or crash.
+	killActionProcessGroup(command.Process.Pid)
+	status := <-statusResult
+	started := bytes.Equal(status, []byte("executed\n"))
+	if !started {
+		return actionChildOutcome{err: errors.New("action executor did not attest command start")}
+	}
+	if timedOut {
+		return actionChildOutcome{commandStarted: started, exitCode: -1, timedOut: true}
+	}
+	if waitErr == nil {
+		return actionChildOutcome{commandStarted: started, exitCode: 0}
+	}
+	if exit, ok := waitErr.(*exec.ExitError); ok {
+		return actionChildOutcome{commandStarted: started, exitCode: exit.ExitCode()}
+	}
+	return actionChildOutcome{commandStarted: started, err: errors.New("action executor failed")}
+}
+
 func executeAuthorizedTool(request requestEnvelope, tool string, input map[string]interface{}) (toolExecution, error) {
 	result := toolExecution{Disposition: "provider_runtime_failure", ToolName: tool}
 	raw, err := json.Marshal(hookInput{EventName: "PreToolUse", ToolName: tool, Cwd: workspace, ToolInput: input})
@@ -827,22 +917,24 @@ func executeAuthorizedTool(request requestEnvelope, tool string, input map[strin
 			return fail(errors.New("authorized shell command could not be resolved"))
 		}
 		result.Command = commandValue
-		process := exec.Command("/bin/sh", "-c", commandValue)
-		process.Dir = authorizationWorkspaceHost
-		process.Env = []string{"PATH=/opt/sandiva/bin:/usr/local/bin:/usr/bin:/bin", "HOME=/run/exec", "CI=true", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
 		stdout := &boundedBuffer{limit: 512 * 1024}
 		stderr := &boundedBuffer{limit: 64 * 1024}
-		process.Stdout, process.Stderr = stdout, stderr
-		runErr := process.Run()
-		output := map[string]interface{}{"stdout": stdout.buffer.String(), "stderr": stderr.buffer.String(), "exitCode": 0}
-		if runErr != nil {
-			if exit, ok := runErr.(*exec.ExitError); ok {
-				result.ExitCode = exit.ExitCode()
-				output["exitCode"] = result.ExitCode
-				return succeed(output)
-			}
-			return fail(runErr)
+		outcome := runActionChild("shell", []string{commandValue}, nil, stdout, stderr)
+		result.Executed = outcome.commandStarted
+		if outcome.timedOut {
+			result.Disposition = "provider_runtime_failure"
+			result.FailureType = "timeout"
+			result.ExitCode = -1
+			result.Reason = "action command timed out and descendants were terminated"
+			return result, nil
 		}
+		if outcome.err != nil {
+			result.Disposition = "provider_runtime_failure"
+			result.Reason = outcome.err.Error()
+			return result, nil
+		}
+		result.ExitCode = outcome.exitCode
+		output := map[string]interface{}{"stdout": stdout.buffer.String(), "stderr": stderr.buffer.String(), "exitCode": outcome.exitCode}
 		return succeed(output)
 	case "Read":
 		value, _ := toolString(input, "file_path", "path", "filePath")
@@ -988,13 +1080,15 @@ func executeAuthorizedTool(request requestEnvelope, tool string, input map[strin
 			return fail(errors.New("custom patch execution is not supported by the trusted broker"))
 		}
 		for _, arguments := range [][]string{{"--dry-run", "-p1", "--forward", "--batch"}, {"-p1", "--forward", "--batch"}} {
-			process := exec.Command("/usr/bin/patch", arguments...)
-			process.Dir = authorizationWorkspaceHost
-			process.Env = []string{"PATH=/usr/bin:/bin", "HOME=/run/exec", "LANG=C.UTF-8", "LC_ALL=C.UTF-8"}
-			process.Stdin = strings.NewReader(patchValue)
 			output := &boundedBuffer{limit: 128 * 1024}
-			process.Stdout, process.Stderr = output, output
-			if runErr := process.Run(); runErr != nil {
+			outcome := runActionChild("patch", arguments, strings.NewReader(patchValue), output, output)
+			if outcome.timedOut {
+				result.Executed = outcome.commandStarted
+				result.FailureType = "timeout"
+				return fail(errors.New("trusted patch execution timed out"))
+			}
+			if outcome.err != nil || outcome.exitCode != 0 {
+				result.Executed = outcome.commandStarted
 				return fail(errors.New("trusted patch execution failed"))
 			}
 		}
@@ -1031,11 +1125,11 @@ func handleBrokerRequest(raw []byte, request requestEnvelope, expectedSequence i
 }
 
 func appendBrokerLedger(sequence int, result toolExecution) error {
-	entry, err := json.Marshal(map[string]interface{}{
-		"sequence": sequence, "occurredAt": time.Now().UTC().Format(time.RFC3339Nano),
-		"disposition": result.Disposition, "executed": result.Executed,
-		"toolName": result.ToolName, "command": result.Command, "exitCode": result.ExitCode, "reason": result.Reason,
-	})
+	result.Sequence = sequence
+	entry, err := json.Marshal(struct {
+		toolExecution
+		OccurredAt string `json:"occurredAt"`
+	}{toolExecution: result, OccurredAt: time.Now().UTC().Format(time.RFC3339Nano)})
 	if err != nil {
 		return err
 	}
@@ -1633,14 +1727,16 @@ func executeProvider(args []string) error {
 	trustedCommands := []string{}
 	trustedTests := []map[string]interface{}{}
 	brokerEvents := 0
+	expectedSequence := 1
 	for _, line := range bytes.Split(bytes.TrimSpace(ledgerRaw), []byte{'\n'}) {
 		if len(line) == 0 {
 			continue
 		}
 		var event toolExecution
-		if json.Unmarshal(line, &event) != nil {
+		if json.Unmarshal(line, &event) != nil || event.Sequence != expectedSequence {
 			return errors.New("action broker provenance is malformed")
 		}
+		expectedSequence++
 		brokerEvents++
 		if event.Disposition == "denied_before_execution" {
 			if args[0] == "codex" {
@@ -1650,6 +1746,19 @@ func executeProvider(args []string) error {
 			}
 		}
 		if event.Disposition == "provider_runtime_failure" {
+			if event.FailureType == "timeout" {
+				if args[0] == "codex" {
+					result.Status, result.ErrorType = "timed_out", "timeout"
+				} else {
+					result.StopReason, result.ErrorTypeC = "timeout", "timeout"
+				}
+			} else if args[0] == "codex" {
+				result.Status, result.ErrorType = "failed", "internal_error"
+			} else {
+				result.StopReason, result.ErrorTypeC = "error", "internal_error"
+			}
+		}
+		if event.Disposition == "authorized_and_executed" && event.Command != "" && event.ExitCode != 0 {
 			if args[0] == "codex" {
 				result.Status, result.ErrorType = "failed", "internal_error"
 			} else {
@@ -1713,13 +1822,18 @@ func attest(args []string) error {
 	if err != nil {
 		return err
 	}
+	actionExecutorDigest, err := fileDigest(actionExecutor)
+	if err != nil {
+		return errors.New("action executor identity is unavailable")
+	}
 	versionOutput, err := exec.Command(launcher, "--version").CombinedOutput()
 	if err != nil {
 		return errors.New("executor version observation failed")
 	}
 	value := map[string]string{
 		"runtimeWrapperDigest": runtimeDigest, "executableDigest": executableDigest,
-		"executableVersion": strings.TrimSpace(string(versionOutput)), "launcherVersion": launcherVersion,
+		"actionExecutorDigest": actionExecutorDigest,
+		"executableVersion":    strings.TrimSpace(string(versionOutput)), "launcherVersion": launcherVersion,
 		"model": args[1], "gatewayImplementationDigest": args[2], "gatewayPolicyDigest": args[3],
 	}
 	return json.NewEncoder(os.Stdout).Encode(value)

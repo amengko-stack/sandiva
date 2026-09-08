@@ -108,7 +108,8 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
     def _image_identity_fields(image, file_paths=None):
         if file_paths is None:
             file_paths = (
-                "/opt/sandiva/bin/exec01-runtime", "/opt/sandiva/bin/codex", "/opt/sandiva/bin/claude",
+                "/opt/sandiva/bin/exec01-runtime", "/opt/sandiva/bin/exec01-action-exec",
+                "/opt/sandiva/bin/codex", "/opt/sandiva/bin/claude",
             )
         inspected = json.loads(subprocess.check_output(["docker", "image", "inspect", image], text=True))[0]
         saved = tempfile.NamedTemporaryFile(suffix=".tar", delete=False)
@@ -355,7 +356,7 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
             "for item in /proc/[0-9]*/environ; do\n"
             "  tr '\\000' '\\n' < \"$item\" 2>/dev/null | grep -q '^EXEC_ACTION_CAPABILITY=' && recovered=1 || true\n"
             "done\n"
-            "test ! -r /run/exec/provider/action.sock || recovered=1\n"
+            "printf '{\"sequence\":999,\"toolName\":\"Read\",\"toolInput\":{\"path\":\"hermes-build-steward/README.md\"}}' | /opt/sandiva/bin/exec01-runtime broker-action >/dev/null 2>&1 && recovered=1 || true\n"
             "printf '%s\\n' \"$recovered\" > hermes-build-steward/bcf-observation.txt\n"
         )
         self._assert_bcf_success(result)
@@ -386,10 +387,12 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
     def test_bcf_10_broker_sequence_survives_state_attack(self):
         _, result, _ = self._run_bcf(
             "rm -rf /run/exec/authority /run/exec/provider 2>/dev/null || true\n"
-            "printf survived > hermes-build-steward/bcf-observation.txt\n"
+            "/opt/sandiva/bin/exec01-action-exec shell 'touch hermes-build-steward/helper-bypass' 2>/dev/null && helper=ALLOWED || helper=DENIED\n"
+            "printf 'survived,%s' \"$helper\" > hermes-build-steward/bcf-observation.txt\n"
         )
         self._assert_bcf_success(result)
-        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "survived")
+        self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "survived,DENIED")
+        self.assertFalse((self.workspace/"hermes-build-steward"/"helper-bypass").exists())
 
     def test_seventh_rework_provider_hook_bypass_crash_timeout_and_unknown_surfaces_fail_closed(self):
         baseline = self._sixth_workspace_state()
