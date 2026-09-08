@@ -280,6 +280,26 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-prelude.txt").read_text(), "broker-prelude\n")
         self.assertEqual((self.workspace/"hermes-build-steward"/"noexec-probe.txt").read_text(), "direct-denied;trusted-interpreter-succeeded\n")
 
+    def test_action_exec_helper_starts_a_confined_command(self):
+        completed = subprocess.run([
+            "docker", "run", "--rm", "--network", "none", "--read-only",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            "--user", "65532:65532",
+            "--tmpfs", "/workspace:rw,nosuid,nodev,noexec,size=1048576,uid=65532,gid=65532,mode=0700",
+            "--tmpfs", "/run/exec:rw,nosuid,nodev,noexec,size=1048576,uid=65532,gid=65532,mode=0700",
+            "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=1048576,uid=65532,gid=65532,mode=0700",
+            "--entrypoint", "/bin/sh", self.image, "-c",
+            "mkdir -p /run/exec/action/probe; "
+            "exec 3>/tmp/action-status; "
+            "EXEC01_ACTION_SCRATCH=/run/exec/action/probe "
+            "/opt/sandiva/bin/exec01-action-exec shell 'printf confined-command-started'",
+        ], text=True, capture_output=True)
+        self.assertEqual(
+            completed.returncode, 0,
+            f"action helper failed: stdout={completed.stdout!r} stderr={completed.stderr!r}",
+        )
+        self.assertEqual(completed.stdout, "confined-command-started")
+
     def test_bcf_01_ledger_overwrite_is_denied_in_actual_runtime(self):
         _, result, _ = self._run_bcf(
             "forged='{\"sequence\":900,\"disposition\":\"authorized_and_executed\",\"executed\":true,\"toolName\":\"Bash\",\"command\":\"forged-overwrite\"}'\n"
@@ -332,23 +352,17 @@ class SourceControlledRuntimeDockerTests(unittest.TestCase):
         self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "0\n")
 
     def test_bcf_06_repository_command_cannot_contact_gateway(self):
-        subprocess.run(["docker", "rm", "-f", self.gateway], check=True, stdout=subprocess.DEVNULL)
-        subprocess.run([
-            "docker", "run", "-d", "--name", self.gateway, "--network", self.network,
-            "--network-alias", "executor-gateway.sandiva.internal",
-            "--label", f"sandiva.exec.gateway-policy={self.policy_fingerprint}",
-            "--tmpfs", "/srv:rw,nosuid,nodev,noexec,size=1048576",
-            "--entrypoint", "/bin/sh", self.image, "-c",
-            "printf reached > /srv/index.html; exec httpd -f -p 8443 -h /srv",
-        ], check=True, stdout=subprocess.DEVNULL)
-        time.sleep(0.2)
         _, result, _ = self._run_bcf(
-            "if busybox wget -q -O hermes-build-steward/gateway-response http://executor-gateway.sandiva.internal:8443/ 2>/dev/null; then outcome=ALLOWED; else outcome=DENIED; fi\n"
+            "if busybox wget -q -O hermes-build-steward/gateway-response http://executor-gateway.sandiva.internal:8443/ 2>hermes-build-steward/gateway-stderr; then outcome=ALLOWED; else outcome=DENIED; fi\n"
             "printf '%s\\n' \"$outcome\" > hermes-build-steward/bcf-observation.txt\n"
         )
         self._assert_bcf_success(result)
         self.assertEqual((self.workspace/"hermes-build-steward"/"bcf-observation.txt").read_text(), "DENIED\n")
         self.assertFalse((self.workspace/"hermes-build-steward"/"gateway-response").exists())
+        self.assertIn(
+            "operation not permitted",
+            (self.workspace/"hermes-build-steward"/"gateway-stderr").read_text().lower(),
+        )
 
     def test_bcf_07_action_capability_cannot_be_recovered_or_replayed(self):
         _, result, _ = self._run_bcf(
