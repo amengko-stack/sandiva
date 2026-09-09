@@ -1,4 +1,5 @@
 import { formatIndonesianDate } from "@/lib/dd/report-boilerplate";
+import { coverageNotes, parseNarrativeCoverage } from "@/lib/dd/narrative-coverage";
 import type {
   DDCapitalEntry, DDDeedRef, DDNarrativeNote, DDNarrativeSectionI, DDOfficerEntry,
 } from "@/types/dd";
@@ -108,9 +109,9 @@ function capitalDefs(c: DDCapitalEntry): [string, string][] {
   return rows;
 }
 
-function officerTable(list: DDOfficerEntry[], label: string): DDNarrativeBlock[] {
+function officerTable(list: DDOfficerEntry[], label: string, noData = NO_DATA): DDNarrativeBlock[] {
   if (list.length === 0) {
-    return [{ kind: "para", text: `${NO_DATA} (${label})` }];
+    return [{ kind: "para", text: `${noData} (${label})` }];
   }
   return [
     {
@@ -125,7 +126,16 @@ export function renderNarrativeSectionI(
   n: DDNarrativeSectionI,
   entityName: string
 ): DDNarrativeBlock[] {
-  const out: DDNarrativeBlock[] = [];
+  const parsed = parseNarrativeCoverage(n.coverage);
+  const coverage = parsed?.entityId === n.entityId && parsed.generatedAt === n.generatedAt ? parsed : null;
+  const limited = coverage?.status !== "full_supplied_input";
+  const noData = limited ? "Keterangan mengenai hal ini belum dapat dipastikan dari teks yang dapat diperiksa. [PERLU VERIFIKASI]" : NO_DATA;
+  const mandatory = coverageNotes(coverage);
+  const out: DDNarrativeBlock[] = [
+    { kind: "note", text: "Cakupan Profil Perseroan" },
+    ...mandatory.map((note): DDNarrativeBlock => ({ kind: "note", text: note.text })),
+  ];
+  if (Number.isFinite(Date.parse(n.generatedAt))) out.push({ kind: "para", text: `Waktu penyusunan narasi tersimpan: ${new Date(n.generatedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB.` });
   const P = `"Perseroan"`;
 
   // --- 1. Data Korporasi ---
@@ -138,8 +148,8 @@ export function renderNarrativeSectionI(
     ]);
     dataKorporasiRows.push(["Dasar pendirian", deedShortName(n.establishment)]);
   } else {
-    dataKorporasiRows.push(["Tanggal pendirian", DOCUMENT_NOT_AVAILABLE]);
-    dataKorporasiRows.push(["Dasar pendirian", DOCUMENT_NOT_AVAILABLE]);
+    dataKorporasiRows.push(["Tanggal pendirian", limited ? "[PERLU VERIFIKASI]" : DOCUMENT_NOT_AVAILABLE]);
+    dataKorporasiRows.push(["Dasar pendirian", limited ? "[PERLU VERIFIKASI]" : DOCUMENT_NOT_AVAILABLE]);
   }
   dataKorporasiRows.push(["Status", "Tertutup"]);
   out.push({ kind: "defs", rows: dataKorporasiRows });
@@ -153,7 +163,7 @@ export function renderNarrativeSectionI(
   if (deeds.length === 0) {
     out.push({
       kind: "para",
-      text:
+      text: limited ? "Keterangan pendirian dan perubahan Anggaran Dasar belum dapat dipastikan dari teks yang dapat diperiksa. [PERLU VERIFIKASI]" :
         `${entityName} (${P}) merupakan perseroan terbatas yang didirikan menurut hukum Republik Indonesia. ` +
         `Akta pendirian Perseroan beserta keputusan pengesahannya tidak termasuk dalam Dokumen Yang Diperiksa, ` +
         `sehingga tanggal perolehan status badan hukum Perseroan tidak dapat kami pastikan.`,
@@ -165,7 +175,7 @@ export function renderNarrativeSectionI(
     out.push({
       kind: "para",
       text:
-        `Sejak pendirian Perseroan hingga tanggal cut-off Laporan, telah dilakukan ${countLabel} berupa pendirian ` +
+        `Dalam teks dokumen yang diperiksa, teridentifikasi ${countLabel} berupa pendirian ` +
         `dan/atau perubahan Anggaran Dasar. ` +
         (allRegistered
           ? `Seluruh tindakan telah didaftarkan ke Kemenkumham. `
@@ -192,7 +202,7 @@ export function renderNarrativeSectionI(
           : ""),
     });
   } else {
-    out.push({ kind: "para", text: NO_DATA });
+    out.push({ kind: "para", text: noData });
   }
   if (n.businessActivities.length > 0) {
     out.push({ kind: "list", items: n.businessActivities });
@@ -209,7 +219,7 @@ export function renderNarrativeSectionI(
     });
     out.push({ kind: "defs", rows: capitalDefs(n.currentCapital) });
   } else {
-    out.push({ kind: "para", text: NO_DATA });
+    out.push({ kind: "para", text: noData });
   }
   if (n.capitalHistory.length > 1) {
     out.push({
@@ -234,7 +244,7 @@ export function renderNarrativeSectionI(
       rows: n.shareholders.map((s) => [s.name, s.shares || DASH, s.amount || DASH, s.percentage || DASH]),
     });
   } else {
-    out.push({ kind: "para", text: NO_DATA });
+    out.push({ kind: "para", text: noData });
   }
   out.push(...notesFor(n.notes, "pemegang_saham"));
 
@@ -244,7 +254,7 @@ export function renderNarrativeSectionI(
     kind: "para",
     text: "Susunan anggota Direksi Perseroan berdasarkan Dokumen Yang Diperiksa adalah sebagai berikut:",
   });
-  out.push(...officerTable(n.directors, "Direksi"));
+  out.push(...officerTable(n.directors, "Direksi", noData));
   out.push(...notesFor(n.notes, "pengurus"));
 
   // --- 6. Susunan Dewan Komisaris ---
@@ -253,11 +263,11 @@ export function renderNarrativeSectionI(
     kind: "para",
     text: "Susunan anggota Dewan Komisaris Perseroan berdasarkan Dokumen Yang Diperiksa adalah sebagai berikut:",
   });
-  out.push(...officerTable(n.commissioners, "Dewan Komisaris"));
+  out.push(...officerTable(n.commissioners, "Dewan Komisaris", noData));
 
   // Qualifications whose sub-section could not be resolved are shown here under
   // their own heading rather than guessed into one of the sections above.
-  const orphans = n.notes.filter((x) => x.anchor === "lainnya");
+  const orphans = n.notes.filter((x) => x.anchor === "lainnya" && !mandatory.some((m) => m.text === x.text));
   if (orphans.length > 0) {
     out.push({ kind: "heading", text: "Catatan Lain atas Aspek Korporasi" });
     out.push({ kind: "list", items: orphans.map((x) => x.text) });

@@ -68,10 +68,64 @@ function FindingCard({ f, onAction, onOpenSource, readOnly }: {
 
 type SaveStatus = "idle" | "pending" | "saved" | "failed";
 
+export interface NarrativeNotice { generatedAt: string | null; notes: string[] }
+
+export function narrativeNoticeFromResponse(value: unknown): NarrativeNotice {
+  const v = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const n = v.narrative && typeof v.narrative === "object" ? v.narrative as Record<string, unknown> : {};
+  const at = n.generatedAt ?? v.generatedAt;
+  const notes = Array.isArray(v.coverageNotes) ? v.coverageNotes.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+  return {
+    generatedAt: typeof at === "string" && Number.isFinite(Date.parse(at)) ? at : null,
+    notes: notes.length ? notes : ["Cakupan Profil Perseroan belum dapat dipastikan. Muat ulang hasil tersimpan sebelum mengekspor."],
+  };
+}
+
+export function NarrativeCoverageNotice({ notice }: { notice: NarrativeNotice }) {
+  return <div role="status" style={{ fontSize: 13, background: "#fffbeb", padding: 10, borderRadius: 6 }}>
+    <strong>Cakupan Profil Perseroan</strong>
+    {notice.generatedAt && <div>Hasil tersimpan: {new Date(notice.generatedAt).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })} WIB.</div>}
+    <ul>{notice.notes.map((text, i) => <li key={i}>{text}</li>)}</ul>
+  </div>;
+}
+
+/** The actual caller's stream consumer; a completed HTTP response alone is not success. */
+export async function consumeNarrativeStream(
+  res: Response, onStep: (text: string) => void, onNotice: (notice: NarrativeNotice) => void,
+  onPrevious: (generatedAt: string) => void,
+) {
+  if (!res.body) throw new Error("Hasil Profil Perseroan tidak tersedia");
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "", sawDone = false;
+  const accept = (line: string) => {
+    const msg = JSON.parse(line);
+    if (msg.type === "step") onStep(msg.message);
+    if (msg.type === "done") { sawDone = true; onNotice(narrativeNoticeFromResponse(msg)); }
+    if (msg.type === "error") {
+      if (typeof msg.previousGeneratedAt === "string" && Number.isFinite(Date.parse(msg.previousGeneratedAt))) onPrevious(msg.previousGeneratedAt);
+      throw new Error(msg.message);
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop() ?? "";
+      for (const line of lines.filter(Boolean)) accept(line);
+    }
+    buf += dec.decode();
+    if (buf.trim()) accept(buf);
+  } finally { await reader.cancel(); }
+  if (!sawDone) throw new Error("Stream profil terputus sebelum selesai");
+}
+
 export default function DDStage5Review() {
   const { state, dispatch } = useDD();
   const [findingsByEntity, setFindingsByEntity] = useState<Record<string, DDFinding[]>>({});
   const [progress, setProgress] = useState<Record<string, string>>({});
+  const [narrativeNotices, setNarrativeNotices] = useState<Record<string, NarrativeNotice>>({});
   const [running, setRunning] = useState<Record<string, boolean>>({});
   const [consolidated, setConsolidated] = useState<DDConsolidated | null>(null);
   const [consolidating, setConsolidating] = useState(false);
@@ -86,6 +140,17 @@ export default function DDStage5Review() {
   // effect below never re-sends unchanged content (and never loops).
   const lastSavedRef = useRef<Record<string, string>>({});
   const saveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    let current = true;
+    for (const entity of t?.entities ?? []) {
+      fetch(`/api/dd/narrative?sessionId=${encodeURIComponent(state.sessionId)}&entityId=${encodeURIComponent(entity.id)}`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((value) => { if (current) setNarrativeNotices((p) => ({ ...p, [entity.id]: narrativeNoticeFromResponse(value) })); })
+        .catch(() => { if (current) setNarrativeNotices((p) => ({ ...p, [entity.id]: narrativeNoticeFromResponse(null) })); });
+    }
+    return () => { current = false; };
+  }, [state.sessionId, t]);
 
   const persistEntity = async (eid: string, findings: DDFinding[]) => {
     const json = JSON.stringify(findings);
@@ -256,10 +321,11 @@ export default function DDStage5Review() {
    * persisted by the time this runs, so throwing it away would cost the expensive
    * work for the sake of the cheap. But a silent failure puts us straight back to
    * the defect being fixed — a report quietly missing its profile chapter — so the
-   * lawyer is told, in the terms that matter to them: Bab II will be empty.
+   * lawyer is told that this attempt failed and an earlier artifact may remain.
    */
   const runNarrative = async (eid: string) => {
     setProgress((p) => ({ ...p, [eid]: "Menyusun Profil Perseroan (Bab II)…" }));
+    let previousGeneratedAt: string | null = null;
     try {
       const res = await fetch("/api/dd/narrative", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -268,37 +334,24 @@ export default function DDStage5Review() {
       if (!res.ok || !res.body) {
         throw new Error((await res.json().catch(() => null))?.error ?? "Gagal menyusun Profil Perseroan");
       }
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      let sawDone = false;
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines.filter(Boolean)) {
-            const msg = JSON.parse(line);
-            // This route names the field "message"; /api/dd/analyze names it "label".
-            if (msg.type === "step") setProgress((p) => ({ ...p, [eid]: msg.message }));
-            if (msg.type === "done") sawDone = true;
-            if (msg.type === "error") throw new Error(msg.message);
-          }
-        }
-      } finally {
-        reader.cancel();
-      }
-      // The route writes the blob before emitting done, so no done means no blob.
-      if (!sawDone) throw new Error("Stream profil terputus sebelum selesai");
+      await consumeNarrativeStream(res,
+        (text) => setProgress((p) => ({ ...p, [eid]: text })),
+        (notice) => {
+          setNarrativeNotices((p) => ({ ...p, [eid]: notice }));
+          setProgress((p) => ({ ...p, [eid]: "Hasil penyusunan tersimpan — periksa catatan cakupan di bawah." }));
+        },
+        (at) => { previousGeneratedAt = at; },
+      );
     } catch (err) {
       dispatch({
         type: "SET_ERROR",
         error:
           `Analisis entitas selesai dan tersimpan, tetapi Profil Perseroan (Bab II) gagal disusun: ` +
-          `${err instanceof Error ? err.message : "Error"}. Bab II akan kosong pada laporan — ` +
-          `jalankan ulang analisis entitas ini sebelum mengekspor.`,
+          `${err instanceof Error ? err.message : "Penyusunan belum selesai"}. ` +
+          (previousGeneratedAt
+            ? `Hasil sebelumnya yang disimpan pada ${new Date(previousGeneratedAt).toLocaleString("id-ID")} tetap tersedia sebagai hasil terdahulu. `
+            : "Jika sudah ada hasil yang tersimpan, hasil tersebut berasal dari penyusunan sebelumnya. ") +
+          `Periksa catatan cakupannya dan jalankan ulang penyusunan sebelum mengekspor hasil terbaru.`,
       });
     }
   };
@@ -388,6 +441,7 @@ export default function DDStage5Review() {
             </div>
           </div>
           {progress[e.id] && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{progress[e.id]}</div>}
+          {narrativeNotices[e.id] && <NarrativeCoverageNotice notice={narrativeNotices[e.id]} />}
           <div style={{ display: "grid", gap: 8 }}>
             {sortFindings(findingsByEntity[e.id] ?? []).map((f) => (
               <FindingCard

@@ -278,7 +278,7 @@ describe("empty notes", () => {
         { anchor: "pendirian", text: "Akta pendirian hanya tersedia sebagai salinan." },
       ],
     });
-    const out = parseNarrativeResponse(raw, null, { entityId: "e1" }).notes;
+    const out = parseNarrativeResponse(raw, "end_turn", { entityId: "e1" }).notes;
     expect(out).toHaveLength(1);
     expect(out[0].text).toContain("Akta pendirian hanya tersedia");
   });

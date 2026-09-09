@@ -254,7 +254,8 @@ describe("documents that could not be read are named in the appendix", () => {
   it("reconciles supplied, extracted, OCR-required, and failed counts", async () => {
     const text = await buildWith(withScans());
     expect(text).toContain("Jumlah dokumen yang disediakan: 4");
-    expect(text).toContain("Berhasil diekstrak dan diperiksa: 1");
+    expect(text).toContain("Berhasil diekstrak: 1");
+    expect(text).not.toContain("diekstrak dan diperiksa");
     expect(text).toContain("Memerlukan pengenalan karakter optis (OCR): 2");
     expect(text).toContain("Gagal diekstrak: 1");
   });
