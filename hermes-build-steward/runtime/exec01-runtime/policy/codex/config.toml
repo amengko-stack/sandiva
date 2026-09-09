@@ -1,0 +1,9 @@
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+[mcp_servers.sandiva_execution_authority]
+command = "/opt/sandiva/bin/exec01-runtime"
+args = ["mcp-server"]
+required = true
+startup_timeout_sec = 5
+tool_timeout_sec = 15

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "1.0",
+  "classification": "production-hostinger-qualification",
+  "profilesFile": "/etc/sandiva-hermes/exec01-profiles.json",
+  "attestationKeyFile": "/etc/sandiva-hermes/credentials/exec01-qualification.key",
+  "implementationRepositoryPath": "/opt/sandiva/hermes-build-steward",
+  "qualificationContext": {
+    "mode": "LIVE_HOSTINGER",
+    "environmentId": "hostinger-production",
+    "runId": "replace-with-pm-authorized-ac28-run-id",
+    "expectedHeadSha": "0000000000000000000000000000000000000000",
+    "profileClass": "production-allowlisted",
+    "signingPurpose": "EXEC01_HOSTINGER_QUALIFICATION",
+    "taskStoreIdentity": "sharepoint:prod.exec01.tasks",
+    "executionStoreIdentity": "sharepoint:prod.exec01.executions",
+    "resultStoreIdentity": "sharepoint:prod.exec01.results",
+    "probeStoreIdentity": "sharepoint:prod.exec01.probes",
+    "checkStoreIdentity": "sharepoint:prod.exec01.checks",
+    "hermesStoreIdentity": "sharepoint:prod.hermes.evidence"
+  },
+  "evidenceAuthority": {
+    "schemaVersion": "1.0",
+    "acceptedHermesOriginPolicyFingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+    "producers": {
+      "containment-probe": {
+        "origin": "trusted-runtime-probe",
+        "producerIdentity": "sandiva-producer://hostinger/exec01-runtime-probe/v1",
+        "storeIdentity": "sharepoint:prod.exec01.probes",
+        "verificationCertificateFile": "/etc/sandiva-hermes/certificates/exec01-probe-producer.pem"
+      },
+      "qualification-check": {
+        "origin": "trusted-qualification-check",
+        "producerIdentity": "sandiva-producer://hostinger/exec01-qualification-check/v1",
+        "storeIdentity": "sharepoint:prod.exec01.checks",
+        "verificationCertificateFile": "/etc/sandiva-hermes/certificates/exec01-check-producer.pem"
+      },
+      "hermes-result": {
+        "origin": "trusted-hermes-independent",
+        "producerIdentity": "sandiva-producer://hostinger/hermes-independent/v1",
+        "storeIdentity": "sharepoint:prod.hermes.evidence",
+        "verificationCertificateFile": "/etc/sandiva-hermes/certificates/hermes-evidence-producer.pem"
+      }
+    }
+  },
+  "taskStore": {
+    "kind": "sharepoint",
+    "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/exec01-tasks",
+    "namespace": "prod.exec01.tasks",
+    "environmentId": "hostinger-production",
+    "tokenEnvironment": "EXEC01_GRAPH_TOKEN",
+    "key": "prod.exec01.tasks:EXEC-01-QUALIFICATION:2.0"
+  },
+  "executionStore": {
+    "kind": "sharepoint",
+    "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/exec01-executions",
+    "namespace": "prod.exec01.executions",
+    "environmentId": "hostinger-production",
+    "tokenEnvironment": "EXEC01_GRAPH_TOKEN"
+  },
+  "resultStore": {
+    "kind": "sharepoint",
+    "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/exec01-results",
+    "namespace": "prod.exec01.results",
+    "environmentId": "hostinger-production",
+    "tokenEnvironment": "EXEC01_GRAPH_TOKEN"
+  },
+  "probeStore": {
+    "kind": "sharepoint",
+    "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/exec01-probes",
+    "namespace": "prod.exec01.probes",
+    "environmentId": "hostinger-production",
+    "tokenEnvironment": "EXEC01_GRAPH_TOKEN"
+  },
+  "checkStore": {
+    "kind": "sharepoint",
+    "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/exec01-checks",
+    "namespace": "prod.exec01.checks",
+    "environmentId": "hostinger-production",
+    "tokenEnvironment": "EXEC01_GRAPH_TOKEN"
+  },
+  "hermesEvidenceStore": {
+    "kind": "sharepoint",
+    "endpoint": "https://graph.microsoft.com/v1.0/sites/approved-site/lists/hermes-evidence",
+    "namespace": "prod.hermes.evidence",
+    "environmentId": "hostinger-production",
+    "tokenEnvironment": "EXEC01_GRAPH_TOKEN"
+  },
+  "artifacts": {
+    "pmInstructionFile": "/var/lib/sandiva-hermes/exec01/pm-instruction.md",
+    "specificationFile": "/var/lib/sandiva-hermes/exec01/specification.md",
+    "acceptanceContractFile": "/var/lib/sandiva-hermes/exec01/acceptance-contract.md"
+  },
+  "githubReadback": {
+    "kind": "github",
+    "repository": "amengko-stack/sandiva",
+    "tokenEnvironment": "EXEC01_GITHUB_READ_TOKEN"
+  }
+}

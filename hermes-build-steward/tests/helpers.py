@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 SPEC_BYTES = b"canonical specification\n"
 AC_BYTES = b"canonical acceptance contract\n"
+PM_BYTES = b"canonical PM build instruction\n"
 
 
 def sha256_hex(value: bytes) -> str:
@@ -20,7 +21,7 @@ def build_task(**overrides):
         "taskId": "HERMES-01-SYNTHETIC-001",
         "taskVersion": 1,
         "originatingPmInstructionRef": "sharepoint://pm/HERMES-01-SYNTHETIC-001",
-        "originatingPmInstructionFingerprint": "1" * 64,
+        "originatingPmInstructionFingerprint": sha256_hex(PM_BYTES),
         "specificationRef": "sharepoint://spec/HERMES-01-v1",
         "specificationVersion": "v1",
         "specificationHash": sha256_hex(SPEC_BYTES),

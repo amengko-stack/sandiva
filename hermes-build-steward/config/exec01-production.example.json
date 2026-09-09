@@ -1,0 +1,65 @@
+{
+  "repository": "https://github.com/amengko-stack/sandiva",
+  "sourceRepositoryPath": "/srv/sandiva/source/sandiva.git",
+  "workspaceRoot": "/srv/sandiva/exec01/workspaces",
+  "executionStateEndpoint": "https://graph.microsoft.com/v1.0/sites/replace-site/lists/replace-execution-state-list",
+  "executionStateNamespace": "prod.exec01.executions",
+  "resultStateEndpoint": "https://graph.microsoft.com/v1.0/sites/replace-site/lists/replace-execution-result-list",
+  "resultStateNamespace": "prod.exec01.results",
+  "executorProfiles": {
+    "codex": {
+      "profile_id": "codex-hostinger-v1",
+      "provider": "codex",
+      "runtime_name": "codex-cli",
+      "runtime_version": "0.145.0",
+      "model": "gpt-5.6-sol",
+      "launcher_version": "exec01-runtime-v1.3.0",
+      "executable_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "runtime_wrapper_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "gateway_implementation_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "gateway_policy_digest": "d826c8ca2b22aec207d1eb7d0b9fbebba6474b57c93d1108032b11b3a1a001e4",
+      "fixed_argv": ["codex", "exec", "--json", "--ephemeral", "--strict-config", "--dangerously-bypass-hook-trust", "--model", "gpt-5.6-sol", "--sandbox", "read-only", "-"],
+      "image": "registry.example/sandiva/codex-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "credential_mode": "trusted-egress-gateway",
+      "gateway_endpoint": "executor-gateway.sandiva.internal:8443",
+      "allowed_endpoints": ["executor-gateway.sandiva.internal:8443"]
+    },
+    "claude-code": {
+      "profile_id": "claude-code-hostinger-v1",
+      "provider": "claude-code",
+      "runtime_name": "claude-code-cli",
+      "runtime_version": "2.1.251",
+      "model": "claude-opus-4-8",
+      "launcher_version": "exec01-runtime-v1.3.0",
+      "executable_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "runtime_wrapper_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "gateway_implementation_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "gateway_policy_digest": "d826c8ca2b22aec207d1eb7d0b9fbebba6474b57c93d1108032b11b3a1a001e4",
+      "fixed_argv": ["claude", "--print", "--output-format", "stream-json", "--verbose", "--model", "claude-opus-4-8", "--permission-mode", "dontAsk", "--setting-sources", "user", "--settings", "/opt/sandiva/claude/settings.json", "--strict-mcp-config", "--mcp-config", "/opt/sandiva/claude/mcp.json", "--allowedTools", "mcp__sandiva_execution_authority__sandiva_execute", "--disallowedTools", "Bash,Read,Write,Edit,Glob,Grep,LS,NotebookEdit,WebFetch,WebSearch", "--no-session-persistence"],
+      "image": "registry.example/sandiva/claude-code-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "credential_mode": "trusted-egress-gateway",
+      "gateway_endpoint": "executor-gateway.sandiva.internal:8443",
+      "allowed_endpoints": ["executor-gateway.sandiva.internal:8443"]
+    }
+  },
+  "containmentPolicy": {
+    "cpuLimit": "2.0",
+    "memoryLimit": "4g",
+    "pidsLimit": 256,
+    "workspaceLimitBytes": 2000000000,
+    "wallTimeSeconds": 3600,
+    "outputLimitBytes": 65536,
+    "networkName": "exec01-internal",
+    "allowedEndpoints": ["executor-gateway.sandiva.internal:8443"]
+  },
+  "gatewayBinding": {
+    "networkName": "exec01-internal",
+    "containerName": "exec01-gateway",
+    "image": "registry.example/sandiva/executor-gateway@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "policyFingerprint": "d826c8ca2b22aec207d1eb7d0b9fbebba6474b57c93d1108032b11b3a1a001e4"
+  },
+  "githubPublisher": {
+    "repository": "amengko-stack/sandiva",
+    "askpassPath": "/opt/sandiva/bin/github-askpass"
+  }
+}

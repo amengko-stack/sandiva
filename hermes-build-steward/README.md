@@ -1,6 +1,6 @@
 # Sandiva Hermes Build Steward — Phase 1
 
-This package is the Sandiva-specific trusted coordinator required by HERMES-01 and the restrictive HERMES-01A addendum. It is intentionally a small companion to the existing upstream Hermes Agent runtime. It is not a fork, replacement, executor framework, deployment controller, or legal-workflow component.
+This package is the Sandiva-specific trusted coordinator required by HERMES-01/HERMES-01A and the provider-neutral build-plane adapter required by EXEC-01. It remains a small companion to the upstream Hermes Agent runtime, not a fork, replacement, deployment controller, or legal-workflow component.
 
 The implementation is not a production gate. A `PASS` means that validated evidence is ready for PM acceptance review; it never accepts, merges, deploys, or activates anything.
 
@@ -37,10 +37,20 @@ The component lives in `amengko-stack/sandiva` because the Build Task contract, 
 - strict size-bounded normalized result ingestion with unique evidence identities, exact criterion-to-evidence resolution, acquisition-path trust stamping, and task-bound origin/kind authorization;
 - operator health endpoint on `127.0.0.1:8787/healthz`;
 - audit/provenance retained with the durable task record and recursive secret-field redaction.
+- an explicit Canonical Build Task v2.0 dispatch contract while accepted v1.0 remains non-dispatch;
+- fingerprinted Codex and Claude Code profiles behind one normalized `ExecutionAdapter` boundary;
+- exact hash-verified PM/specification/acceptance content, task scope, criteria and QA requirements carried read-only in the normalized request;
+- source-controlled reproducible executor-wrapper and credential-gateway images, explicit Codex JSONL and Claude stream-JSON parsing, observed profile attestation and deterministic protocol emulators;
+- exact-base attempt workspaces, executor/control-plane credential separation, explicit network/resource containment, and complete pre-publication enforcement;
+- a concrete `exec-dispatch`/`exec-resume`/`exec-cancel` production composition path with external CAS execution/result stores, exact trusted-source origin verification and task-bound forced container removal;
+- no-host-mount, non-root, quota-backed container execution through one attested internal-network gateway, with host-created Git metadata preserved across export;
+- deterministic task-bound draft-PR publication through a separate repository-scoped publisher that disables repository hooks/config injection; and
+- CAS-shaped execution checkpoints, duplicate idempotency, stale-fence denial, explicit new-attempt ordered fallback, strict publication-attempt ownership, crash reconciliation and bounded provenance;
+- trusted qualification evidence acquisition before signing, with independent resolution and Hermes `PASS` mandatory.
 
 ## Deliberate exclusions
 
-There is no Codex or Claude Code dispatch, automatic rework, automatic merge, deployment, production activation, client-document access, browser/computer use, EXEC-01, AI-01, AI-02, Capability Router, Legal Execution Adapter, or Evaluation Harness. No specialist LDD or Litigation code is imported or changed.
+There is no automatic rework approval, automatic merge, deployment, production activation, client-document access, browser/computer use, AI-01, AI-02, Capability Router, Legal Execution Adapter, or Evaluation Harness. No specialist LDD or Litigation code is imported or changed. Actual Codex/Claude Hostinger execution remains a separate synthetic qualification gate.
 
 ## Local deterministic checks
 
@@ -56,9 +66,15 @@ The A–X fixtures are in `tests/test_original_fixtures_a_to_x.py`. HERMES-01A d
 
 These local tests do not constitute VM qualification. See `docs/runtime-and-vm-qualification.md` for the two-phase synthetic VM procedure.
 
+EXEC-01 architecture and criterion evidence are documented in `docs/exec-01-architecture-and-security.md` and `docs/exec-01-acceptance-evidence.md`. Its 31 hostile fixtures are individually named in `tests/test_exec01_hostile_fixtures.py`; R1–R8 and Q1–Q27 are distributed across the `test_exec01_*`, runtime, gateway, publisher and recovery suites plus the source-controlled Go runtime tests. The Linux-only Docker runtime tests are mandatory in GitHub Actions: CI explicitly installs Go, asserts a working Docker daemon and therefore cannot silently skip them. The later, separately authorized Hostinger evidence gate is `qualification/run_exec01_vm_qualification.py`.
+
 ## Runtime configuration
 
 `config/production.example.json` documents the schema. Production must explicitly select `vmProvider: hostinger` and `graphAuthentication.provider: entra-certificate`. Before qualification, an authorized infrastructure operator must replace the tenant, application, SharePoint site, and dedicated runtime-list identifiers. The certificate file is external runtime state and must be readable only by the trusted `sandiva-hermes` service account. The dedicated list is runtime state, not the Control Tower, and this build does not provision or modify it.
+
+`config/exec01-production.example.json` separately documents the EXEC-01 composition schema. It is deliberately non-deployable: every executor/gateway image and executable digest is a zero/placeholder value, and the builder refuses to start until an authorized operator replaces them with the exact approved immutable artifacts, supplies the external trusted GitHub askpass helper, configures distinct execution/result SharePoint Lists, and starts the single approved gateway on the internal Docker network. Executor containers receive no Graph, Hermes, provider or GitHub publisher credential.
+
+`config/exec01-qualification.example.json` documents the closed production evidence-reader configuration. `plan` is read-only and requires only the approved profile manifest. `collect` reconstructs requests and validates authoritative task, execution, result, audit, probe, GitHub and Hermes records before writing a signed package. `verify` reconstructs the same concrete resolver and refuses a package that is self-contained, incomplete or inconsistent. These commands do not dispatch providers or activate Hermes; using them for AC-28 requires separate PM authorization.
 
 The list must have these internal column names:
 

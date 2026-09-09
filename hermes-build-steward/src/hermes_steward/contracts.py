@@ -27,6 +27,7 @@ REQUIRED_TASK_FIELDS = {
     "qaRequirements", "partnerGateStatus", "retryPolicy", "attemptCount", "failureHistory",
     "permissionEnvelopeRef", "provenance", "auditMetadata", "createdAt", "updatedAt",
 }
+DISPATCH_TASK_FIELDS = REQUIRED_TASK_FIELDS | {"dispatchPolicy"}
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -196,6 +197,111 @@ def validate_build_task(raw: Mapping[str, Any]) -> dict[str, Any]:
     if len(canonical_json(task)) > MAX_TASK_BYTES:
         raise ContractValidationError(f"Build Task exceeds the {MAX_TASK_BYTES}-byte size limit")
     return task
+
+
+def validate_dispatch_build_task(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate the explicit EXEC-01 dispatch contract without changing v1.0."""
+    if not isinstance(raw, Mapping):
+        raise ContractValidationError("Build Task must be an object")
+    if raw.get("schemaVersion") != "2.0":
+        raise ContractValidationError("dispatch requires schemaVersion 2.0")
+    supplied = set(raw)
+    missing = DISPATCH_TASK_FIELDS - supplied
+    unknown = supplied - DISPATCH_TASK_FIELDS
+    if missing:
+        raise ContractValidationError(f"missing required fields: {', '.join(sorted(missing))}")
+    if unknown:
+        raise ContractValidationError(f"unknown fields fail closed: {', '.join(sorted(unknown))}")
+
+    task = copy.deepcopy(dict(raw))
+    reject_secret_fields(task, "task")
+    executor_policy = task["executorPolicy"]
+    if not isinstance(executor_policy, dict) or set(executor_policy) != {
+        "automaticDispatch", "approvedCommands"
+    }:
+        raise ContractValidationError("executorPolicy fields invalid")
+    if executor_policy["automaticDispatch"] is not True:
+        raise ContractValidationError("dispatch executorPolicy.automaticDispatch must be true")
+    approved_commands = executor_policy["approvedCommands"]
+    _string_list(approved_commands, "executorPolicy.approvedCommands")
+    if len(approved_commands) != len(set(approved_commands)):
+        raise ContractValidationError("executorPolicy.approvedCommands must not contain duplicates")
+    unsafe_command = re.compile(r"[;&|><`\r\n]|\$\(")
+    if any(unsafe_command.search(command) for command in approved_commands):
+        raise ContractValidationError("approved command contains prohibited shell control syntax")
+
+    dispatch_policy = task["dispatchPolicy"]
+    required_dispatch_fields = {
+        "mode", "executorProfile", "permittedFallbackProfiles", "fallbackMode",
+        "noDowngrade", "networkPolicyRef", "resourcePolicyRef", "publisherPolicyRef",
+        "auditProvenanceId",
+    }
+    if not isinstance(dispatch_policy, dict) or set(dispatch_policy) != required_dispatch_fields:
+        raise ContractValidationError("dispatchPolicy fields invalid")
+    if dispatch_policy["mode"] != "AUTOMATIC":
+        raise ContractValidationError("dispatchPolicy.mode must be AUTOMATIC")
+    if dispatch_policy["fallbackMode"] not in {"NONE", "ORDERED"}:
+        raise ContractValidationError("dispatchPolicy.fallbackMode is invalid")
+    if dispatch_policy["noDowngrade"] is not True:
+        raise ContractValidationError("dispatchPolicy.noDowngrade must be true")
+    for field in ("networkPolicyRef", "resourcePolicyRef", "publisherPolicyRef", "auditProvenanceId"):
+        _nonempty_string(dispatch_policy[field], f"dispatchPolicy.{field}")
+
+    def validate_profile_reference(value: Any, field: str) -> tuple[str, str]:
+        if not isinstance(value, dict) or set(value) != {"profileId", "profileFingerprint"}:
+            raise ContractValidationError(f"{field} fields invalid")
+        profile_id = value["profileId"]
+        profile_fingerprint = value["profileFingerprint"]
+        if not isinstance(profile_id, str) or not _ID.fullmatch(profile_id):
+            raise ContractValidationError(f"{field}.profileId has an invalid format")
+        if not isinstance(profile_fingerprint, str) or not _HASH.fullmatch(profile_fingerprint):
+            raise ContractValidationError(f"{field}.profileFingerprint must be a lowercase SHA-256 digest")
+        return profile_id, profile_fingerprint
+
+    primary = validate_profile_reference(dispatch_policy["executorProfile"], "dispatchPolicy.executorProfile")
+    fallbacks = dispatch_policy["permittedFallbackProfiles"]
+    if not isinstance(fallbacks, list):
+        raise ContractValidationError("dispatchPolicy.permittedFallbackProfiles must be a list")
+    fallback_pairs = [
+        validate_profile_reference(item, f"dispatchPolicy.permittedFallbackProfiles[{index}]")
+        for index, item in enumerate(fallbacks)
+    ]
+    if len(fallback_pairs) != len(set(fallback_pairs)):
+        raise ContractValidationError("fallback profiles must not contain duplicates")
+    if primary in fallback_pairs:
+        raise ContractValidationError("primary executor profile cannot also be a fallback")
+    if dispatch_policy["fallbackMode"] == "NONE" and fallback_pairs:
+        raise ContractValidationError("NONE fallback requires no fallback profiles")
+    if dispatch_policy["fallbackMode"] == "ORDERED" and not fallback_pairs:
+        raise ContractValidationError("ORDERED fallback requires at least one fallback profile")
+
+    # Reuse every accepted v1 invariant by validating a non-dispatch projection.
+    v1_projection = copy.deepcopy(task)
+    v1_projection.pop("dispatchPolicy")
+    v1_projection["schemaVersion"] = "1.0"
+    v1_projection["executorPolicy"] = copy.deepcopy(executor_policy)
+    v1_projection["executorPolicy"]["automaticDispatch"] = False
+    validate_build_task(v1_projection)
+    if len(canonical_json(task)) > MAX_TASK_BYTES:
+        raise ContractValidationError(f"Build Task exceeds the {MAX_TASK_BYTES}-byte size limit")
+    return task
+
+
+def validate_versioned_build_task(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Decode a persisted Canonical Build Task through its closed version contract.
+
+    The version discriminator is read only to select a validator.  Each selected
+    validator still enforces its exact field set, so mixed-version payloads and
+    unknown versions fail closed.
+    """
+    if not isinstance(raw, Mapping):
+        raise ContractValidationError("Build Task must be an object")
+    version = raw.get("schemaVersion")
+    if version == "1.0":
+        return validate_build_task(raw)
+    if version == "2.0":
+        return validate_dispatch_build_task(raw)
+    raise ContractValidationError("unsupported Canonical Build Task schemaVersion")
 
 
 def validate_reference_hashes(task: Mapping[str, Any], specification: bytes, acceptance_contract: bytes) -> None:

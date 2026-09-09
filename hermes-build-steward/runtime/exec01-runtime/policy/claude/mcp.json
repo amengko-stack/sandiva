@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "sandiva_execution_authority": {
+      "type": "stdio",
+      "command": "/opt/sandiva/bin/exec01-runtime",
+      "args": ["mcp-server"]
+    }
+  }
+}
