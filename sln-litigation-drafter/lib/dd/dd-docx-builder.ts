@@ -367,23 +367,24 @@ function renderTransaksiChapter(
             `tidak terdapat masalah pada ${s.title.toLowerCase()}.`
         )
       );
-      return;
-    }
-    for (const para of analysis.analysis) out.push(p(para));
-    if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
-    // Where the reader is, not only in the run log.
-    if (analysis.citationIssues && analysis.citationIssues.length > 0) {
-      for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
-        out.push(el);
+    } else {
+      for (const para of analysis.analysis) out.push(p(para));
+      if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+      // Where the reader is, not only in the run log.
+      if (analysis.citationIssues && analysis.citationIssues.length > 0) {
+        for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
+          out.push(el);
+        }
       }
     }
 
+    // Existing findings remain reportable even when their supporting analysis is absent.
     const subFindings = r.findings.filter(
       (f) => isReportableFinding(f) && f.subsectionTitle === s.title
     );
     for (const el of renderBlocks(renderFindingsTable(subFindings, opts))) out.push(el);
 
-    if (analysis.verification.length > 0) {
+    if (analysis && analysis.verification.length > 0) {
       out.push(p("Hal yang perlu diverifikasi:", { bold: true }));
       for (const item of analysis.verification) {
         out.push(
@@ -534,23 +535,23 @@ function renderAnalisisAspekChapter(
           `Sub-bagian "${sub.title}" belum dapat dianalisis berdasarkan Dokumen Yang Diperiksa dalam uji tuntas ini.`
         )
       );
-      return;
-    }
-
-    for (const para of analysis.analysis) out.push(p(para));
-    if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
-    // Where the reader is, not only in the run log.
-    if (analysis.citationIssues && analysis.citationIssues.length > 0) {
-      for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
-        out.push(el);
+    } else {
+      for (const para of analysis.analysis) out.push(p(para));
+      if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+      // Where the reader is, not only in the run log.
+      if (analysis.citationIssues && analysis.citationIssues.length > 0) {
+        for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
+          out.push(el);
+        }
       }
     }
 
+    // Existing findings remain reportable even when their supporting analysis is absent.
     const subFindings = chapterFindings.filter((f) => f.subsectionTitle === sub.title);
     const findingBlocks = renderFindingsTable(subFindings, opts);
     for (const el of renderBlocks(findingBlocks)) out.push(el);
 
-    if (analysis.verification.length > 0) {
+    if (analysis && analysis.verification.length > 0) {
       out.push(p("Hal yang perlu diverifikasi:", { bold: true }));
       for (const item of analysis.verification) {
         out.push(
@@ -727,21 +728,22 @@ function renderTransaksiJualChapter(
             `Penjual: konfirmasi tertulis dan/atau dokumen pendukung mengenai ${sub.title.toLowerCase()}.`
         )
       );
-      return;
-    }
-    for (const para of analysis.analysis) out.push(p(para));
-    if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
-    // Where the reader is, not only in the run log.
-    if (analysis.citationIssues && analysis.citationIssues.length > 0) {
-      for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
-        out.push(el);
+    } else {
+      for (const para of analysis.analysis) out.push(p(para));
+      if (analysis.table) out.push(simpleTable(analysis.table.headers, analysis.table.rows));
+      // Where the reader is, not only in the run log.
+      if (analysis.citationIssues && analysis.citationIssues.length > 0) {
+        for (const el of renderBlocks([{ kind: "note", text: citationIssueNote(analysis.citationIssues) }])) {
+          out.push(el);
+        }
       }
     }
 
+    // Existing findings remain reportable even when their supporting analysis is absent.
     const subFindings = r.findings.filter((f) => isReportableFinding(f) && f.subsectionTitle === sub.title);
     for (const el of renderBlocks(renderFindingsTable(subFindings, opts))) out.push(el);
 
-    if (analysis.verification.length > 0) {
+    if (analysis && analysis.verification.length > 0) {
       out.push(p("Hal yang perlu dikonfirmasi oleh Penjual:", { bold: true }));
       for (const item of analysis.verification) {
         out.push(
