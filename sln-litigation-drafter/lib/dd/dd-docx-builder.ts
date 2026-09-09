@@ -778,19 +778,16 @@ function renderTemuanChapter(
 }
 
 /**
- * BAB REKOMENDASI DAN TINDAK LANJUT (findings_only): a single de-duplicated
- * recommendation table across every entity in the transaction, not just the
- * entity currently being rendered — the recommendations are transaction-wide.
+ * BAB REKOMENDASI DAN TINDAK LANJUT (findings_only): recommendations for the
+ * entity whose chapters are being rendered. Distinct findings may share a
+ * remedy without sharing the same problem or qualifications.
  */
-function renderRekomendasiChapter(results: DDEntityResult[], out: (Paragraph | Table)[]): void {
-  const seen = new Map<string, string>(); // suggestedFix -> problem text (first occurrence)
-  for (const res of results) {
-    for (const f of res.findings) {
-      if (!isReportableFinding(f)) continue;
-      if (!seen.has(f.suggestedFix)) seen.set(f.suggestedFix, f.editedProblem ?? f.problem);
-    }
-  }
-  const entries = Array.from(seen.entries());
+function renderRekomendasiChapter(result: DDEntityResult, out: (Paragraph | Table)[]): void {
+  // This chapter belongs to one entity. Identical remedies can address distinct
+  // findings, so retaining every eligible row also preserves its qualifications.
+  const entries = result.findings.filter(isReportableFinding).map(
+    (f) => [f.suggestedFix, f.editedProblem ?? f.problem] as const
+  );
   if (entries.length === 0) {
     out.push(p("Tidak terdapat rekomendasi tindak lanjut yang timbul dari uji tuntas ini."));
     return;
@@ -1114,7 +1111,7 @@ export async function buildDdReportDocx(args: {
           renderTemuanChapter(chNo, chapter, r, children, opts);
           break;
         case "rekomendasi":
-          renderRekomendasiChapter(results, children);
+          renderRekomendasiChapter(r, children);
           break;
         default:
           // lampiran and disclaimer are filtered out above and render once

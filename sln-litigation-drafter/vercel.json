@@ -3,7 +3,8 @@
     "deploymentEnabled": {
       "codex/h9-narrative-completeness": false,
       "codex/h12-findings-concurrency": false,
-      "codex/ldd-rpt-01-partial-report-findings": false
+      "codex/ldd-rpt-01-partial-report-findings": false,
+      "fix/ldd-rpt-02-recommendation-attribution": false
     }
   },
   "buildCommand": "npm run build",
