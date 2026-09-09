@@ -2,7 +2,8 @@
   "git": {
     "deploymentEnabled": {
       "codex/h9-narrative-completeness": false,
-      "codex/h12-findings-concurrency": false
+      "codex/h12-findings-concurrency": false,
+      "codex/ldd-rpt-01-partial-report-findings": false
     }
   },
   "buildCommand": "npm run build",
