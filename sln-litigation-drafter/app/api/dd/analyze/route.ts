@@ -10,6 +10,7 @@ import {
 } from "@/lib/dd/redflag";
 import { collectRegulationRefs, checkCurrency, applyCurrency } from "@/lib/dd/currency";
 import { carryReviewState } from "@/lib/dd/review-state";
+import { readFindings, writeFindings, type FindingsSnapshot } from "@/lib/dd/findings-store";
 import {
   analysisStateEntry, canReuseAspect, canReuseTransaction, parseAnalysisState, reuseIdentity,
   seenDigest, transactionSeenDigest,
@@ -39,7 +40,7 @@ export const maxDuration = 300;
 const ASPECT_CONCURRENCY = 6;
 
 const enc = new TextEncoder();
-type Msg = { type: "step"; label: string } | { type: "done"; findings: DDFinding[] } | { type: "error"; message: string };
+type Msg = { type: "step"; label: string } | { type: "done"; findings: DDFinding[]; revision: string } | { type: "error"; message: string };
 const emit = (c: ReadableStreamDefaultController<Uint8Array>, m: Msg) =>
   c.enqueue(enc.encode(JSON.stringify(m) + "\n"));
 
@@ -53,6 +54,11 @@ export async function POST(req: NextRequest) {
   if (!isValidSessionId(sessionId) || !isValidEntityId(entityId)) {
     return NextResponse.json({ error: "sessionId/entityId tidak valid" }, { status: 400 });
   }
+
+  // A failed read must never authorize a first write or provider execution.
+  let priorSnapshot: FindingsSnapshot;
+  try { priorSnapshot = await readFindings(sessionId, entityId); }
+  catch { return NextResponse.json({ error: "Temuan tersimpan tidak dapat dibaca; analisis belum dimulai." }, { status: 503 }); }
 
   const [txnRaw, combined, classifiedRaw, gapsRaw, tablesRaw, stateRaw, extractRaw] = await Promise.all([
     readBlobText(ddKeys.transaction(sessionId)),
@@ -106,8 +112,8 @@ export async function POST(req: NextRequest) {
         // arrive after the interim report, and it used to discard every dismissal
         // and every rewording. Carried by id, which is now derived from a finding's
         // own content rather than its position in the model's output.
-        const priorRaw = await readBlobText(ddKeys.findings(sessionId, entityId));
-        const prior: DDFinding[] = priorRaw ? (JSON.parse(priorRaw) as DDFinding[]) : [];
+        const prior = priorSnapshot.findings;
+        let findingsRevision = priorSnapshot.revision;
         // The previous run's per-sub-section analysis. A reused aspect must carry
         // its analysis text too, or its chapters would render as hollow scaffolding
         // while its findings table stayed full.
@@ -163,7 +169,7 @@ export async function POST(req: NextRequest) {
         // in the same place — an incremental design that never gets to be
         // incremental. It now advances as the work completes.
         const nextState: DDAnalysisState = { aspects: { ...priorState.aspects } };
-        const persist = (final = false) => {
+        const persist = async (final = false) => {
           const carried = carryReviewState(findings, prior);
           findings = carried.findings;
           if (final && (carried.carried > 0 || carried.dropped > 0)) {
@@ -176,8 +182,10 @@ export async function POST(req: NextRequest) {
                   : ""),
             });
           }
-          return Promise.all([
-            writeBlobText(ddKeys.findings(sessionId, entityId), JSON.stringify(findings)),
+          // A competing review or analysis wins by changing this revision. Stop;
+          // never rebase an old candidate that might resurrect an earlier review.
+          findingsRevision = await writeFindings(sessionId, entityId, findings, findingsRevision);
+          await Promise.all([
             writeBlobText(ddKeys.analyses(sessionId, entityId), JSON.stringify(aspectAnalyses)),
             writeBlobText(ddKeys.analysisState(sessionId, entityId), JSON.stringify(nextState)),
           ]);
@@ -567,7 +575,7 @@ export async function POST(req: NextRequest) {
           });
         }
         await persist(true);
-        emit(controller, { type: "done", findings });
+        emit(controller, { type: "done", findings, revision: findingsRevision! });
       } catch (e) {
         try { emit(controller, { type: "error", message: e instanceof Error ? e.message : "Error" }); } catch {}
       } finally {

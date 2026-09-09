@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useReducer, useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useReducer, useEffect, useRef, useCallback, type ReactNode } from "react";
 import type { DDAction, DDState } from "@/types/dd";
 
 const STATE_KEY = "sln_dd_state";
@@ -63,11 +63,24 @@ function reducer(state: DDState, action: DDAction): DDState {
   }
 }
 
-const DDContext = createContext<{ state: DDState; dispatch: React.Dispatch<DDAction> } | null>(null);
+const DDContext = createContext<{ state: DDState; dispatch: React.Dispatch<DDAction>;
+  setReviewNavigationGuard: (guard: (() => boolean) | null) => void; canLeaveReview: () => boolean;
+} | null>(null);
 
 export function DDProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, rawDispatch] = useReducer(reducer, initialState);
   const hydrated = useRef(false);
+  const reviewGuard = useRef<(() => boolean) | null>(null);
+  const setReviewNavigationGuard = useCallback((guard: (() => boolean) | null) => { reviewGuard.current = guard; }, []);
+  const canLeaveReview = useCallback(() => {
+    if (!reviewGuard.current?.()) return true;
+    rawDispatch({ type: "SET_ERROR", error: "Selesaikan penyimpanan review atau buang draft dan muat ulang sebelum berpindah." });
+    return false;
+  }, []);
+  const dispatch = useCallback((action: DDAction) => {
+    if (["SET_STAGE", "HYDRATE", "RESET"].includes(action.type) && !canLeaveReview()) return;
+    rawDispatch(action);
+  }, [canLeaveReview]);
 
   useEffect(() => {
     if (hydrated.current) return;
@@ -92,7 +105,7 @@ export function DDProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [state]);
 
-  return <DDContext.Provider value={{ state, dispatch }}>{children}</DDContext.Provider>;
+  return <DDContext.Provider value={{ state, dispatch, setReviewNavigationGuard, canLeaveReview }}>{children}</DDContext.Provider>;
 }
 
 export function useDD() {
