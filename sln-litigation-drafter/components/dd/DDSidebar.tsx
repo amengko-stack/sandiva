@@ -16,7 +16,7 @@ const STAGES: { n: DDStage; label: string }[] = [
 ];
 
 export default function DDSidebar() {
-  const { state, dispatch } = useDD();
+  const { state, dispatch, canLeaveReview } = useDD();
   const [showChecklist, setShowChecklist] = useState(false);
   return (
     <aside style={{ width: 240, borderRight: "1px solid var(--border-color)", padding: 16, display: "flex", flexDirection: "column", gap: 4 }}>
@@ -42,7 +42,7 @@ export default function DDSidebar() {
       </button>
       {showChecklist && <DDChecklistManager onClose={() => setShowChecklist(false)} />}
       <div style={{ marginTop: "auto", fontSize: 12 }}>
-        <Link href="/">← Menu utama</Link>
+        <Link href="/" onClick={(event) => { if (!canLeaveReview()) event.preventDefault(); }}>← Menu utama</Link>
       </div>
     </aside>
   );

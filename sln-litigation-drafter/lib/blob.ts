@@ -1,6 +1,42 @@
-import { put, get } from "@vercel/blob";
+import { put, get, BlobNotFoundError } from "@vercel/blob";
 
 const PREFIX = "litigation-memory";
+
+/** A single strong storage ETag, never a wildcard or a list of preconditions. */
+export function isBlobRevision(value: unknown): value is string {
+  return typeof value === "string" && /^"[\x21\x23-\x7e]{1,256}"$/.test(value);
+}
+
+/** Unlike the legacy convenience reader, errors here are never absence. */
+export async function readVersionedBlobText(path: string): Promise<{ text: string; revision: string } | null> {
+  let result;
+  try {
+    result = await get(`${PREFIX}/${path}`, {
+      access: "private", token: process.env.BLOB_READ_WRITE_TOKEN, useCache: false,
+    });
+  } catch (e) {
+    if (e instanceof BlobNotFoundError) return null;
+    throw e;
+  }
+  // The installed SDK returns null only for an actual HTTP404.
+  if (result === null) return null;
+  if (!result || result.statusCode !== 200 || !result.stream || !isBlobRevision(result.blob.etag)) {
+    throw new Error("Invalid versioned blob response");
+  }
+  return { text: await new Response(result.stream).text(), revision: result.blob.etag };
+}
+
+/** null means create-only, and may be used only after confirmed absence. */
+export async function writeVersionedBlobText(path: string, text: string, revision: string | null): Promise<string> {
+  if (revision !== null && !isBlobRevision(revision)) throw new Error("Invalid blob revision");
+  const result = await put(`${PREFIX}/${path}`, text, {
+    access: "private", token: process.env.BLOB_READ_WRITE_TOKEN, addRandomSuffix: false,
+    ...(revision === null ? { allowOverwrite: false } : { allowOverwrite: true, ifMatch: revision }),
+  });
+  // A missing acknowledgement cannot safely be replaced by a separate head read.
+  if (!isBlobRevision(result.etag)) throw new Error("Unconfirmed blob revision");
+  return result.etag;
+}
 
 // sessionId comes from the client and is interpolated into blob keys — reject
 // anything that could escape `sessions/<id>/` or collide with another key.

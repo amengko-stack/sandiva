@@ -5,6 +5,7 @@ import * as React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import ts from "typescript";
+import * as findingsSave from "@/lib/dd/findings-save";
 import type Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import { extractNarrativeSectionI, parseNarrativeResponse } from "@/lib/dd/narrative";
@@ -24,6 +25,7 @@ const uiCode = ts.transpileModule(readFileSync("components/dd/DDStage5Review.tsx
 new Function("require", "exports", uiCode)((name: string) => {
   if (name === "react") return React;
   if (name === "react/jsx-runtime") return jsxRuntime;
+  if (name === "@/lib/dd/findings-save") return findingsSave;
   if (name === "@/context/DDContext") return { useDD: () => { throw new Error("Context not part of notice test"); } };
   if (name === "@/components/dd/DDSourcePreview") return { default: () => null };
   if (name === "@/config/ddAspects") return { aspectLabel: () => "synthetic" };
